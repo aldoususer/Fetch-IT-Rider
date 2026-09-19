@@ -9,12 +9,23 @@
 
 export type Role = "CUSTOMER" | "RIDER" | "ADMIN";
 
+/** The two products a customer can book after logging in. */
+export type BookingType = "DELIVERY" | "RIDE";
+
 export type VehicleClass =
   | "MOTORCYCLE"
+  | "TRICYCLE"
   | "SEDAN"
   | "CLOSED_VAN"
   | "FLATBED"
   | "REFRIGERATED";
+
+/** Vehicle classes offered for the RIDE product (passenger transport). */
+export const RIDE_VEHICLE_CLASSES: VehicleClass[] = [
+  "MOTORCYCLE",
+  "TRICYCLE",
+  "SEDAN",
+];
 
 export type BookingStatus =
   | "PENDING"
@@ -83,6 +94,22 @@ export const VEHICLES: Record<VehicleClass, VehicleMeta> = {
     icon: "moto",
     speedKph: 22,
     handlingMinutes: 8,
+  },
+  TRICYCLE: {
+    id: "TRICYCLE",
+    label: "Tricycle",
+    description: "Classic Philippine short-hop ride for one or two passengers.",
+    baseFare: 50,
+    includedKm: 1,
+    perKm: 12,
+    longHaulPerKm: 10,
+    minimumFare: 50,
+    capacityKg: 50,
+    freeWeightKg: 5,
+    perKgOverFree: 3,
+    icon: "tricycle",
+    speedKph: 18,
+    handlingMinutes: 6,
   },
   SEDAN: {
     id: "SEDAN",
@@ -170,6 +197,33 @@ export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   IN_TRANSIT: "In transit",
   DELIVERED: "Delivered",
   CANCELLED: "Cancelled",
+};
+
+/**
+ * Passenger-facing labels for RIDE bookings. The underlying status machine is
+ * identical to deliveries, but the words should feel like a ride-hailing app,
+ * not a freight tracker.
+ */
+export const RIDE_STATUS_LABEL: Record<BookingStatus, string> = {
+  PENDING: "Finding your driver",
+  MATCHED: "Driver assigned",
+  ACCEPTED: "Driver on the way",
+  PICKED_UP: "On board",
+  IN_TRANSIT: "Heading to drop-off",
+  DELIVERED: "Ride completed",
+  CANCELLED: "Cancelled",
+};
+
+export function statusLabel(
+  status: BookingStatus,
+  type: BookingType = "DELIVERY",
+): string {
+  return type === "RIDE" ? RIDE_STATUS_LABEL[status] : BOOKING_STATUS_LABEL[status];
+}
+
+export const BOOKING_TYPE_LABEL: Record<BookingType, string> = {
+  DELIVERY: "Delivery",
+  RIDE: "Ride",
 };
 
 /** Hard ceiling on surge, so a quote can never look predatory. */

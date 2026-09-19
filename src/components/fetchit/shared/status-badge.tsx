@@ -1,9 +1,11 @@
 "use client";
 
-// Reusable status badge mapping for booking status values.
+// Reusable status badge mapping for booking status values. Mode-aware:
+// ride bookings show passenger-facing labels ("Driver on the way"), while
+// delivery bookings keep freight wording ("Rider en route").
 
 import { Badge } from "@/components/ui/badge";
-import { BOOKING_STATUS_LABEL, type BookingStatus } from "@/lib/constants";
+import { statusLabel, type BookingStatus } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 const STATUS_CLASS: Record<BookingStatus, string> = {
@@ -16,7 +18,13 @@ const STATUS_CLASS: Record<BookingStatus, string> = {
   CANCELLED: "bg-rose-100 text-rose-800 border-rose-200",
 };
 
-export function StatusBadge({ status }: { status: BookingStatus }) {
+export function StatusBadge({
+  status,
+  type = "DELIVERY",
+}: {
+  status: BookingStatus;
+  type?: "DELIVERY" | "RIDE";
+}) {
   const cls = STATUS_CLASS[status] ?? "";
   return (
     <Badge
@@ -26,7 +34,7 @@ export function StatusBadge({ status }: { status: BookingStatus }) {
         cls,
       )}
     >
-      {BOOKING_STATUS_LABEL[status] ?? status}
+      {statusLabel(status, type) ?? status}
     </Badge>
   );
 }

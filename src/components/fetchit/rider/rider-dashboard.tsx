@@ -27,6 +27,7 @@ import {
   Activity,
   X,
   Upload,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,7 +56,12 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useAppStore, type AuthUser } from "@/lib/store";
-import { VEHICLES, type VehicleClass, type BookingStatus, BOOKING_STATUS_LABEL } from "@/lib/constants";
+import {
+  VEHICLES,
+  statusLabel,
+  type VehicleClass,
+  type BookingStatus,
+} from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { FetchItLogo } from "../shared/logo";
 import { StatusBadge } from "../shared/status-badge";
@@ -77,6 +83,7 @@ interface RiderStats {
 interface Job {
   id: string;
   refCode: string;
+  type: string;
   customerId: string;
   riderId: string | null;
   pickupLabel: string;
@@ -87,6 +94,7 @@ interface Job {
   dropoffLng: number;
   vehicleClass: VehicleClass;
   cargoWeightKg: number;
+  passengers: number;
   cargoNotes: string | null;
   scheduledAt: string | null;
   distanceKm: number;
@@ -355,10 +363,10 @@ export function RiderDashboard() {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Navigation className="h-5 w-5 text-primary" />
-                  Job · {activeJob.refCode}
+                  {activeJob.type === "RIDE" ? "Ride" : "Job"} · {activeJob.refCode}
                 </DialogTitle>
                 <DialogDescription>
-                  {BOOKING_STATUS_LABEL[activeJob.status]}
+                  {statusLabel(activeJob.status, activeJob.type === "RIDE" ? "RIDE" : "DELIVERY")}
                 </DialogDescription>
               </DialogHeader>
               <ActiveJobFlow
@@ -515,7 +523,8 @@ function JobCard({
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm text-muted-foreground">{job.refCode}</span>
-              <StatusBadge status={job.status} />
+              <JobTypeBadge type={job.type} />
+              <StatusBadge status={job.status} type={job.type === "RIDE" ? "RIDE" : "DELIVERY"} />
             </div>
             <CardTitle className="text-base mt-1.5 truncate">{job.dropoffLabel}</CardTitle>
             <CardDescription className="flex items-center gap-1 mt-0.5">
@@ -529,12 +538,16 @@ function JobCard({
       </CardHeader>
       <CardContent className="space-y-3 flex-1">
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <Stat label="Customer" value={job.customer?.name ?? "—"} icon={<Package className="h-4 w-4" />} />
+          <Stat label={job.type === "RIDE" ? "Passenger" : "Customer"} value={job.customer?.name ?? "—"} icon={<Package className="h-4 w-4" />} />
           <Stat label="Distance" value={`${job.distanceKm} km`} icon={<Navigation className="h-4 w-4" />} />
           <Stat label="Payout" value={`₱${job.totalFare.toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
-          <Stat label="Cargo" value={`${job.cargoWeightKg} kg`} icon={<Package className="h-4 w-4" />} />
+          {job.type === "RIDE" ? (
+            <Stat label="Passengers" value={String(job.passengers ?? 1)} icon={<Users className="h-4 w-4" />} />
+          ) : (
+            <Stat label="Cargo" value={`${job.cargoWeightKg} kg`} icon={<Package className="h-4 w-4" />} />
+          )}
         </div>
-        {job.cargoNotes && (
+        {job.type !== "RIDE" && job.cargoNotes && (
           <p className="text-xs text-muted-foreground border-l-2 border-primary/40 pl-2 italic">
             {job.cargoNotes}
           </p>
@@ -544,7 +557,7 @@ function JobCard({
           {isAvailable ? (
             <Button size="sm" className="flex-1" onClick={handleAccept} disabled={accepting}>
               {accepting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              Accept job
+              {job.type === "RIDE" ? "Accept ride" : "Accept job"}
             </Button>
           ) : (
             <Button size="sm" className="flex-1" onClick={onOpen}>
@@ -554,6 +567,23 @@ function JobCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function JobTypeBadge({ type }: { type: string }) {
+  const isRide = type === "RIDE";
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-md px-2 py-0.5 font-medium border",
+        isRide
+          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+          : "bg-amber-100 text-amber-800 border-amber-200",
+      )}
+    >
+      {isRide ? "Ride" : "Delivery"}
+    </Badge>
   );
 }
 
@@ -611,13 +641,14 @@ function ActiveJobFlow({
     lngRef.current = job.pickupLng;
   }, [job.id, job.pickupLat, job.pickupLng]);
 
-  // Re-subscribe to socket + broadcast position toward the destination
+  // Re-subscribe to socket (if configured) + broadcast position toward the destination
   useEffect(() => {
     if (!["ACCEPTED", "PICKED_UP", "IN_TRANSIT"].includes(status)) return;
     let cancelled = false;
     (async () => {
       const { getTrackingSocket } = await import("@/lib/socket");
       const socket = getTrackingSocket();
+      if (!socket) return; // no tracking service configured — polling covers updates
       socket.emit("subscribe", { bookingId: job.id });
     })();
     const interval = setInterval(async () => {
@@ -648,10 +679,10 @@ function ActiveJobFlow({
           etaMinutes: job.etaMinutes ?? null,
         }),
       }).catch(() => {});
-      // Broadcast via socket
+      // Broadcast via socket (no-op when no tracking service is configured)
       try {
         const { getTrackingSocket } = await import("@/lib/socket");
-        getTrackingSocket().emit("rider:location", {
+        getTrackingSocket()?.emit("rider:location", {
           bookingId: job.id,
           lat,
           lng,
@@ -681,10 +712,11 @@ function ActiveJobFlow({
       if (!res.ok) throw new Error(data.error || "Update failed");
       setStatus(data.booking.status);
       onUpdated({ status: data.booking.status, etaMinutes: data.booking.etaMinutes });
-      // Broadcast status change so the customer UI updates
+      // Broadcast status change so the customer UI updates (no-op when no
+      // tracking service is configured)
       try {
         const { getTrackingSocket } = await import("@/lib/socket");
-        getTrackingSocket().emit("status:change", {
+        getTrackingSocket()?.emit("status:change", {
           bookingId: job.id,
           status: data.booking.status,
         });
@@ -692,7 +724,7 @@ function ActiveJobFlow({
         /* ignore */
       }
       toast({
-        title: `Status: ${BOOKING_STATUS_LABEL[data.booking.status as BookingStatus]}`,
+        title: `Status: ${statusLabel(data.booking.status as BookingStatus, isRide ? "RIDE" : "DELIVERY")}`,
         description: job.refCode,
       });
       if (data.booking.status === "DELIVERED") {
@@ -711,13 +743,21 @@ function ActiveJobFlow({
 
   const nextStatus = NEXT_STATUS[status];
   const canAdvance = nextStatus != null;
+  const isRide = job.type === "RIDE";
   const nextLabel = nextStatus
-    ? {
-        ACCEPTED: "I'm on my way",
-        PICKED_UP: "Mark as picked up",
-        IN_TRANSIT: "Start delivery",
-        DELIVERED: "Mark delivered",
-      }[nextStatus]
+    ? isRide
+      ? {
+          ACCEPTED: "I'm on my way",
+          PICKED_UP: "Passenger on board",
+          IN_TRANSIT: "Start trip",
+          DELIVERED: "Complete ride",
+        }[nextStatus]
+      : {
+          ACCEPTED: "I'm on my way",
+          PICKED_UP: "Mark as picked up",
+          IN_TRANSIT: "Start delivery",
+          DELIVERED: "Mark delivered",
+        }[nextStatus]
     : null;
 
   const isDelivered = status === "DELIVERED";
@@ -743,7 +783,7 @@ function ActiveJobFlow({
                 {active ? <CheckCircle2 className="h-4 w-4" /> : idx + 1}
               </div>
               <div className={cn("text-xs mt-1.5", active ? "text-foreground font-medium" : "text-muted-foreground")}>
-                {BOOKING_STATUS_LABEL[s]}
+                {statusLabel(s, isRide ? "RIDE" : "DELIVERY")}
               </div>
             </div>
           );
@@ -781,12 +821,16 @@ function ActiveJobFlow({
         </div>
       </div>
 
-      {/* Cargo info */}
+      {/* Cargo / passenger info */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm border rounded-lg p-3 bg-muted/30">
-        <Stat label="Cargo" value={`${job.cargoWeightKg} kg`} icon={<Package className="h-4 w-4" />} />
+        {isRide ? (
+          <Stat label="Passengers" value={String(job.passengers ?? 1)} icon={<Users className="h-4 w-4" />} />
+        ) : (
+          <Stat label="Cargo" value={`${job.cargoWeightKg} kg`} icon={<Package className="h-4 w-4" />} />
+        )}
         <Stat label="Distance" value={`${job.distanceKm} km`} icon={<Navigation className="h-4 w-4" />} />
         <Stat label="Payout" value={`₱${job.totalFare.toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
-        {job.cargoNotes && (
+        {!isRide && job.cargoNotes && (
           <div className="col-span-2 sm:col-span-3 text-xs text-muted-foreground border-l-2 border-primary/40 pl-2 italic">
             {job.cargoNotes}
           </div>
@@ -825,7 +869,7 @@ function ActiveJobFlow({
               {nextLabel}
             </Button>
           )}
-          {status === "IN_TRANSIT" && (
+          {status === "IN_TRANSIT" && !isRide && (
             <Button
               variant="outline"
               size="lg"
@@ -841,7 +885,7 @@ function ActiveJobFlow({
           <CardContent className="py-4 flex items-center gap-3">
             <CheckCircle2 className="h-7 w-7 text-emerald-600" />
             <div className="flex-1">
-              <p className="font-medium">Delivery complete</p>
+              <p className="font-medium">{isRide ? "Ride complete" : "Delivery complete"}</p>
               <p className="text-sm text-muted-foreground">
                 Payout of ₱{job.totalFare.toFixed(2)} added to your wallet.
               </p>
@@ -1126,6 +1170,8 @@ function useVehicleIcon(vc: VehicleClass) {
   switch (vc) {
     case "MOTORCYCLE":
       return <Bike className="h-5 w-5" />;
+    case "TRICYCLE":
+      return <CircleDot className="h-5 w-5" />;
     case "SEDAN":
       return <Car className="h-5 w-5" />;
     case "CLOSED_VAN":

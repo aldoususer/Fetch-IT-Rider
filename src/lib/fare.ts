@@ -178,9 +178,52 @@ export function quoteFare(params: {
   };
 }
 
-export function generateRefCode(): string {
+export interface RideQuote {
+  distanceKm: number;
+  straightLineKm: number;
+  surgeMultiplier: number;
+  fare: FareBreakdown;
+  etaMinutes: number;
+  vehicle: VehicleMeta;
+}
+
+/**
+ * Ride (passenger) quoting. Same pricing engine as cargo, but there is no
+ * freight to weigh — the weight component is always zero, and the ETA drops
+ * the cargo handling overhead.
+ */
+export function quoteRideFare(params: {
+  pickup: LatLng;
+  dropoff: LatLng;
+  vehicleClass: VehicleClass;
+  when?: Date;
+}): RideQuote {
+  const vehicle = VEHICLES[params.vehicleClass];
+  const straightLineKm = round2(haversineKm(params.pickup, params.dropoff));
+  const distanceKm = roadDistanceKm(params.pickup, params.dropoff);
+  const surgeMultiplier = computeSurgeMultiplier(params.when ?? new Date());
+
+  const fare = computeFare({
+    distanceKm,
+    cargoWeightKg: 0, // passengers, not cargo
+    surgeMultiplier,
+    vehicle,
+  });
+
+  return {
+    distanceKm,
+    straightLineKm,
+    surgeMultiplier,
+    fare,
+    // No loading/paperwork overhead for rides — pickup is just boarding.
+    etaMinutes: etaMinutes(distanceKm, vehicle.speedKph, 0),
+    vehicle,
+  };
+}
+
+export function generateRefCode(prefix = "FIT"): string {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  let out = "FIT-";
+  let out = `${prefix}-`;
   for (let i = 0; i < 5; i++) {
     out += chars[Math.floor(Math.random() * chars.length)];
   }

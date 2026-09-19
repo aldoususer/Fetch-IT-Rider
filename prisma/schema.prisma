@@ -1,12 +1,16 @@
-// Vercel-ready Prisma schema — same models as the SQLite dev schema but
-// configured for Postgres (Vercel Postgres, Neon, Supabase, etc.).
+// Fetch-It shared database schema (PostgreSQL — Railway).
 //
-// To use on Vercel:
-//   1. Provision a Postgres database (Vercel Postgres, Neon, or Supabase).
-//   2. Set DATABASE_URL to the connection string (postgresql://...).
-//   3. Overwrite prisma/schema.prisma with this file (or set the PRISMA_SCHEMA
-//      env var to point to this file) before running `prisma generate`.
-//   4. Run `bunx prisma db push` to create the tables.
+// This is THE single source of truth for all three Fetch-It apps:
+//   • customer app  (fetch-customer)
+//   • rider app     (fetch-rider)
+//   • admin app     (fetch-it-admin)
+// All three point DATABASE_URL at the same Railway Postgres instance, so a
+// booking created by a customer appears instantly in the rider job feed and
+// in the admin dashboard.
+//
+// Booking.type distinguishes the two products:
+//   • DELIVERY — cargo transport (vehicle classes: MOTORCYCLE … REFRIGERATED)
+//   • RIDE     — passenger transport (vehicle classes: MOTORCYCLE, TRICYCLE, SEDAN)
 
 generator client {
   provider = "prisma-client-js"
@@ -18,25 +22,25 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String
-  phone         String?
-  passwordHash  String
-  role          String    @default("CUSTOMER")
-  vehicleClass  String?
-  vehiclePlate  String?
-  rating        Float     @default(5.0)
-  totalDeliveries Int     @default(0)
-  isOnline      Boolean   @default(false)
-  lat           Float?
-  lng           Float?
-  locationAt    DateTime?
-  isBanned      Boolean   @default(false)
-  banReason     String?
-  bannedAt      DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String
+  phone           String?
+  passwordHash    String
+  role            String    @default("CUSTOMER")
+  vehicleClass    String?
+  vehiclePlate    String?
+  rating          Float     @default(5.0)
+  totalDeliveries Int       @default(0)
+  isOnline        Boolean   @default(false)
+  lat             Float?
+  lng             Float?
+  locationAt      DateTime?
+  isBanned        Boolean   @default(false)
+  banReason       String?
+  bannedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   bookingsAsCustomer Booking[]       @relation("CustomerBookings")
   bookingsAsRider    Booking[]       @relation("RiderBookings")
@@ -47,6 +51,8 @@ model User {
 model Booking {
   id              String    @id @default(cuid())
   refCode         String    @unique
+  // "DELIVERY" | "RIDE" — customers pick a mode after logging in.
+  type            String    @default("DELIVERY")
   customerId      String
   riderId         String?
   pickupLabel     String
@@ -56,29 +62,32 @@ model Booking {
   dropoffLat      Float
   dropoffLng      Float
   vehicleClass    String
+  // DELIVERY: cargo weight in kg. RIDE: passenger count (default 1).
   cargoWeightKg   Float     @default(1.0)
+  passengers      Int       @default(1)
   cargoNotes      String?
   scheduledAt     DateTime?
   distanceKm      Float
   baseFare        Float
   surgeMultiplier Float     @default(1.0)
   totalFare       Float
-  currency        String   @default("PHP")
-  status          String   @default("PENDING")
+  currency        String    @default("PHP")
+  status          String    @default("PENDING")
   matchedAt       DateTime?
   pickedUpAt      DateTime?
   deliveredAt     DateTime?
   cancelledAt     DateTime?
   etaMinutes      Int?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   customer        User      @relation("CustomerBookings", fields: [customerId], references: [id])
-  rider           User?     @relation("RiderBookings",  fields: [riderId],    references: [id])
+  rider           User?     @relation("RiderBookings", fields: [riderId], references: [id])
   trackingUpdates TrackingUpdate[]
   deliveryProofs  DeliveryProof[]
 
   @@index([status])
+  @@index([type])
   @@index([riderId])
   @@index([customerId])
 }
@@ -95,7 +104,7 @@ model TrackingUpdate {
   createdAt  DateTime @default(now())
 
   booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  rider      User     @relation(fields: [riderId],   references: [id])
+  rider      User     @relation(fields: [riderId], references: [id])
 
   @@index([bookingId])
   @@index([createdAt])
@@ -115,7 +124,7 @@ model DeliveryProof {
   createdAt     DateTime @default(now())
 
   booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  rider         User     @relation(fields: [riderId],   references: [id])
+  rider         User     @relation(fields: [riderId], references: [id])
 
   @@index([bookingId])
 }
