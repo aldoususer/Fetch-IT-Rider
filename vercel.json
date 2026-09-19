@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "prisma generate && prisma db push --accept-data-loss && next build",
+  "installCommand": "bun install",
+  "github": {
+    "silent": true
+  },
+  "crons": [],
+  "functions": {
+    "src/app/api/auth/seed/route.ts": { "maxDuration": 30 },
+    "src/app/api/bookings/route.ts":  { "maxDuration": 30 }
+  }
+}

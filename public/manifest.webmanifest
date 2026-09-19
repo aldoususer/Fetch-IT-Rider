@@ -1,0 +1,48 @@
+{
+  "name": "Fetch-It Rider \u2014 Drive & Earn",
+  "short_name": "Fetch-It Rider",
+  "description": "The Fetch-It driver app: go online, get matched with nearby delivery jobs, navigate, capture proof of delivery, and track your earnings.",
+  "id": "/?source=pwa",
+  "start_url": "/?source=pwa",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff7ed",
+  "theme_color": "#f97316",
+  "categories": [
+    "logistics",
+    "productivity",
+    "business"
+  ],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Available jobs",
+      "short_name": "Jobs",
+      "url": "/?source=pwa-shortcut-jobs"
+    },
+    {
+      "name": "Go online",
+      "short_name": "Online",
+      "url": "/?source=pwa-shortcut-online"
+    }
+  ]
+}

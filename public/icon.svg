@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#f97316"/>
+  <!-- stylised parcel + upward arrow -->
+  <path d="M128 176 L256 112 L384 176 L384 336 L256 400 L128 336 Z"
+        fill="#ffffff" opacity="0.95"/>
+  <path d="M256 112 L384 176 L256 240 L128 176 Z"
+        fill="#ffffff" opacity="0.55"/>
+  <path d="M224 304 L288 304 L288 240 L320 240 L256 176 L192 240 L224 240 Z"
+        fill="#f97316"/>
+</svg>
