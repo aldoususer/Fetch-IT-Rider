@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
@@ -49,8 +50,18 @@ export async function GET(req: NextRequest) {
     take: 50,
     include: {
       customer: { select: { id: true, name: true, phone: true } },
+      rider: {
+        select: { name: true, phone: true, vehicleClass: true, vehiclePlate: true },
+      },
     },
   });
 
-  return NextResponse.json({ jobs });
+  // Attach the copy-pasteable native-app ticket (R0001/D0001 + encoded order
+  // snapshot) to each job. Riders only — the customer app never returns this.
+  const withTickets = jobs.map((job) => {
+    const snapshot = buildTicketSnapshot(job);
+    return { ...job, ticket: snapshot ? encodeTicket(snapshot) : null };
+  });
+
+  return NextResponse.json({ jobs: withTickets });
 }

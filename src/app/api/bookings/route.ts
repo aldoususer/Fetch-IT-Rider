@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
@@ -50,5 +51,11 @@ export async function GET(req: NextRequest) {
     take: 100,
   });
 
-  return NextResponse.json({ bookings });
+  // Rider app — attach each booking's native-app ticket (see src/lib/ticket.ts).
+  const withTickets = bookings.map((b) => {
+    const snapshot = buildTicketSnapshot(b);
+    return { ...b, ticket: snapshot ? encodeTicket(snapshot) : null };
+  });
+
+  return NextResponse.json({ bookings: withTickets });
 }

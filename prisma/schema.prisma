@@ -51,6 +51,10 @@ model User {
 model Booking {
   id              String    @id @default(cuid())
   refCode         String    @unique
+  // Rider-only tracking ticket — R0001 (ride) / D0001 (delivery), sequential
+  // per type. Carries the order snapshot that gets copy-pasted into the
+  // native tracking app (see src/lib/ticket.ts). Never exposed to customers.
+  ticketId        String?   @unique
   // "DELIVERY" | "RIDE" — customers pick a mode after logging in.
   type            String    @default("DELIVERY")
   customerId      String
@@ -90,6 +94,15 @@ model Booking {
   @@index([type])
   @@index([riderId])
   @@index([customerId])
+}
+
+// Atomic per-type sequence backing Booking.ticketId — one row per
+// TicketType ("RIDE" | "DELIVERY"). Incremented with a raw upsert
+// (see generateTicketId in src/lib/ticket.ts) so two simultaneous
+// bookings never get the same number.
+model TicketCounter {
+  type  String @id
+  value Int    @default(0)
 }
 
 model TrackingUpdate {

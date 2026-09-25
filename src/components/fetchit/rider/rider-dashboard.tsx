@@ -28,6 +28,8 @@ import {
   X,
   Upload,
   Users,
+  Copy,
+  Smartphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +85,10 @@ interface RiderStats {
 interface Job {
   id: string;
   refCode: string;
+  // Rider-only tracking ticket (R0001 / D0001) + its encoded native-app
+  // payload — see src/lib/ticket.ts. Never present in the customer app.
+  ticketId: string | null;
+  ticket: string | null;
   type: string;
   customerId: string;
   riderId: string | null;
@@ -492,6 +498,54 @@ function EmptyJobs({
   );
 }
 
+// Copy-pasteable handoff to the (separate, not-yet-built) native tracking
+// app — the PWA can't run GPS in the background, so the rider pastes this
+// ticket into the native app once, which then reports live location back
+// via the bookingId embedded inside.
+function TrackingTicketCard({ job }: { job: Job }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  async function copyTicket() {
+    if (!job.ticket) return;
+    try {
+      await navigator.clipboard.writeText(job.ticket);
+      setCopied(true);
+      toast({ title: "Ticket copied", description: `${job.ticketId} · paste it into the tracking app` });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: "Couldn't copy", description: "Copy it manually instead.", variant: "destructive" });
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Smartphone className="h-4 w-4 text-primary" />
+          Native tracking ticket
+        </div>
+        <span className="font-mono text-sm font-semibold text-primary">{job.ticketId}</span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Copy this and paste it into the Fetch-It tracking app on your phone — it carries the
+        order details so the app can track your location in the background.
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="w-full"
+        onClick={copyTicket}
+        disabled={!job.ticket}
+      >
+        {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? "Copied" : "Copy ticket"}
+      </Button>
+    </div>
+  );
+}
+
 function JobCard({
   job,
   isAvailable,
@@ -523,6 +577,11 @@ function JobCard({
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm text-muted-foreground">{job.refCode}</span>
+              {job.ticketId && (
+                <Badge variant="outline" className="rounded-md px-2 py-0.5 font-mono text-xs border-primary/40 text-primary">
+                  {job.ticketId}
+                </Badge>
+              )}
               <JobTypeBadge type={job.type} />
               <StatusBadge status={job.status} type={job.type === "RIDE" ? "RIDE" : "DELIVERY"} />
             </div>
@@ -836,6 +895,9 @@ function ActiveJobFlow({
           </div>
         )}
       </div>
+
+      {/* Native-app tracking ticket */}
+      {job.ticketId && <TrackingTicketCard job={job} />}
 
       {/* Customer contact */}
       <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">

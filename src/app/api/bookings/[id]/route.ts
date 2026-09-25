@@ -12,6 +12,7 @@ import {
   VEHICLES,
 } from "@/lib/constants";
 import { etaMinutes } from "@/lib/fare";
+import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -60,7 +61,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  return NextResponse.json({ booking });
+  const snapshot = buildTicketSnapshot(booking);
+  return NextResponse.json({
+    booking: { ...booking, ticket: snapshot ? encodeTicket(snapshot) : null },
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
@@ -139,7 +143,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           },
         },
       });
-      return NextResponse.json({ booking: claimed });
+      const claimedSnapshot = claimed ? buildTicketSnapshot(claimed) : null;
+      return NextResponse.json({
+        booking: claimed
+          ? { ...claimed, ticket: claimedSnapshot ? encodeTicket(claimedSnapshot) : null }
+          : claimed,
+      });
     }
 
     // Only the assigned rider may advance the status (except CANCELLED which
@@ -200,7 +209,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       });
     }
 
-    return NextResponse.json({ booking: updated });
+    const updatedSnapshot = buildTicketSnapshot(updated);
+    return NextResponse.json({
+      booking: { ...updated, ticket: updatedSnapshot ? encodeTicket(updatedSnapshot) : null },
+    });
   } catch (err) {
     console.error("[bookings/[id] PATCH] error", err);
     return NextResponse.json(
