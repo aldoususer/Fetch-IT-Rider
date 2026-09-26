@@ -111,6 +111,7 @@ model TrackingUpdate {
   riderId    String
   lat        Float
   lng        Float
+  source     String   @default("LEGACY") // NATIVE only for ticket-authenticated phone updates
   speedKph   Float?
   heading    Float?
   etaMinutes Int?

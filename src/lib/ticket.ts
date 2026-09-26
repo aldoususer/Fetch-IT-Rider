@@ -5,8 +5,8 @@
 // the order. Riders copy the encoded string out of this PWA and paste it
 // into the companion native app, which can run background GPS the way a
 // website can't. The native app decodes the snapshot to show the job
-// immediately, then POSTs live location to
-// `/api/bookings/{bookingId}/tracking` using the bookingId embedded inside.
+// immediately, then POSTs live location to the rider-authenticated
+// `/api/native/tickets/{ticketId}/location` endpoint.
 //
 // Ticket ids/payloads are never sent to the customer app or shown to
 // customers — see the strip helpers below, used everywhere a Booking is

@@ -51,6 +51,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           riderId: session.uid,
           lat: body.lat!,
           lng: body.lng!,
+          source: "NATIVE",
           speedKph: body.speedKph ?? null,
           heading: body.heading ?? null,
         },

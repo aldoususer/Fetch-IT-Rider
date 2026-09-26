@@ -1,8 +1,8 @@
 "use client";
 
 // Reusable status badge mapping for booking status values. Mode-aware:
-// ride bookings show passenger-facing labels ("Driver on the way"), while
-// delivery bookings keep freight wording ("Rider en route").
+// ride bookings show passenger-facing labels ("Driver accepted"), while
+// delivery bookings keep freight wording ("Rider accepted").
 
 import { Badge } from "@/components/ui/badge";
 import { statusLabel, type BookingStatus } from "@/lib/constants";

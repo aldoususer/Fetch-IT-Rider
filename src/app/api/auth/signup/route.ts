@@ -64,9 +64,6 @@ export async function POST(req: NextRequest) {
         passwordHash: hashPassword(password),
         vehicleClass: role === "RIDER" ? vehicleClass : null,
         vehiclePlate: role === "RIDER" ? vehiclePlate ?? null : null,
-        lat: role === "RIDER" ? 1.3521 + (Math.random() - 0.5) * 0.1 : null,
-        lng: role === "RIDER" ? 103.8198 + (Math.random() - 0.5) * 0.1 : null,
-        locationAt: role === "RIDER" ? new Date() : null,
       },
     });
 

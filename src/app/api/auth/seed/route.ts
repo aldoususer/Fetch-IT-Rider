@@ -39,9 +39,6 @@ export async function POST() {
         vehicleClass: "CLOSED_VAN",
         vehiclePlate: "FIT-2099",
         isOnline: true,
-        lat: 1.3521,
-        lng: 103.8198,
-        locationAt: new Date(),
       },
     });
 
@@ -58,9 +55,6 @@ export async function POST() {
         vehicleClass: "MOTORCYCLE",
         vehiclePlate: "FIT-3140",
         isOnline: true,
-        lat: 1.3450,
-        lng: 103.8120,
-        locationAt: new Date(),
       },
     });
 

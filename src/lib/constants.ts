@@ -192,7 +192,7 @@ export const BOOKING_STATUS_FLOW: BookingStatus[] = [
 export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   PENDING: "Awaiting rider",
   MATCHED: "Rider matched",
-  ACCEPTED: "Rider en route",
+  ACCEPTED: "Rider accepted",
   PICKED_UP: "Package picked up",
   IN_TRANSIT: "In transit",
   DELIVERED: "Delivered",
@@ -207,7 +207,7 @@ export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
 export const RIDE_STATUS_LABEL: Record<BookingStatus, string> = {
   PENDING: "Finding your driver",
   MATCHED: "Driver assigned",
-  ACCEPTED: "Driver on the way",
+  ACCEPTED: "Driver accepted",
   PICKED_UP: "On board",
   IN_TRANSIT: "Heading to drop-off",
   DELIVERED: "Ride completed",

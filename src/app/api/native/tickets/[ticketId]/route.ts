@@ -31,7 +31,11 @@ export async function GET(req: NextRequest, { params }: Params) {
           rating: true,
         },
       },
-      trackingUpdates: { orderBy: { createdAt: "desc" }, take: 1 },
+      trackingUpdates: {
+        where: { source: "NATIVE" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
     },
   });
   if (!booking) return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
