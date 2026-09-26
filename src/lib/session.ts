@@ -3,6 +3,7 @@
 // stateless JSON token signed with a shared secret, suitable for a demo.
 
 import { cookies } from "next/headers";
+import type { NextRequest } from "next/server";
 import type { Role } from "./constants";
 
 const SESSION_COOKIE = "fetchit_session";
@@ -60,6 +61,15 @@ export async function getSession(): Promise<SessionPayload | null> {
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   return verifySessionToken(token);
+}
+
+/** Authenticate native clients with the same signed token used by the web
+ * session. Native apps cannot rely on browser cookies, so they send
+ * `Authorization: Bearer <token>` over HTTPS instead. */
+export function getBearerSession(req: NextRequest): SessionPayload | null {
+  const authorization = req.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) return null;
+  return verifySessionToken(authorization.slice(7).trim());
 }
 
 export async function setSessionCookie(token: string): Promise<void> {

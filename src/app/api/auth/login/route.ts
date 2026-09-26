@@ -56,6 +56,9 @@ export async function POST(req: NextRequest) {
     await setSessionCookie(token);
 
     return NextResponse.json({
+      // Only the native client receives a bearer token. The PWA keeps the
+      // safer HttpOnly-cookie-only response.
+      ...(req.headers.get("x-client") === "fetchit-android" ? { token } : {}),
       user: {
         id: user.id,
         name: user.name,
