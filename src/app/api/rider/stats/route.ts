@@ -23,11 +23,12 @@ export async function GET() {
   const delivered = await db.booking.count({
     where: { riderId: session.uid, status: "DELIVERED" },
   });
-  const available = await db.booking.count({
-    where: { status: "PENDING" },
-  });
-
   const rider = await db.user.findUnique({ where: { id: session.uid } });
+  const available = rider?.isOnline && !rider.isBanned && rider.vehicleClass
+    ? await db.booking.count({
+        where: { status: "PENDING", vehicleClass: rider.vehicleClass, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
+      })
+    : 0;
   const earningsResult = await db.booking.aggregate({
     where: { riderId: session.uid, status: "DELIVERED" },
     _sum: { totalFare: true },

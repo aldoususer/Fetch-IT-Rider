@@ -188,7 +188,7 @@ export function RiderDashboard() {
     toast({
       title: data.isOnline ? "You're online" : "You're offline",
       description: data.isOnline
-        ? "You'll receive new job matches automatically."
+        ? "Due jobs matching your vehicle will appear on the job board."
         : "You won't see new jobs until you go back online.",
     });
     if (data.isOnline) void loadJobs();
@@ -296,7 +296,7 @@ export function RiderDashboard() {
           />
           <StatCard
             icon={<Wallet className="h-5 w-5 text-primary" />}
-            label="Earnings"
+            label="Completed fares"
             value={`₱${(stats?.earnings ?? 0).toFixed(2)}`}
             loading={!stats}
           />
@@ -879,7 +879,7 @@ function ActiveJobFlow({
             <div className="flex-1">
               <p className="font-medium">{isRide ? "Ride complete" : "Delivery complete"}</p>
               <p className="text-sm text-muted-foreground">
-                Payout of ₱{job.totalFare.toFixed(2)} added to your wallet.
+                Recorded fare: ₱{job.totalFare.toFixed(2)}.
               </p>
             </div>
           </CardContent>

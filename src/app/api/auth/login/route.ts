@@ -21,6 +21,13 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    if (
+      process.env.NODE_ENV === "production" &&
+      process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED !== "true" &&
+      ["customer@fetchit.app", "rider@fetchit.app", "rider2@fetchit.app"].includes(email.toLowerCase())
+    ) {
+      return NextResponse.json({ error: "Demo accounts are disabled." }, { status: 403 });
+    }
     const user = await db.user.findUnique({ where: { email } });
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return NextResponse.json(

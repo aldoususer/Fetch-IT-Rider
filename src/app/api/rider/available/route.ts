@@ -28,12 +28,16 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
+  if (rider.isBanned) return NextResponse.json({ error: "Account restricted." }, { status: 403 });
+  if (!rider.isOnline) return NextResponse.json({ jobs: [] });
 
   // PENDING jobs are open to any rider of the matching vehicle class.
   // MATCHED jobs are pre-assigned to *this* rider and waiting for acceptance.
+  const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] };
   const where = includeMatched
     ? {
         vehicleClass: rider.vehicleClass,
+        AND: [due],
         OR: [
           { status: "PENDING" },
           { status: "MATCHED", riderId: session.uid },
@@ -41,6 +45,7 @@ export async function GET(req: NextRequest) {
       }
     : {
         vehicleClass: rider.vehicleClass,
+        AND: [due],
         status: "PENDING" as const,
       };
 

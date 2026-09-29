@@ -192,7 +192,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                       Sign in as rider
                     </Button>
                   </form>
-                  <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  {(process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true") && <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
                     <div className="flex items-center gap-1.5 font-medium text-foreground mb-1.5">
                       <ShieldCheck className="h-3.5 w-3.5 text-primary" />
                       Demo account
@@ -215,7 +215,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                       )}
                       Try the demo rider account
                     </Button>
-                  </div>
+                  </div>}
                   <p className="text-center text-xs text-muted-foreground">
                     Need to send a package? Use the Fetch-It Customer app to book.
                   </p>

@@ -44,6 +44,12 @@ export async function POST(req: NextRequest, { params }: Params) {
         { status: 403 },
       );
     }
+    if (booking.type !== "DELIVERY" || booking.status !== "IN_TRANSIT") {
+      return NextResponse.json({ error: "Proof can only be submitted for a delivery in transit." }, { status: 409 });
+    }
+    if (body.photoDataUrl && body.photoDataUrl.length > 200_000) {
+      return NextResponse.json({ error: "Photo is too large. Choose a smaller image." }, { status: 400 });
+    }
 
     const created: { type: string; verified: boolean }[] = [];
 
@@ -90,15 +96,14 @@ export async function POST(req: NextRequest, { params }: Params) {
       void sig;
     }
 
-    // 3) Photo (data URL — for demo we keep it in DB, truncated if very large)
+    // 3) Photo (data URL — for demo we keep small images in DB)
     if (body.photoDataUrl) {
-      const photo = body.photoDataUrl.slice(0, 200_000); // cap at ~200KB
       const ph = await db.deliveryProof.create({
         data: {
           bookingId: id,
           riderId: session.uid,
           proofType: "PHOTO",
-          photoUrl: photo,
+          photoUrl: body.photoDataUrl,
           recipientName: body.recipientName ?? null,
           notes: body.notes ?? null,
         },
@@ -119,18 +124,22 @@ export async function POST(req: NextRequest, { params }: Params) {
     const anyVerified = created.some(
       (p) => p.verified && (p.type === "OTP" || p.type === "SIGNATURE"),
     );
-    if (
-      anyVerified &&
-      ["IN_TRANSIT", "PICKED_UP", "ACCEPTED"].includes(booking.status)
-    ) {
-      await db.booking.update({
-        where: { id },
-        data: { status: "DELIVERED", deliveredAt: new Date() },
+    if (anyVerified) {
+      const completed = await db.$transaction(async (tx) => {
+        const result = await tx.booking.updateMany({
+          where: { id, riderId: session.uid, status: "IN_TRANSIT" },
+          data: { status: "DELIVERED", deliveredAt: new Date() },
+        });
+        if (result.count === 0) return false;
+        await tx.user.update({
+          where: { id: session.uid },
+          data: { totalDeliveries: { increment: 1 } },
+        });
+        return true;
       });
-      await db.user.update({
-        where: { id: session.uid },
-        data: { totalDeliveries: { increment: 1 } },
-      });
+      if (!completed) {
+        return NextResponse.json({ error: "Booking status changed. Refresh and try again." }, { status: 409 });
+      }
     }
 
     return NextResponse.json({ ok: true, proofs: created });

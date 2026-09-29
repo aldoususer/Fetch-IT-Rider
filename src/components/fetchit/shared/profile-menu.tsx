@@ -1,10 +1,8 @@
 "use client";
 
 // The avatar in the header opens this menu. It bundles the account
-// actions that don't need their own dedicated page: settings,
-// notifications, installing the app, and logging out. Settings and
-// Notifications open their own small dialogs so nothing here needs a
-// separate route.
+// actions that don't need their own dedicated page: account details,
+// installing the app, and logging out.
 
 import { useState } from "react";
 import {
@@ -23,9 +21,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Settings, Bell, Download, LogOut, BellOff } from "lucide-react";
+import { Settings, Download, LogOut } from "lucide-react";
 import { useInstallPrompt } from "./install-pwa-button";
 
 export function ProfileMenu({
@@ -41,9 +37,6 @@ export function ProfileMenu({
 }) {
   const { canInstall, install } = useInstallPrompt();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [emailNotifs, setEmailNotifs] = useState(true);
-  const [smsNotifs, setSmsNotifs] = useState(false);
 
   const initial = name?.[0]?.toUpperCase() ?? "?";
 
@@ -75,9 +68,6 @@ export function ProfileMenu({
           <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
             <Settings className="h-4 w-4" /> Settings
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setNotificationsOpen(true)}>
-            <Bell className="h-4 w-4" /> Notifications
-          </DropdownMenuItem>
           {canInstall && (
             <DropdownMenuItem onClick={install}>
               <Download className="h-4 w-4" /> Install app
@@ -97,56 +87,29 @@ export function ProfileMenu({
             <DialogTitle className="flex items-center gap-2">
               <Settings className="h-5 w-5 text-primary" /> Settings
             </DialogTitle>
-            <DialogDescription>Your account and notification preferences.</DialogDescription>
+            <DialogDescription>Your account details.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="rounded-md border p-3 space-y-1 text-sm">
-              <div className="flex justify-between">
+            <div className="min-w-0 rounded-md border p-3 space-y-1 text-sm">
+              <div className="flex justify-between gap-3">
                 <span className="text-muted-foreground">Name</span>
-                <span className="font-medium">{name ?? "—"}</span>
+                <span className="min-w-0 text-right font-medium [overflow-wrap:anywhere]">{name ?? "—"}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between gap-3">
                 <span className="text-muted-foreground">Email</span>
-                <span className="font-medium">{email ?? "—"}</span>
+                <span className="min-w-0 text-right font-medium [overflow-wrap:anywhere]">{email ?? "—"}</span>
               </div>
               {roleLabel && (
-                <div className="flex justify-between">
+                <div className="flex justify-between gap-3">
                   <span className="text-muted-foreground">Account type</span>
-                  <span className="font-medium">{roleLabel}</span>
+                  <span className="min-w-0 text-right font-medium [overflow-wrap:anywhere]">{roleLabel}</span>
                 </div>
               )}
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="email-notifs" className="font-normal">Email notifications</Label>
-                <Switch id="email-notifs" checked={emailNotifs} onCheckedChange={setEmailNotifs} />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="sms-notifs" className="font-normal">SMS notifications</Label>
-                <Switch id="sms-notifs" checked={smsNotifs} onCheckedChange={setSmsNotifs} />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                These preferences apply to this session only for now.
-              </p>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Notifications */}
-      <Dialog open={notificationsOpen} onOpenChange={setNotificationsOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bell className="h-5 w-5 text-primary" /> Notifications
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
-            <BellOff className="h-8 w-8" />
-            <p className="text-sm">No notifications yet.</p>
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

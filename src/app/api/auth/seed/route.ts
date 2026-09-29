@@ -9,6 +9,9 @@ import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 
 export async function POST() {
+  if (process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED !== "true") {
+    return NextResponse.json({ error: "Demo accounts are disabled." }, { status: 403 });
+  }
   try {
     const DEMO_PASSWORD = hashPassword("demo1234");
 

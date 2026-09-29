@@ -51,13 +51,13 @@ const FEATURES = [
   },
   {
     icon: Wallet,
-    title: "Clear Earnings Tracking",
-    desc: "See every payout as you complete deliveries — fare, surge bonus, and your lifetime earnings at a glance.",
+    title: "Completed Fare Summary",
+    desc: "See the recorded fares for your completed jobs at a glance.",
   },
   {
     icon: MapPin,
-    title: "Location-Aware Dispatch",
-    desc: "Go online and share your position so nearby jobs are routed to you first — go offline any time.",
+    title: "Vehicle-Matched Job Board",
+    desc: "Go online to see due jobs matching your vehicle class, then claim one from the board.",
   },
   {
     icon: ShieldCheck,
@@ -68,22 +68,24 @@ const FEATURES = [
 
 const STEPS = [
   { n: "01", t: "Sign up & add your vehicle", d: "Tell us your vehicle class — motorcycle to refrigerated van — and plate number." },
-  { n: "02", t: "Go online", d: "Toggle your status and share your location to start receiving nearby jobs." },
+  { n: "02", t: "Go online", d: "Toggle your status to see due jobs for your vehicle class." },
   { n: "03", t: "Claim & pick up", d: "Accept a job from the board, navigate to the pickup, and confirm the cargo." },
-  { n: "04", t: "Deliver & get paid", d: "Capture OTP, signature or photo proof on arrival — the payout lands in your wallet." },
+  { n: "04", t: "Complete the job", d: "Capture OTP or signature proof on arrival and review the recorded fare." },
 ];
 
 export function LandingView() {
+  const demoEnabled = process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true";
   const setView = useAppStore((s) => s.setView);
   const setPendingRole = useAppStore((s) => s.setPendingRole);
   const [seeded, setSeeded] = useState(false);
 
   // Pre-seed demo accounts once so the "Try demo" button works instantly.
   useEffect(() => {
+    if (!demoEnabled) return;
     fetch("/api/auth/seed", { method: "POST" })
-      .then(() => setSeeded(true))
-      .catch(() => setSeeded(true));
-  }, []);
+      .then((res) => setSeeded(res.ok))
+      .catch(() => setSeeded(false));
+  }, [demoEnabled]);
 
   function pickRole(role: Role, view: "login" | "signup") {
     setPendingRole(role);
@@ -230,7 +232,7 @@ export function LandingView() {
                   Sign up as rider
                 </Button>
               </div>
-              <Button
+              {demoEnabled && <Button
                 variant="ghost"
                 size="sm"
                 className="w-full text-muted-foreground"
@@ -239,7 +241,7 @@ export function LandingView() {
               >
                 <Play className="h-3.5 w-3.5" />
                 {seeded ? "Try the demo rider account" : "Preparing demo…"}
-              </Button>
+              </Button>}
             </CardContent>
           </Card>
         </div>
