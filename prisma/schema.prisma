@@ -46,6 +46,9 @@ model User {
   bookingsAsRider    Booking[]       @relation("RiderBookings")
   trackingUpdates    TrackingUpdate[]
   deliveryProofs     DeliveryProof[]
+  reviewsAsCustomer CustomerReview[] @relation("ReviewCustomer")
+  reviewsAsRider CustomerReview[] @relation("ReviewRider")
+  supportTickets SupportTicket[]
 }
 
 model Booking {
@@ -89,6 +92,8 @@ model Booking {
   rider           User?     @relation("RiderBookings", fields: [riderId], references: [id])
   trackingUpdates TrackingUpdate[]
   deliveryProofs  DeliveryProof[]
+  review CustomerReview?
+  supportTickets SupportTicket[]
 
   @@index([status])
   @@index([type])
@@ -141,4 +146,34 @@ model DeliveryProof {
   rider         User     @relation(fields: [riderId], references: [id])
 
   @@index([bookingId])
+}
+
+model CustomerReview {
+  id String @id @default(cuid())
+  bookingId String @unique
+  customerId String
+  riderId String
+  rating Int
+  comment String?
+  createdAt DateTime @default(now())
+  booking Booking @relation(fields: [bookingId], references: [id])
+  customer User @relation("ReviewCustomer", fields: [customerId], references: [id])
+  rider User @relation("ReviewRider", fields: [riderId], references: [id])
+  @@index([riderId])
+}
+
+model SupportTicket {
+  id String @id @default(cuid())
+  customerId String
+  bookingId String
+  category String
+  message String
+  status String @default("OPEN")
+  adminReply String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  customer User @relation(fields: [customerId], references: [id])
+  booking Booking @relation(fields: [bookingId], references: [id])
+  @@index([customerId, createdAt])
+  @@index([status])
 }
