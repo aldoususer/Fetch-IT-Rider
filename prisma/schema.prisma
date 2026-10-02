@@ -49,6 +49,7 @@ model User {
   reviewsAsCustomer CustomerReview[] @relation("ReviewCustomer")
   reviewsAsRider CustomerReview[] @relation("ReviewRider")
   supportTickets SupportTicket[]
+  assignedSupportTickets SupportTicket[] @relation("SupportAssignee")
 }
 
 model Booking {
@@ -170,10 +171,38 @@ model SupportTicket {
   message String
   status String @default("OPEN")
   adminReply String?
+  priority String @default("NORMAL")
+  assignedAdminId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   customer User @relation(fields: [customerId], references: [id])
   booking Booking @relation(fields: [bookingId], references: [id])
+  assignedAdmin User? @relation("SupportAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+  messages SupportMessage[]
   @@index([customerId, createdAt])
   @@index([status])
+}
+
+model SupportMessage {
+  id String @id @default(cuid())
+  ticketId String
+  authorId String
+  authorName String
+  body String
+  createdAt DateTime @default(now())
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  @@index([ticketId, createdAt])
+}
+
+model AdminAudit {
+  id String @id @default(cuid())
+  actorId String
+  actorName String
+  action String
+  entityType String
+  entityId String
+  details Json
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+  @@index([entityType, entityId])
 }
