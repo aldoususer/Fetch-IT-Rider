@@ -67,6 +67,7 @@ import {
 import { cn } from "@/lib/utils";
 import { FetchItLogo } from "../shared/logo";
 import { StatusBadge } from "../shared/status-badge";
+import { JobRouteMap } from "./job-route-map";
 import { SignaturePad } from "../shared/signature-pad";
 import { ProfileMenu } from "../shared/profile-menu";
 
@@ -329,7 +330,7 @@ export function RiderDashboard() {
 
         {/* Job list */}
         {loading ? (
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 [&>*]:min-w-0">
             {[0, 1, 2, 3].map((i) => (
               <Card key={i} className="border">
                 <CardHeader><Skeleton className="h-6 w-40" /></CardHeader>
@@ -347,7 +348,7 @@ export function RiderDashboard() {
             onGoOnline={() => toggleOnline(true)}
           />
         ) : (
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 [&>*]:min-w-0">
             {jobs.map((job) => (
               <JobCard
                 key={job.id}
@@ -571,7 +572,7 @@ function JobCard({
   }
 
   return (
-    <Card className="border hover:shadow-md transition flex flex-col">
+    <Card className="border hover:shadow-md transition flex flex-col min-w-0 overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -585,8 +586,8 @@ function JobCard({
               <JobTypeBadge type={job.type} />
               <StatusBadge status={job.status} type={job.type === "RIDE" ? "RIDE" : "DELIVERY"} />
             </div>
-            <CardTitle className="text-base mt-1.5 truncate">{job.dropoffLabel}</CardTitle>
-            <CardDescription className="flex items-center gap-1 mt-0.5">
+            <CardTitle className="text-base mt-1.5 break-words">{job.dropoffLabel}</CardTitle>
+            <CardDescription className="flex items-start gap-1 mt-0.5 break-words [&_svg]:shrink-0">
               <MapPin className="h-3.5 w-3.5" /> from {job.pickupLabel}
             </CardDescription>
           </div>
@@ -656,7 +657,7 @@ function Stat({
   icon?: React.ReactNode;
 }) {
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-0.5 min-w-0 break-words">
       <div className="text-xs text-muted-foreground flex items-center gap-1">{icon} {label}</div>
       <div className="font-medium text-sm">{value}</div>
     </div>
@@ -752,7 +753,7 @@ function ActiveJobFlow({
   const isDelivered = status === "DELIVERED";
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0 [&>*]:min-w-0">
       {/* Stepper */}
       <div className="flex items-center justify-between gap-2">
         {STATUS_STEPS.map((s) => {
@@ -760,7 +761,7 @@ function ActiveJobFlow({
           const currentIdx = STATUS_STEPS.indexOf(status);
           const active = idx <= currentIdx;
           return (
-            <div key={s} className="flex-1 flex flex-col items-center text-center">
+            <div key={s} className="flex-1 min-w-0 flex flex-col items-center text-center">
               <div
                 className={cn(
                   "h-9 w-9 rounded-full grid place-items-center border-2",
@@ -779,33 +780,26 @@ function ActiveJobFlow({
         })}
       </div>
 
-      {/* Map */}
-      <div className="relative rounded-xl overflow-hidden border bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 dark:from-amber-950/30 dark:via-orange-950/30 dark:to-amber-900/30 aspect-[16/8]">
-        <JobMiniMap
-          pickup={{ lat: job.pickupLat, lng: job.pickupLng }}
-          dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }}
-        />
-      </div>
-
+      <JobRouteMap pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} />
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
         <div className="flex items-start gap-2">
-          <div className="grid place-items-center h-6 w-6 rounded-full bg-emerald-100 text-emerald-700 mt-0.5">
+          <div className="grid place-items-center h-6 w-6 shrink-0 rounded-full bg-emerald-100 text-emerald-700 mt-0.5">
             <span className="h-2 w-2 rounded-full bg-emerald-600" />
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Pickup</p>
-            <p className="font-medium">{job.pickupLabel}</p>
+            <p className="font-medium break-words">{job.pickupLabel}</p>
           </div>
         </div>
         <div className="ml-3 border-l-2 border-dashed border-border h-3" />
         <div className="flex items-start gap-2">
-          <div className="grid place-items-center h-6 w-6 rounded-full bg-rose-100 text-rose-700 mt-0.5">
+          <div className="grid place-items-center h-6 w-6 shrink-0 rounded-full bg-rose-100 text-rose-700 mt-0.5">
             <span className="h-2 w-2 rounded-full bg-rose-600" />
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Drop-off</p>
-            <p className="font-medium">{job.dropoffLabel}</p>
+            <p className="font-medium break-words">{job.dropoffLabel}</p>
           </div>
         </div>
       </div>
@@ -985,7 +979,7 @@ function ProofCapture({
           or a drop-off photo.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 min-w-0 [&>*]:min-w-0">
         {/* OTP */}
         <div className="space-y-2">
           <Label htmlFor="otp" className="text-sm font-medium flex items-center gap-1.5">
@@ -1081,80 +1075,6 @@ function ProofCapture({
       </CardContent>
     </Card>
   );
-}
-
-// ------------------------------ Job mini map ------------------------------
-function JobMiniMap({
-  pickup,
-  dropoff,
-}: {
-  pickup: { lat: number; lng: number };
-  dropoff: { lat: number; lng: number };
-}) {
-  // Same computation as the customer mini map, but without rider.
-  const bounds = computeBounds([pickup, dropoff]);
-  const W = 400, H = 200;
-  const p = project(pickup, bounds, W, H);
-  const d = project(dropoff, bounds, W, H);
-  const midX = (p.x + d.x) / 2;
-  const midY = (p.y + d.y) / 2 - 25;
-  const path = `M ${p.x} ${p.y} Q ${midX} ${midY} ${d.x} ${d.y}`;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid slice">
-      <defs>
-        <pattern id="streets3" width="30" height="30" patternUnits="userSpaceOnUse">
-          <path d="M 30 0 L 0 0 0 30" fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-        </pattern>
-        <linearGradient id="routeGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#10b981" />
-          <stop offset="100%" stopColor="#ef4444" />
-        </linearGradient>
-      </defs>
-      <rect width={W} height={H} fill="url(#streets3)" />
-      <path d={path} fill="none" stroke="url(#routeGrad2)" strokeWidth="3.5" strokeLinecap="round" />
-      <g transform={`translate(${p.x}, ${p.y})`}>
-        <circle r="10" fill="#10b981" opacity="0.2" />
-        <circle r="6" fill="#10b981" />
-      </g>
-      <g transform={`translate(${d.x}, ${d.y})`}>
-        <circle r="10" fill="#ef4444" opacity="0.2" />
-        <circle r="6" fill="#ef4444" />
-      </g>
-    </svg>
-  );
-}
-
-function computeBounds(points: { lat: number; lng: number }[]): Bounds {
-  if (points.length === 0) return { minLat: 0, maxLat: 1, minLng: 0, maxLng: 1 };
-  let minLat = points[0].lat, maxLat = points[0].lat;
-  let minLng = points[0].lng, maxLng = points[0].lng;
-  for (const p of points) {
-    if (p.lat < minLat) minLat = p.lat;
-    if (p.lat > maxLat) maxLat = p.lat;
-    if (p.lng < minLng) minLng = p.lng;
-    if (p.lng > maxLng) maxLng = p.lng;
-  }
-  const padLat = Math.max(0.001, (maxLat - minLat) * 0.15);
-  const padLng = Math.max(0.001, (maxLng - minLng) * 0.15);
-  return {
-    minLat: minLat - padLat,
-    maxLat: maxLat + padLat,
-    minLng: minLng - padLng,
-    maxLng: maxLng + padLng,
-  };
-}
-
-interface Bounds {
-  minLat: number;
-  maxLat: number;
-  minLng: number;
-  maxLng: number;
-}
-
-function project(p: { lat: number; lng: number }, b: Bounds, w: number, h: number) {
-  const x = ((p.lng - b.minLng) / (b.maxLng - b.minLng)) * w;
-  const y = h - ((p.lat - b.minLat) / (b.maxLat - b.minLat)) * h;
-  return { x, y };
 }
 
 // ------------------------------ Vehicle icon helper ------------------------------
