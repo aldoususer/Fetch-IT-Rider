@@ -3,13 +3,15 @@
 // assets, so the user always gets fresh content when online but can still
 // load the app shell offline.
 
-const CACHE_VERSION = "fetchit-rider-v1";
+const CACHE_VERSION = "fetchit-rider-logo-v2";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
-  "/icon-192.png",
-  "/icon-512.png",
-  "/icon.svg",
+  "/rider-logo.png",
+  "/rider-icon-192.png",
+  "/rider-icon-512.png",
+  "/rider-favicon-32.png",
+  "/rider-apple-touch-icon.png",
 ];
 
 self.addEventListener("install", (event) => {
