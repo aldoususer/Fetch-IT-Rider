@@ -1,14 +1,16 @@
+import { bookingView, riderSelect } from "@/lib/db-data";
+import type { Prisma } from "@prisma/client";
 // GET /api/rider/available
 // Returns PENDING bookings that match the rider's vehicle class.
 // Only meaningful for the RIDER role.
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getSession } from "@/lib/session";
+import { getRiderSession } from "@/lib/rider-access";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 
 export async function GET(req: NextRequest) {
-  const session = await getSession();
+  const session = await getRiderSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -21,22 +23,22 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const includeMatched = url.searchParams.get("includeMatched") === "true";
 
-  const rider = await db.user.findUnique({ where: { id: session.uid } });
-  if (!rider || !rider.vehicleClass) {
+  const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
+  if (!rider || !rider.riderProfile?.vehicleClass) {
     return NextResponse.json(
       { error: "Rider profile is incomplete (missing vehicle class)." },
       { status: 400 },
     );
   }
   if (rider.isBanned) return NextResponse.json({ error: "Account restricted." }, { status: 403 });
-  if (!rider.isOnline) return NextResponse.json({ jobs: [] });
+  if (!rider.riderPresence?.isOnline) return NextResponse.json({ jobs: [] });
 
   // PENDING jobs are open to any rider of the matching vehicle class.
   // MATCHED jobs are pre-assigned to *this* rider and waiting for acceptance.
   const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] };
-  const where = includeMatched
+  const where: Prisma.BookingWhereInput = includeMatched
     ? {
-        vehicleClass: rider.vehicleClass,
+        vehicleClass: rider.riderProfile?.vehicleClass,
         AND: [due],
         OR: [
           { status: "PENDING" },
@@ -44,7 +46,7 @@ export async function GET(req: NextRequest) {
         ],
       }
     : {
-        vehicleClass: rider.vehicleClass,
+        vehicleClass: rider.riderProfile?.vehicleClass,
         AND: [due],
         status: "PENDING" as const,
       };
@@ -55,9 +57,7 @@ export async function GET(req: NextRequest) {
     take: 50,
     include: {
       customer: { select: { id: true, name: true, phone: true } },
-      rider: {
-        select: { name: true, phone: true, vehicleClass: true, vehiclePlate: true },
-      },
+      rider: { select: riderSelect },
     },
   });
 
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
   // snapshot) to each job. Riders only — the customer app never returns this.
   const withTickets = jobs.map((job) => {
     const snapshot = buildTicketSnapshot(job);
-    return { ...job, ticket: snapshot ? encodeTicket(snapshot) : null };
+    return { ...bookingView(job), ticket: snapshot ? encodeTicket(snapshot) : null };
   });
 
   return NextResponse.json({ jobs: withTickets });

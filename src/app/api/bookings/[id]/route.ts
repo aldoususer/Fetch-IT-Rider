@@ -1,3 +1,5 @@
+import { bookingView, riderSelect } from "@/lib/db-data";
+import { recordBookingEvent } from "@/lib/booking-events";
 // /api/bookings/[id]
 // GET    — fetch a single booking (with customer / rider / proofs / latest tracking).
 // PATCH  — rider updates the booking status (ACCEPTED | PICKED_UP | IN_TRANSIT | DELIVERED).
@@ -5,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getSession } from "@/lib/session";
+import { getRiderSession } from "@/lib/rider-access";
 import {
   BOOKING_STATUS_FLOW,
   type BookingStatus,
@@ -17,7 +19,7 @@ import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Params) {
-  const session = await getSession();
+  const session = await getRiderSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -27,19 +29,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     where: { id },
     include: {
       customer: { select: { id: true, name: true, phone: true, email: true } },
-      rider: {
-        select: {
-          id: true,
-          name: true,
-          phone: true,
-          vehicleClass: true,
-          vehiclePlate: true,
-          lat: true,
-          lng: true,
-          rating: true,
-          totalDeliveries: true,
-        },
-      },
+      rider: { select: riderSelect },
       trackingUpdates: {
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -63,13 +53,13 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const snapshot = buildTicketSnapshot(booking);
   return NextResponse.json({
-    booking: { ...booking, ticket: snapshot ? encodeTicket(snapshot) : null },
+    booking: { ...bookingView(booking), ticket: snapshot ? encodeTicket(snapshot) : null },
   });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
-    const session = await getSession();
+    const session = await getRiderSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -105,25 +95,29 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       if (booking.scheduledAt && booking.scheduledAt > now) {
         return NextResponse.json({ error: "This scheduled job is not available yet." }, { status: 409 });
       }
-      const rider = await db.user.findUnique({ where: { id: session.uid } });
+      const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
       if (rider?.isBanned) {
         return NextResponse.json(
           { error: "Your account has been restricted and can't accept jobs." },
           { status: 403 },
         );
       }
-      if (!rider?.isOnline) {
+      if (!rider?.riderPresence?.isOnline) {
         return NextResponse.json({ error: "Go online before accepting jobs." }, { status: 403 });
       }
-      if (!rider || rider.vehicleClass !== booking.vehicleClass) {
+      if (!rider || rider.riderProfile?.vehicleClass !== booking.vehicleClass) {
         return NextResponse.json(
           { error: "Your vehicle class doesn't match this job." },
           { status: 403 },
         );
       }
-      const claim = await db.booking.updateMany({
+      const claim = await db.$transaction(async tx => {
+        const claim = await tx.booking.updateMany({
         where: { id, status: "PENDING", riderId: null, OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }] },
         data: { riderId: session.uid, status: "ACCEPTED", matchedAt: now },
+      });
+        if (claim.count) await recordBookingEvent(tx, id, session, { action: "ASSIGNED", fromStatus: "PENDING", toStatus: "ACCEPTED", riderId: session.uid });
+        return claim;
       });
       if (claim.count === 0) {
         return NextResponse.json(
@@ -135,24 +129,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         where: { id },
         include: {
           customer: { select: { id: true, name: true, phone: true } },
-          rider: {
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-              vehicleClass: true,
-              vehiclePlate: true,
-              lat: true,
-              lng: true,
-              rating: true,
-            },
-          },
+          rider: { select: riderSelect },
         },
       });
       const claimedSnapshot = claimed ? buildTicketSnapshot(claimed) : null;
       return NextResponse.json({
         booking: claimed
-          ? { ...claimed, ticket: claimedSnapshot ? encodeTicket(claimedSnapshot) : null }
+          ? { ...bookingView(claimed), ticket: claimedSnapshot ? encodeTicket(claimedSnapshot) : null }
           : claimed,
       });
     }
@@ -186,7 +169,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: `Cannot change ${booking.status} to ${status}.` }, { status: 409 });
     }
 
-    const updates: Record<string, unknown> = { status };
+    const updates: import("@prisma/client").Prisma.BookingUpdateManyMutationInput = { status };
 
     if (status === "ACCEPTED") updates.matchedAt ??= now;
     if (status === "PICKED_UP") updates.pickedUpAt = now;
@@ -201,17 +184,23 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     const changed = await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
+      if (status === "DELIVERED" && booking.type === "DELIVERY") {
+        const proof = await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: { in: ["OTP", "SIGNATURE"] }, verifiedAt: { not: null } } });
+        if (!proof) return false;
+      }
       const result = await tx.booking.updateMany({
         where: { id, status: booking.status, riderId: booking.riderId },
         data: updates,
       });
       if (result.count === 0) return false;
       if (status === "DELIVERED" && booking.riderId) {
-        await tx.user.update({
-          where: { id: booking.riderId },
+        await tx.riderProfile.update({
+          where: { userId: booking.riderId },
           data: { totalDeliveries: { increment: 1 } },
         });
       }
+      await recordBookingEvent(tx, id, session, { action: "STATUS_CHANGED", fromStatus: booking.status, toStatus: status, riderId: booking.riderId });
       return true;
     });
     if (!changed) {
@@ -221,25 +210,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       where: { id },
       include: {
         customer: { select: { id: true, name: true, phone: true } },
-        rider: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            vehicleClass: true,
-            vehiclePlate: true,
-            lat: true,
-            lng: true,
-            rating: true,
-          },
-        },
+        rider: { select: riderSelect },
       },
     });
 
     if (!updated) return NextResponse.json({ error: "Booking not found." }, { status: 404 });
     const updatedSnapshot = buildTicketSnapshot(updated);
     return NextResponse.json({
-      booking: { ...updated, ticket: updatedSnapshot ? encodeTicket(updatedSnapshot) : null },
+      booking: { ...bookingView(updated), ticket: updatedSnapshot ? encodeTicket(updatedSnapshot) : null },
     });
   } catch (err) {
     console.error("[bookings/[id] PATCH] error", err);

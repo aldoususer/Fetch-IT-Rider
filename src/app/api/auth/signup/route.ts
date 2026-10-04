@@ -1,3 +1,4 @@
+import { publicUser } from "@/lib/db-data";
 // POST /api/auth/signup
 // Body: { name, email, password, role, phone?, vehicleClass?, vehiclePlate? }
 // Creates a new user and issues a session cookie.
@@ -6,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 import { createSessionToken, setSessionCookie } from "@/lib/session";
-import type { Role, VehicleClass } from "@/lib/constants";
+import { VEHICLES, type Role, type VehicleClass } from "@/lib/constants";
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,11 +24,11 @@ export async function POST(req: NextRequest) {
       };
 
     if (
-      !name ||
-      !email ||
-      !password ||
+      typeof name !== "string" || !name.trim() || name.length > 80 ||
+      typeof email !== "string" || !email.trim() || email.length > 254 ||
+      typeof password !== "string" || !password ||
       !role ||
-      (role !== "CUSTOMER" && role !== "RIDER")
+      role !== "RIDER"
     ) {
       return NextResponse.json(
         { error: "Missing or invalid fields." },
@@ -40,14 +41,15 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (role === "RIDER" && !vehicleClass) {
+    if (role === "RIDER" && (!vehicleClass || !Object.hasOwn(VEHICLES, vehicleClass))) {
       return NextResponse.json(
         { error: "Riders must specify a vehicle class." },
         { status: 400 },
       );
     }
 
-    const existing = await db.user.findUnique({ where: { email } });
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await db.user.findUnique({ where: { email: normalizedEmail } });
     if (existing) {
       return NextResponse.json(
         { error: "Email is already registered." },
@@ -58,13 +60,14 @@ export async function POST(req: NextRequest) {
     const user = await db.user.create({
       data: {
         name,
-        email,
+        email: normalizedEmail,
         phone,
         role,
-        passwordHash: hashPassword(password),
-        vehicleClass: role === "RIDER" ? vehicleClass : null,
-        vehiclePlate: role === "RIDER" ? vehiclePlate ?? null : null,
+        authIdentities: { create: { provider: "PASSWORD", providerUserId: normalizedEmail, passwordHash: hashPassword(password) } },
+        riderProfile: { create: { vehicleClass: vehicleClass!, vehiclePlate: vehiclePlate ?? null } },
+        riderPresence: { create: {} },
       },
+      include: { riderProfile: true, riderPresence: true },
     });
 
     const token = createSessionToken({
@@ -76,15 +79,7 @@ export async function POST(req: NextRequest) {
     await setSessionCookie(token);
 
     return NextResponse.json({
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-        vehicleClass: user.vehicleClass,
-        vehiclePlate: user.vehiclePlate,
-      },
+      user: publicUser(user),
     });
   } catch (err) {
     console.error("[signup] error", err);

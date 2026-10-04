@@ -1,3 +1,4 @@
+import { publicUser } from "@/lib/db-data";
 // POST /api/auth/login
 // Body: { email, password, role? } — role is optional but recommended; if provided,
 // we verify that the account's role matches to prevent customer-as-rider logins.
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
       password: string;
       role?: Role;
     };
-    if (!email || !password) {
+    if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) {
       return NextResponse.json(
         { error: "Email and password are required." },
         { status: 400 },
@@ -28,8 +29,8 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json({ error: "Demo accounts are disabled." }, { status: 403 });
     }
-    const user = await db.user.findUnique({ where: { email } });
-    if (!user || !verifyPassword(password, user.passwordHash)) {
+    const user = await db.user.findUnique({ where: { email: email.trim().toLowerCase() }, include: { authIdentities: { where: { provider: "PASSWORD" } }, riderProfile: true, riderPresence: true } });
+    if (!user || !user.authIdentities[0]?.passwordHash || !verifyPassword(password, user.authIdentities[0].passwordHash)) {
       return NextResponse.json(
         { error: "Invalid email or password." },
         { status: 401 },
@@ -45,10 +46,10 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     }
-    if (role && user.role !== role) {
+    if (user.role !== "RIDER" || (role && user.role !== role)) {
       return NextResponse.json(
         {
-          error: `This account is registered as ${user.role.toLowerCase()}, not ${role.toLowerCase()}.`,
+          error: `This account is registered as ${user.role.toLowerCase()}, not ${(role ?? "RIDER").toLowerCase()}.`,
         },
         { status: 403 },
       );
@@ -66,18 +67,7 @@ export async function POST(req: NextRequest) {
       // Only the native client receives a bearer token. The PWA keeps the
       // safer HttpOnly-cookie-only response.
       ...(req.headers.get("x-client") === "fetchit-android" ? { token } : {}),
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-        vehicleClass: user.vehicleClass,
-        vehiclePlate: user.vehiclePlate,
-        rating: user.rating,
-        totalDeliveries: user.totalDeliveries,
-        isOnline: user.isOnline,
-      },
+      user: publicUser(user),
     });
   } catch (err) {
     console.error("[login] error", err);

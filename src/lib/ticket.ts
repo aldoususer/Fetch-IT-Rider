@@ -95,7 +95,7 @@ export interface BookingForTicket {
   passengers: number;
   cargoNotes: string | null;
   distanceKm: number;
-  totalFare: number;
+  totalFare: number | Prisma.Decimal;
   currency: string;
   scheduledAt: Date | string | null;
   createdAt: Date | string;
@@ -103,8 +103,7 @@ export interface BookingForTicket {
   rider?: {
     name: string;
     phone: string | null;
-    vehicleClass: string | null;
-    vehiclePlate: string | null;
+    riderProfile?: { vehicleClass: string; vehiclePlate: string | null } | null;
   } | null;
 }
 
@@ -122,8 +121,8 @@ export function buildTicketSnapshot(
       ? {
           name: booking.rider.name,
           phone: booking.rider.phone,
-          vehicleClass: booking.rider.vehicleClass,
-          vehiclePlate: booking.rider.vehiclePlate,
+          vehicleClass: booking.rider.riderProfile?.vehicleClass ?? null,
+          vehiclePlate: booking.rider.riderProfile?.vehiclePlate ?? null,
         }
       : null,
     pickup: { label: booking.pickupLabel, lat: booking.pickupLat, lng: booking.pickupLng },
@@ -133,7 +132,7 @@ export function buildTicketSnapshot(
     passengers: booking.passengers,
     cargoNotes: booking.cargoNotes,
     distanceKm: booking.distanceKm,
-    totalFare: booking.totalFare,
+    totalFare: Number(booking.totalFare),
     currency: booking.currency,
     scheduledAt: booking.scheduledAt ? new Date(booking.scheduledAt).toISOString() : null,
     createdAt: new Date(booking.createdAt).toISOString(),

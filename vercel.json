@@ -6,7 +6,17 @@
     "silent": true
   },
   "functions": {
-    "src/app/api/auth/seed/route.ts": { "maxDuration": 30 },
-    "src/app/api/bookings/route.ts": { "maxDuration": 30 }
-  }
+    "src/app/api/auth/seed/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/bookings/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/maintenance/tracking",
+      "schedule": "0 2 * * *"
+    }
+  ]
 }

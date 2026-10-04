@@ -1,7 +1,7 @@
 # Fetch-It Rider
 
 Driver app for Fetch-It — claim and complete **Delivery** and **Ride** jobs.
-Next.js 16 · App Router · TypeScript · Tailwind CSS 4 · shadcn/ui · Prisma · PostgreSQL (Railway) · Vercel-ready PWA.
+Next.js 16 · App Router · TypeScript · Tailwind CSS 4 · shadcn/ui · Prisma · PostgreSQL (Neon) · Vercel-ready PWA.
 
 ## What's inside
 
@@ -23,7 +23,7 @@ npm run dev                   # http://localhost:3001
 
 1. Push this folder to a GitHub repo and import it in Vercel.
 2. Set environment variables:
-   - `DATABASE_URL` — the **public** Railway PostgreSQL connection string.
+   - `DATABASE_URL` — the shared Neon PostgreSQL connection string.
    - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` — a Maps/Places-enabled Google key.
    - (optional) `NEXT_PUBLIC_TRACKING_SOCKET_URL` — enables real-time socket tracking; without it the app polls every few seconds.
 3. Deploy. The build runs `prisma generate && next build`.
@@ -35,7 +35,11 @@ Shared with the Fetch-It **Customer** and **Admin** apps — one PostgreSQL sche
 To sync the schema after changing `prisma/schema.prisma`:
 
 ```bash
-npm run db:push
+# From fetch-customer (the canonical schema owner):
+npm run db:sync
+npm run db:deploy
+# In each app:
+npm run db:generate
 ```
 
 ## Demo accounts
@@ -46,3 +50,7 @@ Seeded automatically by the landing page (idempotent):
 |---|---|---|
 | `rider@fetchit.app` | `demo1234` | RIDER (Closed Van) |
 | `rider2@fetchit.app` | `demo1234` | RIDER (Motorcycle) |
+
+## Database rebuild
+
+The canonical schema and versioned migrations live in fetch-customer. See fetch-customer/docs/database-rebuild.md for account identities, rider records, delivery codes, GPS retention, and coordinated deployment. Set the same DELIVERY_CODE_SECRET in customer and rider environments. Configure CRON_SECRET in the rider deployment for daily tracking cleanup. External image storage is deferred.

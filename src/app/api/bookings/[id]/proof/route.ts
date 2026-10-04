@@ -1,153 +1,64 @@
-// POST /api/bookings/[id]/proof
-// Rider submits one or more e-POD artifacts for the booking.
-// Body: { signatureSvg?, otp?, photoDataUrl?, recipientName?, notes? }
-//  - If `otp` is provided, we mark the OTP proof as verified if it matches.
-//  - If `signatureSvg` is provided, we create a SIGNATURE proof row.
-//  - If `photoDataUrl` is provided, we create a PHOTO proof row.
-// When at least one proof is verified AND the booking is IN_TRANSIT, we
-// auto-advance the booking to DELIVERED.
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import { matchesChallenge } from "@/lib/delivery-challenge";
+import { recordBookingEvent } from "@/lib/booking-events";
+import { requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access";
 
-type Params = { params: Promise<{ id: string }> };
-
-export async function POST(req: NextRequest, { params }: Params) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (session.role !== "RIDER") {
-      return NextResponse.json(
-        { error: "Only riders can submit proof of delivery." },
-        { status: 403 },
-      );
-    }
+    const session = await requireRider(await getSession());
     const { id } = await params;
-    const body = (await req.json()) as {
-      signatureSvg?: string;
-      otp?: string;
-      photoDataUrl?: string;
-      recipientName?: string;
-      notes?: string;
-    };
-
-    const booking = await db.booking.findUnique({ where: { id } });
-    if (!booking) {
-      return NextResponse.json({ error: "Booking not found." }, { status: 404 });
-    }
-    if (booking.riderId !== session.uid) {
-      return NextResponse.json(
-        { error: "You are not assigned to this booking." },
-        { status: 403 },
-      );
-    }
-    if (booking.type !== "DELIVERY" || booking.status !== "IN_TRANSIT") {
-      return NextResponse.json({ error: "Proof can only be submitted for a delivery in transit." }, { status: 409 });
-    }
-    if (body.photoDataUrl && body.photoDataUrl.length > 200_000) {
-      return NextResponse.json({ error: "Photo is too large. Choose a smaller image." }, { status: 400 });
-    }
-
-    const created: { type: string; verified: boolean }[] = [];
-
-    // 1) OTP verification
-    if (body.otp) {
-      const otpRow = await db.deliveryProof.findFirst({
-        where: { bookingId: id, proofType: "OTP" },
-      });
-      if (!otpRow || !otpRow.otpCode) {
-        return NextResponse.json(
-          { error: "No OTP has been issued for this booking." },
-          { status: 400 },
-        );
+    const body = await req.json();
+    if (!body || (body.otp !== undefined && (typeof body.otp !== "string" || !/^\d{6}$/.test(body.otp.trim()))) ||
+        (body.signatureSvg !== undefined && (typeof body.signatureSvg !== "string" || body.signatureSvg.length > 100_000)) ||
+        (body.photoDataUrl !== undefined && (typeof body.photoDataUrl !== "string" || body.photoDataUrl.length > 200_000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(body.photoDataUrl))) ||
+        (body.recipientName !== undefined && (typeof body.recipientName !== "string" || body.recipientName.length > 100)) ||
+        (body.notes !== undefined && (typeof body.notes !== "string" || body.notes.length > 2000)))
+      throw new RiderError("Provide a valid code, signature, or small delivery photo.", 400);
+    if (!body.otp && !body.signatureSvg && !body.photoDataUrl) throw new RiderError("No proof artifacts provided.", 400);
+    const result = await db.$transaction(async tx => {
+      // Serialize proof submission, failed attempts, completion, and cancellation.
+      await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
+      const booking = await tx.booking.findUnique({ where: { id } });
+      if (!booking) throw new RiderError("Booking not found.", 404);
+      if (booking.riderId !== session.uid) throw new RiderError("You are not assigned to this booking.", 403);
+      if (booking.type !== "DELIVERY" || booking.status !== "IN_TRANSIT")
+        throw new RiderError("Proof can only be submitted for a delivery in transit.", 409);
+      const now = new Date();
+      const proofs: { type: string; verified: boolean }[] = [];
+      if (body.otp) {
+        const challenge = await tx.deliveryChallenge.findUnique({ where: { bookingId: id } });
+        if (!challenge || challenge.expiresAt <= now) return { error: "Request a new delivery code from the customer.", status: 400 };
+        if (challenge.verifiedAt) return { error: "This code has already been used.", status: 409 };
+        if (challenge.attempts >= challenge.maxAttempts) return { error: "Too many incorrect code attempts.", status: 429 };
+        const ok = matchesChallenge(id, body.otp.trim(), challenge.codeHash);
+        await tx.deliveryChallenge.update({ where: { bookingId: id },
+          data: { attempts: { increment: 1 }, ...(ok ? { verifiedAt: now } : {}) } });
+        // Return instead of throwing so a failed attempt is committed.
+        if (!ok) return { error: "OTP did not match. Confirm with the recipient.", status: 400 };
+        await tx.deliveryProof.create({ data: { bookingId: id, riderId: session.uid, proofType: "OTP", verifiedAt: now } });
+        proofs.push({ type: "OTP", verified: true });
       }
-      const ok = otpRow.otpCode === body.otp.trim();
-      if (ok) {
-        await db.deliveryProof.update({
-          where: { id: otpRow.id },
-          data: { otpVerified: true },
-        });
+      if (body.signatureSvg) {
+        await tx.deliveryProof.create({ data: { bookingId: id, riderId: session.uid, proofType: "SIGNATURE",
+          signatureSvg: body.signatureSvg, recipientName: body.recipientName ?? null, notes: body.notes ?? null, verifiedAt: now } });
+        proofs.push({ type: "SIGNATURE", verified: true });
       }
-      created.push({ type: "OTP", verified: ok });
-      if (!ok) {
-        return NextResponse.json(
-          { error: "OTP did not match. Please confirm with the recipient." },
-          { status: 400 },
-        );
+      // Temporary bounded inline storage until an external file service is selected.
+      if (body.photoDataUrl) {
+        await tx.deliveryProof.create({ data: { bookingId: id, riderId: session.uid, proofType: "PHOTO",
+          photoUrl: body.photoDataUrl, recipientName: body.recipientName ?? null, notes: body.notes ?? null } });
+        proofs.push({ type: "PHOTO", verified: false });
       }
-    }
-
-    // 2) Signature
-    if (body.signatureSvg) {
-      const sig = await db.deliveryProof.create({
-        data: {
-          bookingId: id,
-          riderId: session.uid,
-          proofType: "SIGNATURE",
-          signatureSvg: body.signatureSvg,
-          recipientName: body.recipientName ?? null,
-          notes: body.notes ?? null,
-        },
-      });
-      created.push({ type: "SIGNATURE", verified: true });
-      void sig;
-    }
-
-    // 3) Photo (data URL — for demo we keep small images in DB)
-    if (body.photoDataUrl) {
-      const ph = await db.deliveryProof.create({
-        data: {
-          bookingId: id,
-          riderId: session.uid,
-          proofType: "PHOTO",
-          photoUrl: body.photoDataUrl,
-          recipientName: body.recipientName ?? null,
-          notes: body.notes ?? null,
-        },
-      });
-      created.push({ type: "PHOTO", verified: true });
-      void ph;
-    }
-
-    if (created.length === 0) {
-      return NextResponse.json(
-        { error: "No proof artifacts provided." },
-        { status: 400 },
-      );
-    }
-
-    // Auto-advance to DELIVERED when the OTP is verified OR a signature was
-    // captured (e-POD is considered complete with signature alone).
-    const anyVerified = created.some(
-      (p) => p.verified && (p.type === "OTP" || p.type === "SIGNATURE"),
-    );
-    if (anyVerified) {
-      const completed = await db.$transaction(async (tx) => {
-        const result = await tx.booking.updateMany({
-          where: { id, riderId: session.uid, status: "IN_TRANSIT" },
-          data: { status: "DELIVERED", deliveredAt: new Date() },
-        });
-        if (result.count === 0) return false;
-        await tx.user.update({
-          where: { id: session.uid },
-          data: { totalDeliveries: { increment: 1 } },
-        });
-        return true;
-      });
-      if (!completed) {
-        return NextResponse.json({ error: "Booking status changed. Refresh and try again." }, { status: 409 });
+      if (proofs.some(p => p.verified)) {
+        await tx.booking.update({ where: { id }, data: { status: "DELIVERED", deliveredAt: now } });
+        await tx.riderProfile.update({ where: { userId: session.uid }, data: { totalDeliveries: { increment: 1 } } });
+        await recordBookingEvent(tx, id, session, { action: "STATUS_CHANGED", fromStatus: "IN_TRANSIT", toStatus: "DELIVERED", riderId: session.uid });
       }
-    }
-
-    return NextResponse.json({ ok: true, proofs: created });
-  } catch (err) {
-    console.error("[proof POST] error", err);
-    return NextResponse.json(
-      { error: "Failed to submit proof of delivery." },
-      { status: 500 },
-    );
-  }
+      return { proofs };
+    });
+    if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json({ ok: true, proofs: result.proofs });
+  } catch (error) { return riderErrorResponse(error); }
 }

@@ -1,3 +1,5 @@
+import { bookingView, riderSelect } from "@/lib/db-data";
+import { requireRider, riderErrorResponse } from "@/lib/rider-access";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getBearerSession } from "@/lib/session";
@@ -5,7 +7,9 @@ import { getBearerSession } from "@/lib/session";
 type Params = { params: Promise<{ ticketId: string }> };
 
 export async function GET(req: NextRequest, { params }: Params) {
-  const session = getBearerSession(req);
+  let session;
+  try { session = await requireRider(getBearerSession(req)); }
+  catch (error) { return riderErrorResponse(error); }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.role !== "RIDER") {
     return NextResponse.json({ error: "Rider account required." }, { status: 403 });
@@ -21,21 +25,8 @@ export async function GET(req: NextRequest, { params }: Params) {
     where: { ticketId: normalized },
     include: {
       customer: { select: { id: true, name: true, phone: true } },
-      rider: {
-        select: {
-          id: true,
-          name: true,
-          phone: true,
-          vehicleClass: true,
-          vehiclePlate: true,
-          rating: true,
-        },
-      },
-      trackingUpdates: {
-        where: { source: "NATIVE" },
-        orderBy: { createdAt: "desc" },
-        take: 1,
-      },
+      rider: { select: riderSelect },
+      liveLocation: true,
     },
   });
   if (!booking) return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
@@ -49,5 +40,5 @@ export async function GET(req: NextRequest, { params }: Params) {
     );
   }
 
-  return NextResponse.json({ booking });
+  return NextResponse.json({ booking: bookingView(booking) });
 }

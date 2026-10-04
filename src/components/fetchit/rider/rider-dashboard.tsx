@@ -732,8 +732,8 @@ function ActiveJobFlow({
   }
 
   const nextStatus = NEXT_STATUS[status];
-  const canAdvance = nextStatus != null;
   const isRide = job.type === "RIDE";
+  const canAdvance = nextStatus != null && (isRide || nextStatus !== "DELIVERED");
   const nextLabel = nextStatus
     ? isRide
       ? {
@@ -883,10 +883,9 @@ function ActiveJobFlow({
       {showProof && (
         <ProofCapture
           bookingId={job.id}
-          onDone={() => {
+          onDone={(completed) => {
             setShowProof(false);
-            setStatus("DELIVERED");
-            onUpdated({ status: "DELIVERED" });
+            if (completed) { setStatus("DELIVERED"); onUpdated({ status: "DELIVERED" }); }
             void loadStatsThroughReload(onUpdated, job.id);
           }}
         />
@@ -910,7 +909,7 @@ function ProofCapture({
   onDone,
 }: {
   bookingId: string;
-  onDone: () => void;
+  onDone: (completed: boolean) => void;
 }) {
   const { toast } = useToast();
   const [otp, setOtp] = useState("");
@@ -924,8 +923,8 @@ function ProofCapture({
   function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 1.5 * 1024 * 1024) {
-      toast({ title: "Photo too large", description: "Max 1.5 MB.", variant: "destructive" });
+    if (file.size > 140 * 1024) {
+      toast({ title: "Photo too large", description: "Max 140 KB while temporary photo storage is enabled.", variant: "destructive" });
       return;
     }
     const reader = new FileReader();
@@ -953,14 +952,13 @@ function ProofCapture({
       });
       const data = await res.json();
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Proof submission failed");
+        throw new Error(data.error || "Proof submission failed");
       }
       toast({
         title: "Proof of delivery captured",
         description: `${data.proofs?.length ?? 0} artifact(s) submitted.`,
       });
-      onDone();
+      onDone(Boolean(data.proofs?.some((proof: { verified: boolean }) => proof.verified)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submission failed");
     } finally {
@@ -976,7 +974,7 @@ function ProofCapture({
         </CardTitle>
         <CardDescription>
           Collect at least one of: OTP from the customer, recipient signature,
-          or a drop-off photo.
+          or a drop-off photo. A code or signature is required to complete the delivery.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 min-w-0 [&>*]:min-w-0">

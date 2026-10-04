@@ -24,7 +24,8 @@ export async function POST() {
       create: {
         name: "Avery Chen",
         email: customerEmail,
-        passwordHash: DEMO_PASSWORD,
+        authIdentities: { create: { provider: "PASSWORD", providerUserId: customerEmail, passwordHash: DEMO_PASSWORD } },
+
         role: "CUSTOMER",
         phone: "+1 555 0100",
       },
@@ -36,12 +37,12 @@ export async function POST() {
       create: {
         name: "Marcus Rivera",
         email: riderEmail,
-        passwordHash: DEMO_PASSWORD,
+        authIdentities: { create: { provider: "PASSWORD", providerUserId: riderEmail, passwordHash: DEMO_PASSWORD } },
+
         role: "RIDER",
         phone: "+1 555 0101",
-        vehicleClass: "CLOSED_VAN",
-        vehiclePlate: "FIT-2099",
-        isOnline: true,
+        riderProfile: { create: { vehicleClass: "CLOSED_VAN", vehiclePlate: "FIT-2099" } },
+        riderPresence: { create: { isOnline: true } },
       },
     });
 
@@ -52,12 +53,12 @@ export async function POST() {
       create: {
         name: "Priya Singh",
         email: "rider2@fetchit.app",
-        passwordHash: DEMO_PASSWORD,
+        authIdentities: { create: { provider: "PASSWORD", providerUserId: "rider2@fetchit.app", passwordHash: DEMO_PASSWORD } },
+
         role: "RIDER",
         phone: "+1 555 0102",
-        vehicleClass: "MOTORCYCLE",
-        vehiclePlate: "FIT-3140",
-        isOnline: true,
+        riderProfile: { create: { vehicleClass: "MOTORCYCLE", vehiclePlate: "FIT-3140" } },
+        riderPresence: { create: { isOnline: true } },
       },
     });
 

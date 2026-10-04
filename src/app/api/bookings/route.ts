@@ -1,3 +1,5 @@
+import { bookingView, riderSelect } from "@/lib/db-data";
+import type { Prisma } from "@prisma/client";
 // /api/bookings
 // GET — list bookings for the current rider (active / history).
 // NOTE: this is the RIDER app. Creating bookings is a customer action and
@@ -5,11 +7,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getSession } from "@/lib/session";
+import { getRiderSession } from "@/lib/rider-access";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 
 export async function GET(req: NextRequest) {
-  const session = await getSession();
+  const session = await getRiderSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(req.url);
@@ -22,7 +24,7 @@ export async function GET(req: NextRequest) {
         ? { riderId: session.uid }
         : {};
 
-  const statusFilter =
+  const statusFilter: Prisma.BookingWhereInput =
     filter === "active"
       ? { status: { in: ["PENDING", "MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } }
       : filter === "history"
@@ -34,18 +36,7 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: "desc" },
     include: {
       customer: { select: { id: true, name: true, phone: true } },
-      rider: {
-        select: {
-          id: true,
-          name: true,
-          phone: true,
-          vehicleClass: true,
-          vehiclePlate: true,
-          lat: true,
-          lng: true,
-          rating: true,
-        },
-      },
+      rider: { select: riderSelect },
       deliveryProofs: true,
     },
     take: 100,
@@ -54,7 +45,7 @@ export async function GET(req: NextRequest) {
   // Rider app — attach each booking's native-app ticket (see src/lib/ticket.ts).
   const withTickets = bookings.map((b) => {
     const snapshot = buildTicketSnapshot(b);
-    return { ...b, ticket: snapshot ? encodeTicket(snapshot) : null };
+    return { ...bookingView(b), ticket: snapshot ? encodeTicket(snapshot) : null };
   });
 
   return NextResponse.json({ bookings: withTickets });
