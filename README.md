@@ -13,6 +13,8 @@ Next.js 16 · App Router · TypeScript · Tailwind CSS 4 · shadcn/ui · Prisma 
 
 ## Run locally
 
+Use npm and the committed `package-lock.json` in all three apps. The duplicate Bun lockfiles were removed.
+
 ```bash
 cp .env.example .env          # fill in DATABASE_URL + Google Maps key
 npm install
