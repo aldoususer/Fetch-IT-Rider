@@ -5,7 +5,7 @@
 // Customer app. Rider signups include vehicle class + plate so the
 // matching engine can filter jobs.
 
-import { validNewPassword, PASSWORD_REQUIREMENT } from "@/lib/password-policy";
+import { validNewPassword, PASSWORD_REQUIREMENT, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { useState } from "react";
 import { ArrowLeft, Loader2, LogIn, ShieldCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -180,11 +180,11 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                         type="password"
                         autoComplete="current-password"
                         required
-                        minLength={mode === "signup" ? 15 : 1}
+                        minLength={mode === "signup" ? PASSWORD_MIN_LENGTH : 1}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         maxLength={128}
-                          placeholder="At least 15 characters"
+                          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                       />
                     </div>
                     {error && (
@@ -266,11 +266,11 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                           type="password"
                           autoComplete="new-password"
                           required
-                          minLength={mode === "signup" ? 15 : 1}
+                          minLength={mode === "signup" ? PASSWORD_MIN_LENGTH : 1}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           maxLength={128}
-                          placeholder="At least 15 characters"
+                          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                         />
                       </div>
                     </div>
