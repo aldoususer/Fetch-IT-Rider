@@ -5,6 +5,7 @@
 // Customer app. Rider signups include vehicle class + plate so the
 // matching engine can filter jobs.
 
+import { validNewPassword, PASSWORD_REQUIREMENT } from "@/lib/password-policy";
 import { useState } from "react";
 import { ArrowLeft, Loader2, LogIn, ShieldCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
         if (!res.ok) throw new Error(data.error || "Login failed");
         setUser(data.user);
       } else {
+        if (!validNewPassword(password)) throw new Error(PASSWORD_REQUIREMENT);
         const res = await fetch("/api/auth/signup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -178,10 +180,11 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                         type="password"
                         autoComplete="current-password"
                         required
-                        minLength={4}
+                        minLength={mode === "signup" ? 15 : 1}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="At least 4 characters"
+                        maxLength={128}
+                          placeholder="At least 15 characters"
                       />
                     </div>
                     {error && (
@@ -263,10 +266,11 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                           type="password"
                           autoComplete="new-password"
                           required
-                          minLength={4}
+                          minLength={mode === "signup" ? 15 : 1}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          placeholder="At least 4 characters"
+                          maxLength={128}
+                          placeholder="At least 15 characters"
                         />
                       </div>
                     </div>

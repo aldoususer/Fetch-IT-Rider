@@ -40,5 +40,6 @@ export async function GET(req: NextRequest, { params }: Params) {
     );
   }
 
-  return NextResponse.json({ booking: bookingView(booking) });
+  if (["PENDING", "MATCHED"].includes(booking.status)) return NextResponse.json({ error: "Accept this job before accessing its tracking ticket." }, { status: 409 });
+  return NextResponse.json({ booking: bookingView(booking) }, { headers: { "Cache-Control": "private, no-store" } });
 }

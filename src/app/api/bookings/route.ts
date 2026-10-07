@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
+import { riderJobView } from "@/lib/job-privacy";
 
 export async function GET(req: NextRequest) {
   const session = await getRiderSession();
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
   // Rider app — attach each booking's native-app ticket (see src/lib/ticket.ts).
   const withTickets = bookings.map((b) => {
     const snapshot = buildTicketSnapshot(b);
-    return { ...bookingView(b), ticket: snapshot ? encodeTicket(snapshot) : null };
+    return riderJobView({ ...bookingView(b), ticket: snapshot ? encodeTicket(snapshot) : null });
   });
 
   return NextResponse.json({ bookings: withTickets });

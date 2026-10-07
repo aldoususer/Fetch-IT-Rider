@@ -1,3 +1,4 @@
+import { withRequestLog, RateLimitError, limitRequests } from "@/lib/request-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
@@ -5,9 +6,10 @@ import { matchesChallenge } from "@/lib/delivery-challenge";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access";
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await requireRider(await getSession());
+    await limitRequests("rider:proof", session.uid, 20, 5 * 60_000);
     const { id } = await params;
     const body = await req.json();
     if (!body || (body.otp !== undefined && (typeof body.otp !== "string" || !/^\d{6}$/.test(body.otp.trim()))) ||
@@ -60,5 +62,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
     if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
     return NextResponse.json({ ok: true, proofs: result.proofs });
-  } catch (error) { return riderErrorResponse(error); }
+  } catch (error) {
+    if (error instanceof RateLimitError) throw error; return riderErrorResponse(error); }
 }
+
+export const POST = withRequestLog("rider:bookings/[id]/proof:POST", handlePOST);

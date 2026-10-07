@@ -1,3 +1,4 @@
+import { withRequestLog, RateLimitError, limitRequests, safeErrorCode } from "@/lib/request-guard";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import { recordBookingEvent } from "@/lib/booking-events";
 // /api/bookings/[id]
@@ -15,10 +16,11 @@ import {
 } from "@/lib/constants";
 import { etaMinutes } from "@/lib/fare";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
+import { riderJobView } from "@/lib/job-privacy";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_req: NextRequest, { params }: Params) {
+async function handleGET(_req: NextRequest, { params }: Params) {
   const session = await getRiderSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -53,17 +55,18 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const snapshot = buildTicketSnapshot(booking);
   return NextResponse.json({
-    booking: { ...bookingView(booking), ticket: snapshot ? encodeTicket(snapshot) : null },
+    booking: riderJobView({ ...bookingView(booking), ticket: snapshot ? encodeTicket(snapshot) : null }),
   });
 }
 
-export async function PATCH(req: NextRequest, { params }: Params) {
+async function handlePATCH(req: NextRequest, { params }: Params) {
   try {
     const session = await getRiderSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const { id } = await params;
+    await limitRequests("rider:booking-status", session.uid, 60, 60_000);
     const { status } = (await req.json()) as { status: BookingStatus };
 
     if (!BOOKING_STATUS_FLOW.includes(status) && status !== "CANCELLED") {
@@ -76,6 +79,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     const now = new Date();
+
+    if (status === "ACCEPTED" && booking.riderId && booking.riderId !== session.uid) {
+      return NextResponse.json({ error: "Another rider already claimed this job." }, { status: 409 });
+    }
 
     // A rider claiming an open, unassigned job: this is the real "accept"
     // action — it atomically assigns the booking to this rider, but only if
@@ -220,10 +227,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       booking: { ...bookingView(updated), ticket: updatedSnapshot ? encodeTicket(updatedSnapshot) : null },
     });
   } catch (err) {
-    console.error("[bookings/[id] PATCH] error", err);
+    if (err instanceof RateLimitError) throw err;
+    console.error("[bookings/[id] PATCH] error", { code: safeErrorCode(err) });
     return NextResponse.json(
       { error: "Failed to update booking." },
       { status: 500 },
     );
   }
 }
+
+export const GET = withRequestLog("rider:bookings/[id]:GET", handleGET);
+export const PATCH = withRequestLog("rider:bookings/[id]:PATCH", handlePATCH);

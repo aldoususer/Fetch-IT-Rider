@@ -1,3 +1,4 @@
+import { withRequestLog, RateLimitError, limitLogin, safeErrorCode } from "@/lib/request-guard";
 import { publicUser } from "@/lib/db-data";
 // POST /api/auth/login
 // Body: { email, password, role? } — role is optional but recommended; if provided,
@@ -9,14 +10,14 @@ import { verifyPassword } from "@/lib/password";
 import { createSessionToken, setSessionCookie } from "@/lib/session";
 import type { Role } from "@/lib/constants";
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const { email, password, role } = (await req.json()) as {
       email: string;
       password: string;
       role?: Role;
     };
-    if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) {
+    if (typeof email !== "string" || typeof password !== "string" || !email.trim() || email.length > 254 || !password || password.length > 128) {
       return NextResponse.json(
         { error: "Email and password are required." },
         { status: 400 },
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json({ error: "Demo accounts are disabled." }, { status: 403 });
     }
+    await limitLogin(req, "rider", String(email));
     const user = await db.user.findUnique({ where: { email: email.trim().toLowerCase() }, include: { authIdentities: { where: { provider: "PASSWORD" } }, riderProfile: true, riderPresence: true } });
     if (!user || !user.authIdentities[0]?.passwordHash || !verifyPassword(password, user.authIdentities[0].passwordHash)) {
       return NextResponse.json(
@@ -70,7 +72,10 @@ export async function POST(req: NextRequest) {
       user: publicUser(user),
     });
   } catch (err) {
-    console.error("[login] error", err);
+    if (err instanceof RateLimitError) throw err;
+    console.error("[login] error", { code: safeErrorCode(err) });
     return NextResponse.json({ error: "Login failed." }, { status: 500 });
   }
 }
+
+export const POST = withRequestLog("rider:auth/login:POST", handlePOST);

@@ -7,7 +7,7 @@ import type { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
-import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
+import { riderJobView } from "@/lib/job-privacy";
 
 export async function GET(req: NextRequest) {
   const session = await getRiderSession();
@@ -61,12 +61,7 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  // Attach the copy-pasteable native-app ticket (R0001/D0001 + encoded order
-  // snapshot) to each job. Riders only — the customer app never returns this.
-  const withTickets = jobs.map((job) => {
-    const snapshot = buildTicketSnapshot(job);
-    return { ...bookingView(job), ticket: snapshot ? encodeTicket(snapshot) : null };
-  });
+  const withTickets = jobs.map((job) => riderJobView(bookingView(job)));
 
-  return NextResponse.json({ jobs: withTickets });
+  return NextResponse.json({ jobs: withTickets }, { headers: { "Cache-Control": "private, no-store" } });
 }

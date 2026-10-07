@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
+import { safeErrorCode } from "@/lib/request-guard";
 
 export async function POST() {
   if (process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED !== "true") {
@@ -70,7 +71,7 @@ export async function POST() {
       ],
     });
   } catch (err) {
-    console.error("[seed] error", err);
+    console.error("[seed] error", { code: safeErrorCode(err) });
     return NextResponse.json(
       { error: "Failed to seed demo accounts." },
       { status: 500 },

@@ -57,6 +57,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useVisiblePoll } from "@/hooks/use-visible-poll";
 import { useAppStore, type AuthUser } from "@/lib/store";
 import {
   VEHICLES,
@@ -127,51 +128,56 @@ export function RiderDashboard() {
   const [loading, setLoading] = useState(true);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
 
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/rider/stats", { cache: "no-store" });
+      const res = await fetch("/api/rider/stats", { cache: "no-store", signal });
+      if (!res.ok) throw new Error("Stats unavailable");
       const data = await res.json();
-      setStats(data);
+      if (!signal?.aborted) setStats(data);
     } catch {
       /* ignore */
     }
   }, []);
 
-  const loadJobs = useCallback(async () => {
+  const loadJobs = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       if (tab === "history") {
-        const res = await fetch("/api/bookings?filter=history", { cache: "no-store" });
+        const res = await fetch("/api/bookings?filter=history", { cache: "no-store", signal });
+        if (!res.ok) throw new Error("Jobs unavailable");
         const data = await res.json();
         setJobs((data.bookings ?? []) as Job[]);
       } else if (tab === "active") {
-        const res = await fetch("/api/bookings?filter=active", { cache: "no-store" });
+        const res = await fetch("/api/bookings?filter=active", { cache: "no-store", signal });
+        if (!res.ok) throw new Error("Jobs unavailable");
         const data = await res.json();
         setJobs((data.bookings ?? []) as Job[]);
       } else {
-        const res = await fetch("/api/rider/available?includeMatched=true", { cache: "no-store" });
+        const res = await fetch("/api/rider/available?includeMatched=true", { cache: "no-store", signal });
+        if (!res.ok) throw new Error("Jobs unavailable");
         const data = await res.json();
         setJobs((data.jobs ?? []) as Job[]);
       }
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [tab]);
 
   useEffect(() => {
-    void loadStats();
+    const controller = new AbortController();
+    queueMicrotask(() => { if (!controller.signal.aborted) void loadStats(controller.signal); });
+    return () => controller.abort();
   }, [loadStats]);
 
   useEffect(() => {
-    void loadJobs();
-  }, [loadJobs]);
+    if (tab === "available") return;
+    const controller = new AbortController();
+    queueMicrotask(() => { if (!controller.signal.aborted) void loadJobs(controller.signal).catch(() => {}); });
+    return () => controller.abort();
+  }, [loadJobs, tab]);
 
-  // Auto-refresh every 10s for the available feed.
-  useEffect(() => {
-    if (tab !== "available") return;
-    const t = setInterval(() => void loadJobs(), 10000);
-    return () => clearInterval(t);
-  }, [tab, loadJobs]);
+  // Pause hidden/offline pages, prevent overlaps, and back off after failures.
+  useVisiblePoll(tab === "available" && user ? user.id : "", loadJobs, 10000);
 
   async function toggleOnline(next: boolean) {
     const res = await fetch("/api/rider/status", {
@@ -192,7 +198,7 @@ export function RiderDashboard() {
         ? "Due jobs matching your vehicle will appear on the job board."
         : "You won't see new jobs until you go back online.",
     });
-    if (data.isOnline) void loadJobs();
+    if (data.isOnline) void loadJobs().catch(() => {});
   }
 
   async function accept(job: Job) {
@@ -380,7 +386,7 @@ export function RiderDashboard() {
                 job={activeJob}
                 onUpdated={(updated) => {
                   setActiveJob((prev) => (prev ? { ...prev, ...updated } : prev));
-                  void loadJobs();
+                  void loadJobs().catch(() => {});
                   void loadStats();
                 }}
                 onClose={() => setActiveJob(null)}

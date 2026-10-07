@@ -176,6 +176,16 @@ model TicketCounter {
   value Int    @default(0)
 }
 
+// Shared atomic API limits across serverless instances. Keys are HMAC digests;
+// expired buckets are removed by the existing daily maintenance job.
+model RateLimitBucket {
+  key       String   @id
+  hits      Int
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
 model TrackingUpdate {
   id         String         @id @default(cuid())
   bookingId  String

@@ -1,3 +1,5 @@
+import { validNewPassword, PASSWORD_REQUIREMENT } from "@/lib/password-policy";
+import { withRequestLog, RateLimitError, limitRequests, clientAddress, safeErrorCode } from "@/lib/request-guard";
 import { publicUser } from "@/lib/db-data";
 // POST /api/auth/signup
 // Body: { name, email, password, role, phone?, vehicleClass?, vehiclePlate? }
@@ -9,8 +11,9 @@ import { hashPassword } from "@/lib/password";
 import { createSessionToken, setSessionCookie } from "@/lib/session";
 import { VEHICLES, type Role, type VehicleClass } from "@/lib/constants";
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
+    await limitRequests("rider:signup-ip", clientAddress(req), 10, 60 * 60_000);
     const body = await req.json();
     const { name, email, password, role, phone, vehicleClass, vehiclePlate } =
       body as {
@@ -35,9 +38,9 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (password.length < 4) {
+    if (!validNewPassword(password)) {
       return NextResponse.json(
-        { error: "Password must be at least 4 characters." },
+        { error: PASSWORD_REQUIREMENT },
         { status: 400 },
       );
     }
@@ -82,10 +85,13 @@ export async function POST(req: NextRequest) {
       user: publicUser(user),
     });
   } catch (err) {
-    console.error("[signup] error", err);
+    if (err instanceof RateLimitError) throw err;
+    console.error("[signup] error", { code: safeErrorCode(err) });
     return NextResponse.json(
       { error: "Failed to create account." },
       { status: 500 },
     );
   }
 }
+
+export const POST = withRequestLog("rider:auth/signup:POST", handlePOST);
