@@ -1,3 +1,4 @@
+import { expireRiderOffers } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import type { Prisma } from "@prisma/client";
 // GET /api/rider/available
@@ -33,6 +34,9 @@ export async function GET(req: NextRequest) {
   if (rider.isBanned) return NextResponse.json({ error: "Account restricted." }, { status: 403 });
   if (!rider.riderPresence?.isOnline) return NextResponse.json({ jobs: [] });
 
+  await db.riderPresence.updateMany({ where: { userId: session.uid, isOnline: true }, data: { updatedAt: new Date() } });
+  await expireRiderOffers(db);
+
   // PENDING jobs are open to any rider of the matching vehicle class.
   // MATCHED jobs are pre-assigned to *this* rider and waiting for acceptance.
   const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] };
@@ -41,14 +45,14 @@ export async function GET(req: NextRequest) {
         vehicleClass: rider.riderProfile?.vehicleClass,
         AND: [due],
         OR: [
-          { status: "PENDING" },
+          { status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } } },
           { status: "MATCHED", riderId: session.uid },
         ],
       }
     : {
         vehicleClass: rider.riderProfile?.vehicleClass,
         AND: [due],
-        status: "PENDING" as const,
+        status: "PENDING" as const, riderId: null, NOT: { excludedRiderIds: { has: session.uid } },
       };
 
   const jobs = await db.booking.findMany({

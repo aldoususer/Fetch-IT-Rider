@@ -1,3 +1,4 @@
+import { expireRiderOffers } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import type { Prisma } from "@prisma/client";
 // /api/bookings
@@ -15,6 +16,7 @@ export async function GET(req: NextRequest) {
   const session = await getRiderSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  await expireRiderOffers(db);
   const url = new URL(req.url);
   const filter = url.searchParams.get("filter") || "active"; // active | history | all
 

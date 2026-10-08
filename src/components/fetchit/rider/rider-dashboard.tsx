@@ -67,6 +67,8 @@ import {
 } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { FetchItLogo } from "../shared/logo";
+import { PaymentCard } from "../shared/payment-card";
+import { ReleaseBooking } from "../shared/release-booking";
 import { StatusBadge } from "../shared/status-badge";
 import { JobRouteMap } from "./job-route-map";
 import { SignaturePad } from "../shared/signature-pad";
@@ -111,6 +113,7 @@ interface Job {
   totalFare: number;
   currency: string;
   status: BookingStatus;
+  assignmentExpiresAt?: string | null;
   etaMinutes: number | null;
   createdAt: string;
   customer: { id: string; name: string; phone: string | null };
@@ -361,6 +364,7 @@ export function RiderDashboard() {
                 job={job}
                 isAvailable={tab === "available"}
                 onAccept={() => accept(job)}
+                onReleased={() => { setActiveJob(null); void loadJobs(); void loadStats(); }}
                 onOpen={() => setActiveJob(job)}
               />
             ))}
@@ -557,21 +561,28 @@ function JobCard({
   job,
   isAvailable,
   onAccept,
+  onReleased,
   onOpen,
 }: {
   job: Job;
   isAvailable: boolean;
-  onAccept: () => void;
+  onAccept: () => Promise<void>;
+  onReleased: () => void;
   onOpen: () => void;
 }) {
   const [accepting, setAccepting] = useState(false);
+  const [acceptError, setAcceptError] = useState("");
   const vIcon = useVehicleIcon(job.vehicleClass);
   const v = VEHICLES[job.vehicleClass];
 
   async function handleAccept() {
+    if (accepting) return;
     setAccepting(true);
+    setAcceptError("");
     try {
-      onAccept();
+      await onAccept();
+    } catch {
+      setAcceptError("Couldn’t accept this booking. Check your connection and retry.");
     } finally {
       setAccepting(false);
     }
@@ -619,6 +630,9 @@ function JobCard({
           </p>
         )}
 
+        {job.assignmentExpiresAt && <p className="text-xs text-amber-700">Assigned offer — accept by {new Date(job.assignmentExpiresAt).toLocaleTimeString()}</p>}
+        {acceptError && <p role="alert" className="text-xs text-destructive">{acceptError}</p>}
+        {job.status === "MATCHED" && <ReleaseBooking id={job.id} onReleased={onReleased} />}
         <div className="flex gap-2 pt-1">
           {isAvailable ? (
             <Button size="sm" className="flex-1" onClick={handleAccept} disabled={accepting}>
@@ -825,6 +839,9 @@ function ActiveJobFlow({
           </div>
         )}
       </div>
+
+      <PaymentCard key={job.id} bookingId={job.id} role="RIDER" />
+      {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} onReleased={() => { onClose(); onUpdated({}); }} />}
 
       {/* Native-app tracking ticket */}
       {job.ticketId && <TrackingTicketCard job={job} />}

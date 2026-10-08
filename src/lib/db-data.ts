@@ -30,12 +30,14 @@ export function publicUser(user: RiderData & { id: string; name: string; email: 
 }
 
 type Money = number | Prisma.Decimal;
-type BookingData = { baseFare?: Money; totalFare?: Money; surgeMultiplier?: Money; rider?: (RiderData & { id?: string; name: string; phone: string | null }) | null;
+type BookingData = { excludedRiderIds?: string[]; baseFare?: Money; totalFare?: Money; surgeMultiplier?: Money; customerPaidAmount?: Money | null; riderReceivedAmount?: Money | null; rider?: (RiderData & { id?: string; name: string; phone: string | null }) | null;
   liveLocation?: { lat: number; lng: number; createdAt: Date } | null };
 export function bookingView<T extends BookingData>(booking: T) {
-  const { liveLocation, ...rest } = booking;
+  const { liveLocation, excludedRiderIds: _excludedRiderIds, ...rest } = booking;
   return {
     ...rest,
+    ...(booking.customerPaidAmount !== undefined ? { customerPaidAmount: booking.customerPaidAmount === null ? null : Number(booking.customerPaidAmount) } : {}),
+    ...(booking.riderReceivedAmount !== undefined ? { riderReceivedAmount: booking.riderReceivedAmount === null ? null : Number(booking.riderReceivedAmount) } : {}),
     ...(booking.baseFare !== undefined ? { baseFare: Number(booking.baseFare) } : {}),
     ...(booking.totalFare !== undefined ? { totalFare: Number(booking.totalFare) } : {}),
     ...(booking.surgeMultiplier !== undefined ? { surgeMultiplier: Number(booking.surgeMultiplier) } : {}),
