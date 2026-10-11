@@ -5,6 +5,8 @@ import { getSession } from "@/lib/session";
 import { matchesChallenge } from "@/lib/delivery-challenge";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access";
+import { settleDemoEarnings } from "@/lib/demo-payments";
+import { isDemoPayment } from "@/lib/payment-policy";
 
 async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -25,6 +27,7 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       const booking = await tx.booking.findUnique({ where: { id } });
       if (!booking) throw new RiderError("Booking not found.", 404);
       if (booking.riderId !== session.uid) throw new RiderError("You are not assigned to this booking.", 403);
+      if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new RiderError("Demo payment must succeed before delivery.", 409);
       if (booking.type !== "DELIVERY" || booking.status !== "IN_TRANSIT")
         throw new RiderError("Proof can only be submitted for a delivery in transit.", 409);
       const now = new Date();
@@ -54,7 +57,8 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
         proofs.push({ type: "PHOTO", verified: false });
       }
       if (proofs.some(p => p.verified)) {
-        await tx.booking.update({ where: { id }, data: { status: "DELIVERED", deliveredAt: now } });
+        const completed = await tx.booking.update({ where: { id }, data: { status: "DELIVERED", deliveredAt: now } });
+        await settleDemoEarnings(tx, completed);
         await tx.riderProfile.update({ where: { userId: session.uid }, data: { totalDeliveries: { increment: 1 } } });
         await recordBookingEvent(tx, id, session, { action: "STATUS_CHANGED", fromStatus: "IN_TRANSIT", toStatus: "DELIVERED", riderId: session.uid });
       }

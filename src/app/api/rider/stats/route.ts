@@ -1,3 +1,4 @@
+import { dispatchPaymentWhere } from "@/lib/dispatch";
 // GET /api/rider/stats
 // Aggregated stats for the rider dashboard header.
 
@@ -26,14 +27,18 @@ export async function GET() {
   const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
   const available = rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass
     ? await db.booking.count({
-        where: { status: "PENDING", vehicleClass: rider.riderProfile?.vehicleClass, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
+        where: { AND: [dispatchPaymentWhere], status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, vehicleClass: rider.riderProfile?.vehicleClass, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
       })
     : 0;
   const earningsResult = await db.booking.aggregate({
-    where: { riderId: session.uid, status: "DELIVERED" },
+    where: { riderId: session.uid, status: "DELIVERED", paymentMethod: "CASH" },
     _sum: { totalFare: true },
   });
 
+  const [demoEarnings, demoPaidOut] = await Promise.all([
+    db.booking.aggregate({ where: { riderId: session.uid, status: "DELIVERED", paymentStatus: "PAID", paymentMethod: { not: "CASH" } }, _sum: { demoRiderEarnings: true } }),
+    db.booking.aggregate({ where: { riderId: session.uid, demoPayoutAt: { not: null } }, _sum: { demoRiderEarnings: true } }),
+  ]);
   return NextResponse.json({
     activeJobs: active,
     completedJobs: delivered,
@@ -42,6 +47,9 @@ export async function GET() {
     totalDeliveries: rider?.riderProfile?.totalDeliveries ?? 0,
     isOnline: rider?.riderPresence?.isOnline ?? false,
     earnings: Number(earningsResult._sum.totalFare ?? 0),
+    demoEarnings: Number(demoEarnings._sum.demoRiderEarnings ?? 0),
+    demoPaidOut: Number(demoPaidOut._sum.demoRiderEarnings ?? 0),
+    demoAwaitingPayout: Number(demoEarnings._sum.demoRiderEarnings ?? 0) - Number(demoPaidOut._sum.demoRiderEarnings ?? 0),
     vehicleClass: rider?.riderProfile?.vehicleClass,
     vehiclePlate: rider?.riderProfile?.vehiclePlate,
   });

@@ -1,4 +1,4 @@
-import { expireRiderOffers } from "@/lib/dispatch";
+import { expireRiderOffers, dispatchPaymentWhere } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import type { Prisma } from "@prisma/client";
 // GET /api/rider/available
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const where: Prisma.BookingWhereInput = includeMatched
     ? {
         vehicleClass: rider.riderProfile?.vehicleClass,
-        AND: [due],
+        AND: [due, dispatchPaymentWhere],
         OR: [
           { status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } } },
           { status: "MATCHED", riderId: session.uid },
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
       }
     : {
         vehicleClass: rider.riderProfile?.vehicleClass,
-        AND: [due],
+        AND: [due, dispatchPaymentWhere],
         status: "PENDING" as const, riderId: null, NOT: { excludedRiderIds: { has: session.uid } },
       };
 

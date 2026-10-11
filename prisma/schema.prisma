@@ -79,6 +79,16 @@ enum BookingEventAction {
 
 enum PaymentMethod {
   CASH
+  DEMO_GCASH
+  DEMO_MAYA
+  DEMO_BANK
+}
+
+enum DemoCheckoutStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
 }
 
 enum PaymentStatus {
@@ -170,6 +180,12 @@ model Booking {
   riderReceivedAt DateTime?
   paidAt DateTime?
   paymentReference String?
+  // Demo accounting only: never a provider balance or a real transfer.
+  demoCommissionBps Int?
+  demoCommission Decimal? @db.Decimal(12, 2)
+  demoRiderEarnings Decimal? @db.Decimal(12, 2)
+  demoPayoutAt DateTime?
+  demoPayoutReference String?
   assignmentExpiresAt DateTime?
   excludedRiderIds String[] @default([])
   etaMinutes      Int?
@@ -186,12 +202,23 @@ model Booking {
   review            CustomerReview?
   supportTickets    SupportTicket[]
   paymentEvents     PaymentEvent[]
+  demoCheckouts     DemoCheckout[]
 
   @@index([customerId, createdAt, id])
   @@index([riderId, status, createdAt])
   @@index([status, vehicleClass, createdAt])
   @@index([type, createdAt])
   @@index([status, assignmentExpiresAt])
+}
+
+model DemoCheckout {
+  id String @id @default(cuid())
+  bookingId String
+  status DemoCheckoutStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  @@index([bookingId, createdAt])
 }
 
 model PaymentEvent {

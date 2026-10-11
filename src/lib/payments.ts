@@ -1,5 +1,5 @@
 import type { PrismaClient, PaymentStatus } from "@prisma/client";
-import { amountInCents, confirmationsMatch } from "./payment-policy";
+import { amountInCents, confirmationsMatch, isDemoPayment } from "./payment-policy";
 
 export class PaymentError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -53,6 +53,7 @@ export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, 
     const booking = await tx.booking.findUnique({ where: { id } });
     if (!booking) throw new PaymentError("Booking not found.", 404);
     const suppliedReference = typeof body.reference === "string" ? body.reference.trim() : "";
+    if (isDemoPayment(booking.paymentMethod) && (status !== "REFUNDED" || booking.paymentStatus !== "PAID" || booking.status !== "DELIVERED" || booking.demoPayoutAt)) throw new PaymentError("Demo payments are controlled by checkout. Cancel an active booking to refund it, or simulate a refund for a completed paid booking before its demo payout.", 409);
     if (status === booking.paymentStatus && (!suppliedReference || suppliedReference === booking.paymentReference)) return booking;
     if (booking.paymentStatus === "REFUNDED" || (status === "REFUNDED" && booking.paymentStatus !== "PAID")) throw new PaymentError("Only a paid booking can be refunded; refunded records are final.", 409);
     if (status === "PAID" && !["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(booking.status)) throw new PaymentError("This booking has no accepted service to collect payment for.", 409);
@@ -60,9 +61,10 @@ export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, 
     const updated = await tx.booking.update({ where: { id }, data: { paymentStatus: status,
       paidAt: status === "PAID" ? booking.paidAt ?? new Date() : status === "REFUNDED" ? booking.paidAt : null,
       paymentReference: reference,
+      ...(isDemoPayment(booking.paymentMethod) && status === "REFUNDED" ? { demoCommission: null, demoRiderEarnings: null } : {}),
       ...(status === "UNPAID" ? { customerPaidAmount: null, riderReceivedAmount: null, customerPaidAt: null, riderReceivedAt: null } : {}),
     } });
-    await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: "ADMIN", action: "ADMIN_REVIEWED", fromStatus: booking.paymentStatus, toStatus: status, reason, reference } });
+    await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: "ADMIN", action: isDemoPayment(booking.paymentMethod) ? "DEMO_REFUND_RECORDED" : "ADMIN_REVIEWED", fromStatus: booking.paymentStatus, toStatus: status, reason, reference } });
     await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "PAYMENT_UPDATED", entityType: "BOOKING", entityId: id, details: { fromStatus: booking.paymentStatus, status, reason, reference } } });
     return updated;
   }, { maxWait: 10000, timeout: 20000 });

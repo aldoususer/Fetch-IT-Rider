@@ -1,5 +1,14 @@
 export const PAYMENT_STATUS_LABEL = { UNPAID: "Unpaid", PENDING: "Awaiting confirmation / review", PAID: "Paid", REFUNDED: "Refunded", FAILED: "Failed" } as const;
 export type PaymentStatus = keyof typeof PAYMENT_STATUS_LABEL;
+export const PAYMENT_METHOD_LABEL = { CASH: "Cash", DEMO_GCASH: "GCash (demo)", DEMO_MAYA: "Maya (demo)", DEMO_BANK: "Bank payment (demo)" } as const;
+export type PaymentMethod = keyof typeof PAYMENT_METHOD_LABEL;
+export function isDemoPayment(method: string) { return ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"].includes(method); }
+export function demoSplit(fare: unknown, bps: number) {
+  const cents = amountInCents(fare);
+  if (cents === null || !Number.isInteger(bps) || bps < 0 || bps > 10000) throw new Error("Invalid demo fare or commission.");
+  const commissionCents = Number((BigInt(cents) * BigInt(bps) + BigInt(5000)) / BigInt(10000));
+  return { commission: commissionCents / 100, riderEarnings: (cents - commissionCents) / 100 };
+}
 export function amountInCents(value: unknown): number | null {
   if (typeof value !== "number" && typeof value !== "string") return null;
   const text = String(value);

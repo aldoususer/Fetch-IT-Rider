@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { PAYMENT_STATUS_LABEL, type PaymentStatus } from "@/lib/payment-policy";
-type PaymentBooking = { paymentMethod: string; paymentStatus: PaymentStatus; status: string; totalFare: number; customerPaidAmount: number | null; riderReceivedAmount: number | null; customerPaidAt: string | null; riderReceivedAt: string | null; paidAt: string | null; paymentReference: string | null };
+import { PAYMENT_STATUS_LABEL, PAYMENT_METHOD_LABEL, isDemoPayment, type PaymentMethod, type PaymentStatus } from "@/lib/payment-policy";
+type PaymentBooking = { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; status: string; totalFare: number; customerPaidAmount: number | null; riderReceivedAmount: number | null; customerPaidAt: string | null; riderReceivedAt: string | null; paidAt: string | null; paymentReference: string | null; demoCommissionBps: number | null; demoCommission: number | null; demoRiderEarnings: number | null; demoPayoutAt: string | null; demoPayoutReference: string | null };
 export function PaymentCard({ bookingId, role, readOnly = false }: { bookingId: string; role: "CUSTOMER" | "RIDER"; readOnly?: boolean }) {
   const [booking, setBooking] = useState<PaymentBooking | null>(null);
   const [amount, setAmount] = useState("");
@@ -32,11 +32,25 @@ export function PaymentCard({ bookingId, role, readOnly = false }: { bookingId: 
   }, [bookingId, readOnly]);
   if (readOnly) return <p className="text-xs text-muted-foreground">Reconnect to view the payment record.</p>;
   const confirmed = role === "CUSTOMER" ? booking?.customerPaidAt : booking?.riderReceivedAt;
-  const canConfirm = booking && ["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(booking.status) && !confirmed && !["PAID", "REFUNDED"].includes(booking.paymentStatus);
+  const demo = booking && isDemoPayment(booking.paymentMethod);
+  const canCheckout = demo && role === "CUSTOMER" && ["PENDING", "MATCHED", "ACCEPTED"].includes(booking.status) && !["PAID", "REFUNDED"].includes(booking.paymentStatus);
+  const canConfirm = booking && booking.paymentMethod === "CASH" && ["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(booking.status) && !confirmed && !["PAID", "REFUNDED"].includes(booking.paymentStatus);
   const mismatch = booking && booking.customerPaidAmount !== null && booking.riderReceivedAmount !== null && (booking.customerPaidAmount !== booking.riderReceivedAmount || booking.customerPaidAmount !== booking.totalFare);
   return <section className="rounded-xl border p-4 space-y-3 text-sm" aria-label="Payment">
-    <div className="flex justify-between gap-2"><strong>Cash payment</strong><span>{booking ? PAYMENT_STATUS_LABEL[booking.paymentStatus] : "Loading…"}</span></div>
-    {booking && <><p>Fare: ₱{Number(booking.totalFare).toFixed(2)}</p><div className="space-y-1"><div>Customer: {booking.customerPaidAt ? `Confirmed ₱${Number(booking.customerPaidAmount).toFixed(2)}` : "Not yet confirmed"}</div><div>Rider: {booking.riderReceivedAt ? `Received ₱${Number(booking.riderReceivedAmount).toFixed(2)}` : "Not yet confirmed"}</div>{booking.paidAt && <div>Paid: {new Date(booking.paidAt).toLocaleString()}</div>}{booking.paymentReference && <div className="break-all">Reference: {booking.paymentReference}</div>}</div>{mismatch && <p className="text-amber-700">Amounts do not match the fare. Contact support for payment review.</p>}</>}
+    <div className="flex justify-between gap-2"><strong>{booking ? PAYMENT_METHOD_LABEL[booking.paymentMethod] : "Payment"}</strong><span>{booking ? `${demo ? "Demo: " : ""}${PAYMENT_STATUS_LABEL[booking.paymentStatus]}` : "Loading…"}</span></div>
+    {demo && <p className="rounded-lg bg-amber-50 p-3 text-amber-900">Demo only — no real money moves. {role === "RIDER" ? "Do not collect cash for this demo booking." : "Checkout simulates payment to Fetch-It. No wallet or bank credentials are needed."}</p>}
+    {booking && <><p>{demo ? "Demo fare" : "Fare"}: ₱{Number(booking.totalFare).toFixed(2)}</p><div className="space-y-1">{!demo && <><div>Customer: {booking.customerPaidAt ? `Confirmed ₱${Number(booking.customerPaidAmount).toFixed(2)}` : "Not yet confirmed"}</div><div>Rider: {booking.riderReceivedAt ? `Received ₱${Number(booking.riderReceivedAmount).toFixed(2)}` : "Not yet confirmed"}</div></>}{booking.paidAt && <div>{demo ? "Simulated payment" : "Paid"}: {new Date(booking.paidAt).toLocaleString()}</div>}{booking.paymentReference && <div className="break-all">Reference: {booking.paymentReference}</div>}{demo && <><div>Demo commission rate: {(booking.demoCommissionBps ?? 0) / 100}%</div>{booking.demoRiderEarnings !== null ? <><div>Fetch-It demo commission: ₱{Number(booking.demoCommission).toFixed(2)}</div><div>Rider demo earnings: ₱{Number(booking.demoRiderEarnings).toFixed(2)}</div><div>Demo payout: {booking.demoPayoutAt ? `Recorded ${new Date(booking.demoPayoutAt).toLocaleString()}` : "Awaiting admin review"}</div>{booking.demoPayoutReference && <div className="break-all">Demo payout reference: {booking.demoPayoutReference}</div>}</> : <p className="text-xs text-muted-foreground">Demo earnings are recorded after a paid booking is completed.</p>}</>}</div>{!demo && mismatch && <p className="text-amber-700">Amounts do not match the fare. Contact support for payment review.</p>}</>}
+    {canCheckout && <Button size="sm" disabled={busy} onClick={async () => {
+      if (pending.current) return;
+      pending.current = true; version.current++; setBusy(true); setError("");
+      try {
+        const response = await fetch(`/api/bookings/${bookingId}/demo-checkout`, { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Demo checkout unavailable.");
+        window.location.assign(data.checkoutUrl);
+      } catch (error) { setError(error instanceof Error ? error.message : "Reconnect to open demo checkout."); }
+      finally { pending.current = false; setBusy(false); }
+    }}>{busy ? "Opening…" : booking.paymentStatus === "PENDING" ? "Resume demo checkout" : "Open demo checkout"}</Button>}
     {canConfirm && <form className="space-y-2" onSubmit={async event => {
       event.preventDefault(); if (pending.current) return;
       if (!navigator.onLine) { setError("Reconnect to confirm payment."); return; }

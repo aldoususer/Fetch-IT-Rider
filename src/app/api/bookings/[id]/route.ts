@@ -1,3 +1,5 @@
+import { settleDemoEarnings } from "@/lib/demo-payments";
+import { isDemoPayment } from "@/lib/payment-policy";
 import { expireRiderOffers, reserveAvailableRider, DispatchError } from "@/lib/dispatch";
 import { withRequestLog, RateLimitError, limitRequests, safeErrorCode } from "@/lib/request-guard";
 import { bookingView, riderSelect } from "@/lib/db-data";
@@ -74,6 +76,7 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
       await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
       const booking = await tx.booking.findUnique({ where: { id } });
       if (!booking) throw new DispatchError("Booking not found.", 404);
+      if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("This demo booking needs a successful demo payment before it can progress.");
       const now = new Date();
       if (status === "ACCEPTED") {
         if (!["PENDING", "MATCHED"].includes(booking.status) || (booking.riderId && booking.riderId !== session.uid) || booking.excludedRiderIds.includes(session.uid)) throw new DispatchError("This booking is no longer available to you.");
@@ -95,8 +98,9 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         ...(["ACCEPTED", "IN_TRANSIT"].includes(status) ? { etaMinutes: etaMinutes(booking.distanceKm, VEHICLES[booking.vehicleClass].speedKph) } : {}),
       }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
       if (status === "DELIVERED") await tx.riderProfile.update({ where: { userId: session.uid }, data: { totalDeliveries: { increment: 1 } } });
+      if (status === "DELIVERED") await settleDemoEarnings(tx, result);
       await recordBookingEvent(tx, id, { ...session, role: "RIDER" }, { action: status === "ACCEPTED" && !booking.riderId ? "ASSIGNED" : "STATUS_CHANGED", fromStatus: booking.status, toStatus: status, riderId: session.uid });
-      return result;
+      return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
     }, { maxWait: 10000, timeout: 20000 });
     const snapshot = buildTicketSnapshot(updated);
     return NextResponse.json({ booking: { ...bookingView(updated), ticket: snapshot ? encodeTicket(snapshot) : null } });

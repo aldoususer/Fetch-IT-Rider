@@ -1,4 +1,6 @@
 import type { Booking, Prisma, PrismaClient } from "@prisma/client";
+import { isDemoPayment } from "./payment-policy";
+export const dispatchPaymentWhere: Prisma.BookingWhereInput = { OR: [{ paymentMethod: "CASH" }, { paymentMethod: { in: ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"] }, paymentStatus: "PAID" }] };
 export const OFFER_TTL_MS = 2 * 60_000;
 const activeStatuses = ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] as const;
 type Actor = { uid: string; name: string; role: "ADMIN" | "RIDER" };
@@ -16,13 +18,16 @@ async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: 
 }
 
 export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date) {
+  if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("Complete demo checkout before assigning or accepting this booking.");
   if (!await eligible(tx, riderId, booking, now)) throw new DispatchError("Choose an online rider with a matching vehicle and no active booking.");
 }
 
 async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "RIDER" }, reason: string, requested?: string) {
   const now = new Date();
   if (!["PENDING", "MATCHED", "ACCEPTED"].includes(booking.status) || booking.pickedUpAt) throw new DispatchError("Reassignment is available only before pickup.");
-  if (booking.customerPaidAt || booking.riderReceivedAt || booking.paymentStatus === "PAID" || booking.paymentStatus === "REFUNDED") throw new DispatchError("Payment has been recorded. Ask an admin to resolve payment before reassigning.");
+  if (isDemoPayment(booking.paymentMethod)) {
+    if (booking.paymentStatus !== "PAID") throw new DispatchError("Complete demo checkout before assigning or accepting this booking.");
+  } else if (booking.customerPaidAt || booking.riderReceivedAt || booking.paymentStatus === "PAID" || booking.paymentStatus === "REFUNDED") throw new DispatchError("Payment has been recorded. Ask an admin to resolve payment before reassigning.");
   if (booking.scheduledAt && booking.scheduledAt > now) throw new DispatchError("Assign this booking when its scheduled pickup becomes due.");
   if (requested && requested === booking.riderId) throw new DispatchError("This rider is already assigned.");
   const excluded = [...new Set([...booking.excludedRiderIds, ...(booking.riderId ? [booking.riderId] : [])])];
