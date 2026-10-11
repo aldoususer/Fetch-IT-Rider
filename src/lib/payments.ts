@@ -53,7 +53,7 @@ export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, 
     const booking = await tx.booking.findUnique({ where: { id } });
     if (!booking) throw new PaymentError("Booking not found.", 404);
     const suppliedReference = typeof body.reference === "string" ? body.reference.trim() : "";
-    if (isDemoPayment(booking.paymentMethod) && (status !== "REFUNDED" || booking.paymentStatus !== "PAID" || booking.status !== "DELIVERED" || booking.demoPayoutAt)) throw new PaymentError("Demo payments are controlled by checkout. Cancel an active booking to refund it, or simulate a refund for a completed paid booking before its demo payout.", 409);
+    if (isDemoPayment(booking.paymentMethod) && (status !== "REFUNDED" || booking.paymentStatus !== "PAID" || booking.status !== "DELIVERED" || booking.demoPayoutAt)) throw new PaymentError("Online payments are controlled by checkout. Cancel an active booking to refund it, or record a test refund for a completed paid booking before its payout.", 409);
     if (status === booking.paymentStatus && (!suppliedReference || suppliedReference === booking.paymentReference)) return booking;
     if (booking.paymentStatus === "REFUNDED" || (status === "REFUNDED" && booking.paymentStatus !== "PAID")) throw new PaymentError("Only a paid booking can be refunded; refunded records are final.", 409);
     if (status === "PAID" && !["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(booking.status)) throw new PaymentError("This booking has no accepted service to collect payment for.", 409);

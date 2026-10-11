@@ -1,6 +1,6 @@
 export const PAYMENT_STATUS_LABEL = { UNPAID: "Unpaid", PENDING: "Awaiting confirmation / review", PAID: "Paid", REFUNDED: "Refunded", FAILED: "Failed" } as const;
 export type PaymentStatus = keyof typeof PAYMENT_STATUS_LABEL;
-export const PAYMENT_METHOD_LABEL = { CASH: "Cash", DEMO_GCASH: "GCash (demo)", DEMO_MAYA: "Maya (demo)", DEMO_BANK: "Bank payment (demo)" } as const;
+export const PAYMENT_METHOD_LABEL = { CASH: "Cash", DEMO_GCASH: "GCash", DEMO_MAYA: "Maya", DEMO_BANK: "Bank account" } as const;
 export type PaymentMethod = keyof typeof PAYMENT_METHOD_LABEL;
 export function isDemoPayment(method: string) { return ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"].includes(method); }
 export function demoSplit(fare: unknown, bps: number) {

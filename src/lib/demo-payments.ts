@@ -8,14 +8,14 @@ type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" }
 // change cannot silently change an existing rider's demo earnings.
 export function demoCommissionBps() {
   const rate = process.env.DEMO_COMMISSION_PERCENT ?? "15";
-  if (!/^\d{1,3}(\.\d{1,2})?$/.test(rate) || Number(rate) > 100) throw new PaymentError("Demo commission configuration is invalid.", 503);
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(rate) || Number(rate) > 100) throw new PaymentError("Payment commission configuration is invalid.", 503);
   return Math.round(Number(rate) * 100);
 }
 
 function payable(booking: Booking) {
-  if (!isDemoPayment(booking.paymentMethod)) throw new PaymentError("Choose a demo payment method for this booking.", 409);
-  if (!["PENDING", "MATCHED", "ACCEPTED"].includes(booking.status) || booking.pickedUpAt) throw new PaymentError("Demo checkout is available only before pickup.", 409);
-  if (["PAID", "REFUNDED"].includes(booking.paymentStatus)) throw new PaymentError("This demo payment is already final.", 409);
+  if (!isDemoPayment(booking.paymentMethod)) throw new PaymentError("Choose an online payment method for this booking.", 409);
+  if (!["PENDING", "MATCHED", "ACCEPTED"].includes(booking.status) || booking.pickedUpAt) throw new PaymentError("Checkout is available only before pickup.", 409);
+  if (["PAID", "REFUNDED"].includes(booking.paymentStatus)) throw new PaymentError("This payment is already final.", 409);
 }
 
 export async function startDemoCheckout(db: PrismaClient, id: string, actor: Actor) {
@@ -36,24 +36,24 @@ export async function startDemoCheckout(db: PrismaClient, id: string, actor: Act
 // Completion runs in the same transaction as the rider's status/proof update.
 export async function settleDemoEarnings(tx: Prisma.TransactionClient, booking: Booking) {
   if (!isDemoPayment(booking.paymentMethod) || booking.status !== "DELIVERED" || booking.paymentStatus !== "PAID" || !booking.riderId || booking.demoRiderEarnings !== null) return;
-  if (booking.demoCommissionBps === null) throw new PaymentError("Demo commission is missing.", 409);
+  if (booking.demoCommissionBps === null) throw new PaymentError("Commission is missing.", 409);
   const split = demoSplit(booking.totalFare.toString(), booking.demoCommissionBps);
   await tx.booking.update({ where: { id: booking.id }, data: { demoCommission: split.commission, demoRiderEarnings: split.riderEarnings } });
   await tx.paymentEvent.create({ data: { bookingId: booking.id, actorId: booking.riderId, actorName: "Demo accounting", actorRole: "RIDER", action: "DEMO_EARNINGS_RECORDED", amount: split.riderEarnings, fromStatus: "PAID", toStatus: "PAID", reason: `${booking.demoCommissionBps / 100}% demo commission; no real money moved.` } });
 }
 
 export async function resolveDemoCheckout(db: PrismaClient, checkoutId: string, actor: Actor, outcome: unknown) {
-  if (!["SUCCEEDED", "FAILED", "CANCELLED"].includes(String(outcome))) throw new PaymentError("Choose a demo checkout result.");
+  if (!["SUCCEEDED", "FAILED", "CANCELLED"].includes(String(outcome))) throw new PaymentError("Choose a valid payment result.");
   return db.$transaction(async tx => {
     const attempt = await tx.demoCheckout.findUnique({ where: { id: checkoutId } });
-    if (!attempt) throw new PaymentError("Demo checkout not found.", 404);
+    if (!attempt || !attempt.bookingId) throw new PaymentError("Checkout not found.", 404);
     await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${attempt.bookingId} FOR UPDATE`;
     const booking = await tx.booking.findUniqueOrThrow({ where: { id: attempt.bookingId } });
-    if (actor.role !== "CUSTOMER" || booking.customerId !== actor.uid) throw new PaymentError("Demo checkout not found.", 404);
+    if (actor.role !== "CUSTOMER" || booking.customerId !== actor.uid) throw new PaymentError("Checkout not found.", 404);
     const checkout = await tx.demoCheckout.findUniqueOrThrow({ where: { id: checkoutId } });
     if (checkout.status !== "PENDING") {
       if (checkout.status === outcome) return booking;
-      throw new PaymentError("This demo checkout result has already been recorded.", 409);
+      throw new PaymentError("This payment result has already been recorded.", 409);
     }
     payable(booking);
     const now = new Date();
@@ -79,17 +79,17 @@ export async function cancelDemoPayment(tx: Prisma.TransactionClient, booking: B
 
 export async function recordDemoPayout(db: PrismaClient, id: string, actor: Actor, body: { reference?: unknown; reason?: unknown }) {
   if (actor.role !== "ADMIN") throw new PaymentError("Admin account required.", 403);
-  if (typeof body.reference !== "string" || !body.reference.trim() || body.reference.length > 100 || typeof body.reason !== "string" || !body.reason.trim() || body.reason.length > 500) throw new PaymentError("Add a demo payout reference and a reason.");
+  if (typeof body.reference !== "string" || !body.reference.trim() || body.reference.length > 100 || typeof body.reason !== "string" || !body.reason.trim() || body.reason.length > 500) throw new PaymentError("Add a payout reference and a reason.");
   const reference = `DEMO-${body.reference.trim()}`;
   const reason = body.reason.trim();
   return db.$transaction(async tx => {
     await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
     const booking = await tx.booking.findUnique({ where: { id } });
     if (!booking) throw new PaymentError("Booking not found.", 404);
-    if (!isDemoPayment(booking.paymentMethod) || booking.status !== "DELIVERED" || booking.paymentStatus !== "PAID" || !booking.riderId || booking.demoRiderEarnings === null) throw new PaymentError("Only completed, paid demo bookings with recorded rider earnings can have a demo payout.", 409);
+    if (!isDemoPayment(booking.paymentMethod) || booking.status !== "DELIVERED" || booking.paymentStatus !== "PAID" || !booking.riderId || booking.demoRiderEarnings === null) throw new PaymentError("Only completed, paid online bookings with recorded rider earnings can have a payout.", 409);
     if (booking.demoPayoutAt) {
       if (booking.demoPayoutReference === reference) return booking;
-      throw new PaymentError("A demo payout is already recorded.", 409);
+      throw new PaymentError("A payout is already recorded.", 409);
     }
     const updated = await tx.booking.update({ where: { id }, data: { demoPayoutAt: new Date(), demoPayoutReference: reference } });
     await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: "ADMIN", action: "DEMO_PAYOUT_RECORDED", amount: booking.demoRiderEarnings, fromStatus: "PAID", toStatus: "PAID", reason, reference } });

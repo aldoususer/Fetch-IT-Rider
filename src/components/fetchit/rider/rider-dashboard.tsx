@@ -323,9 +323,9 @@ export function RiderDashboard() {
           />
         </div>
 
-        <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 space-y-2" aria-label="Demo earnings">
-          <strong>Demo earnings — no real money moves</strong>
-          <div className="grid gap-2 sm:grid-cols-3"><span>Earned: ₱{(stats?.demoEarnings ?? 0).toFixed(2)}</span><span>Awaiting review: ₱{(stats?.demoAwaitingPayout ?? 0).toFixed(2)}</span><span>Simulated payouts: ₱{(stats?.demoPaidOut ?? 0).toFixed(2)}</span></div>
+        <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 space-y-2" aria-label="Online earnings">
+          <strong>Online earnings</strong><p className="text-xs">Test payments and payouts — no money transferred.</p>
+          <div className="grid gap-2 sm:grid-cols-3"><span>Earned: ₱{(stats?.demoEarnings ?? 0).toFixed(2)}</span><span>Awaiting review: ₱{(stats?.demoAwaitingPayout ?? 0).toFixed(2)}</span><span>Payouts: ₱{(stats?.demoPaidOut ?? 0).toFixed(2)}</span></div>
         </section>
 
         {/* Tabs */}
@@ -633,7 +633,7 @@ function JobCard({
         <div className="grid grid-cols-2 gap-3 text-sm">
           <Stat label={job.type === "RIDE" ? "Passenger" : "Customer"} value={job.customer?.name ?? "—"} icon={<Package className="h-4 w-4" />} />
           <Stat label="Distance" value={`${job.distanceKm} km`} icon={<Navigation className="h-4 w-4" />} />
-          <Stat label={job.paymentMethod === "CASH" ? "Cash fare" : "Demo rider share"} value={`₱${riderShare(job).toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
+          <Stat label={job.paymentMethod === "CASH" ? "Cash fare" : "Rider share"} value={`₱${riderShare(job).toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
           {job.type === "RIDE" ? (
             <Stat label="Passengers" value={String(job.passengers ?? 1)} icon={<Users className="h-4 w-4" />} />
           ) : (
@@ -848,7 +848,7 @@ function ActiveJobFlow({
           <Stat label="Cargo" value={`${job.cargoWeightKg} kg`} icon={<Package className="h-4 w-4" />} />
         )}
         <Stat label="Distance" value={`${job.distanceKm} km`} icon={<Navigation className="h-4 w-4" />} />
-        <Stat label={job.paymentMethod === "CASH" ? "Cash fare" : "Demo rider share"} value={`₱${riderShare(job).toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
+        <Stat label={job.paymentMethod === "CASH" ? "Cash fare" : "Rider share"} value={`₱${riderShare(job).toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
         {!isRide && job.cargoNotes && (
           <div className="col-span-2 sm:col-span-3 text-xs text-muted-foreground border-l-2 border-primary/40 pl-2 italic">
             {job.cargoNotes}

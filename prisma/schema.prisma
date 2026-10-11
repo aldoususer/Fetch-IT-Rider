@@ -136,6 +136,7 @@ model User {
   reviewsAsRider         CustomerReview[] @relation("ReviewRider")
   supportTickets         SupportTicket[]
   assignedSupportTickets SupportTicket[]  @relation("SupportAssignee")
+  checkoutDrafts CheckoutDraft[]
 }
 
 model Booking {
@@ -203,6 +204,7 @@ model Booking {
   supportTickets    SupportTicket[]
   paymentEvents     PaymentEvent[]
   demoCheckouts     DemoCheckout[]
+  checkoutDraft    CheckoutDraft?
 
   @@index([customerId, createdAt, id])
   @@index([riderId, status, createdAt])
@@ -213,12 +215,30 @@ model Booking {
 
 model DemoCheckout {
   id String @id @default(cuid())
-  bookingId String
+  bookingId String?
+  draftId String?
   status DemoCheckoutStatus @default(PENDING)
   createdAt DateTime @default(now())
   resolvedAt DateTime?
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  draft CheckoutDraft? @relation(fields: [draftId], references: [id], onDelete: Cascade)
   @@index([bookingId, createdAt])
+  @@index([draftId, createdAt])
+}
+
+// A quote and validated order snapshot, never an active booking or rider job.
+model CheckoutDraft {
+  id String @id
+  customerId String
+  requestHash String
+  bookingData Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  bookingId String? @unique
+  customer User @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  checkouts DemoCheckout[]
+  @@index([customerId, createdAt])
 }
 
 model PaymentEvent {
