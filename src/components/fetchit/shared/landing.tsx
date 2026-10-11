@@ -47,7 +47,7 @@ const FEATURES = [
   {
     icon: PenTool,
     title: "Fast e-POD Capture",
-    desc: "Collect recipient signatures, verify OTP codes, and snap photo proofs in seconds to close out every job.",
+    desc: "Collect recipient signatures and drop-off photos to record proof of delivery.",
   },
   {
     icon: Wallet,
@@ -61,16 +61,16 @@ const FEATURES = [
   },
   {
     icon: ShieldCheck,
-    title: "Verified Customers & OTP",
-    desc: "Every handover is protected by OTP validation and digital proofs, so you deliver with confidence.",
+    title: "Ride Pickup OTP",
+    desc: "Verify the passenger's pickup code before marking them on board.",
   },
 ];
 
 const STEPS = [
   { n: "01", t: "Sign up & add your vehicle", d: "Tell us your vehicle class — motorcycle to refrigerated van — and plate number." },
   { n: "02", t: "Go online", d: "Toggle your status to see due jobs for your vehicle class." },
-  { n: "03", t: "Claim & pick up", d: "Accept a job from the board, navigate to the pickup, and confirm the cargo." },
-  { n: "04", t: "Complete the job", d: "Capture OTP or signature proof on arrival and review the recorded fare." },
+  { n: "03", t: "Claim & pick up", d: "Accept a job, navigate to pickup, and verify the ride OTP or collect the cargo." },
+  { n: "04", t: "Complete the job", d: "Complete the ride at drop-off or capture delivery signature proof, then review the recorded fare." },
 ];
 
 export function LandingView() {

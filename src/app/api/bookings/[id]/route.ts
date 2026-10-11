@@ -20,6 +20,7 @@ import {
 import { etaMinutes } from "@/lib/fare";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 import { riderJobView } from "@/lib/job-privacy";
+import { matchesChallenge } from "@/lib/delivery-challenge";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -88,9 +89,25 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         const next: Record<string, string> = { ACCEPTED: "PICKED_UP", PICKED_UP: "IN_TRANSIT", IN_TRANSIT: "DELIVERED" };
         if (next[booking.status] !== status) throw new DispatchError(`Cannot change ${booking.status} to ${status}.`);
       }
+      if (status === "PICKED_UP" && booking.type === "RIDE") {
+        if (typeof body.otp !== "string" || !/^\d{6}$/.test(body.otp.trim()))
+          return { error: "Enter the passenger's 6-digit pickup code before boarding.", status: 400 };
+        const challenge = await tx.deliveryChallenge.findUnique({ where: { bookingId: id } });
+        if (!challenge || challenge.expiresAt <= now)
+          return { error: "Ask the passenger to reveal a new pickup code.", status: 400 };
+        if (challenge.verifiedAt) return { error: "This pickup code has already been used.", status: 409 };
+        if (challenge.attempts >= challenge.maxAttempts)
+          return { error: "Too many incorrect attempts. Wait for expiry and ask for a new pickup code.", status: 429 };
+        const ok = matchesChallenge(id, body.otp.trim(), challenge.codeHash);
+        await tx.deliveryChallenge.update({ where: { bookingId: id }, data: {
+          attempts: { increment: 1 }, ...(ok ? { verifiedAt: now } : {}),
+        } });
+        // Commit failed attempts; a thrown error would roll them back.
+        if (!ok) return { error: "Pickup code did not match. Confirm it with the passenger.", status: 400 };
+      }
       if (status === "DELIVERED" && booking.type === "DELIVERY") {
-        const proof = await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: { in: ["OTP", "SIGNATURE"] }, verifiedAt: { not: null } } });
-        if (!proof) throw new DispatchError("Record a verified delivery code or signature before completing delivery.");
+        const proof = await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: "SIGNATURE", verifiedAt: { not: null } } });
+        if (!proof) throw new DispatchError("Record a recipient signature before completing delivery.");
       }
       const result = await tx.booking.update({ where: { id }, data: {
         status, ...(status === "ACCEPTED" ? { riderId: session.uid, matchedAt: now, assignmentExpiresAt: null } : {}),
@@ -102,6 +119,7 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
       await recordBookingEvent(tx, id, { ...session, role: "RIDER" }, { action: status === "ACCEPTED" && !booking.riderId ? "ASSIGNED" : "STATUS_CHANGED", fromStatus: booking.status, toStatus: status, riderId: session.uid });
       return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
     }, { maxWait: 10000, timeout: 20000 });
+    if ("error" in updated) return NextResponse.json({ error: updated.error }, { status: updated.status });
     const snapshot = buildTicketSnapshot(updated);
     return NextResponse.json({ booking: { ...bookingView(updated), ticket: snapshot ? encodeTicket(snapshot) : null } });
   } catch (error) {

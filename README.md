@@ -8,7 +8,8 @@ Next.js 16 · App Router · TypeScript · Tailwind CSS 4 · shadcn/ui · Prisma 
 - **Online toggle** — go online/offline to control job matching.
 - **Available feed** — open `PENDING` jobs matching your vehicle class (deliveries **and** rides), auto-refreshing every 10s.
 - **Active job tracker** — accept → en route → picked up / passenger on board → in transit → completed, with GPS broadcast and status progression.
-- **e-POD capture** — OTP, digital signature and drop-off photo for **delivery** jobs (rides complete at drop-off, no POD needed).
+- **Ride pickup OTP** — enter the passenger's code and verify it before marking them on board. Codes expire after 15 minutes, lock after five incorrect attempts, and cannot be reused.
+- **e-POD capture** — recipient signature and supporting drop-off photos for **delivery** jobs. A signature completes delivery; a photo alone is supporting evidence.
 - **Earnings & stats** — completed jobs, rating, wallet earnings.
 
 ## Run locally
@@ -55,4 +56,4 @@ Seeded automatically by the landing page (idempotent):
 
 ## Database rebuild
 
-The canonical schema and versioned migrations live in fetch-customer. See fetch-customer/docs/database-rebuild.md for account identities, rider records, delivery codes, GPS retention, and coordinated deployment. Set the same DELIVERY_CODE_SECRET in customer and rider environments. Configure CRON_SECRET in the rider deployment for daily tracking cleanup. External image storage is deferred.
+The canonical schema and versioned migrations live in fetch-customer. See fetch-customer/docs/database-rebuild.md for account identities, rider records, ride pickup codes, GPS retention, and coordinated deployment. Set the same DELIVERY_CODE_SECRET (legacy variable name) in customer and rider environments, or use their shared SESSION_SECRET. Configure CRON_SECRET in the rider deployment for daily tracking cleanup. External image storage is deferred.

@@ -2,7 +2,7 @@
 import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
 
 // Rider dashboard — stats header, available jobs feed, active job tracker
-// with status progression, and e-POD capture (signature + OTP + photo).
+// with ride pickup OTP verification and delivery e-POD (signature + photo).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -725,18 +725,22 @@ function ActiveJobFlow({
   const [status, setStatus] = useState<BookingStatus>(job.status);
   const [updating, setUpdating] = useState(false);
   const [showProof, setShowProof] = useState(false);
+  const [pickupOtp, setPickupOtp] = useState("");
+  const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
 
   async function advance(to: BookingStatus) {
     setUpdating(true);
+    setPickupOtpError(null);
     try {
       const res = await fetch(`/api/bookings/${job.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: to }),
+        body: JSON.stringify({ status: to, ...(isRide && to === "PICKED_UP" ? { otp: pickupOtp } : {}) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Update failed");
       setStatus(data.booking.status);
+      setPickupOtp("");
       onUpdated({ status: data.booking.status, etaMinutes: data.booking.etaMinutes });
       // Broadcast status change so the customer UI updates (no-op when no
       // tracking service is configured)
@@ -757,6 +761,7 @@ function ActiveJobFlow({
         setShowProof(false);
       }
     } catch (e) {
+      if (isRide && to === "PICKED_UP") setPickupOtpError(e instanceof Error ? e.message : "Could not verify the pickup code.");
       toast({
         title: "Update failed",
         description: e instanceof Error ? e.message : "Unknown error",
@@ -774,7 +779,7 @@ function ActiveJobFlow({
     ? isRide
       ? {
           ACCEPTED: "I'm on my way",
-          PICKED_UP: "Passenger on board",
+          PICKED_UP: "Verify OTP & board",
           IN_TRANSIT: "Start trip",
           DELIVERED: "Complete ride",
         }[nextStatus]
@@ -881,13 +886,23 @@ function ActiveJobFlow({
       </div>
 
       {/* Action buttons */}
+      {isRide && status === "ACCEPTED" && (
+        <Card className="border-primary/30 bg-primary/5 py-0">
+          <CardContent className="space-y-3 p-4">
+            <Label htmlFor={`pickup-otp-${job.id}`} className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Passenger pickup OTP</Label>
+            <p className="text-sm text-muted-foreground">At pickup, ask the passenger to reveal their ride OTP. Verify it before marking them on board.</p>
+            <Input id={`pickup-otp-${job.id}`} inputMode="numeric" autoComplete="off" maxLength={6} placeholder="6-digit code" value={pickupOtp} disabled={updating} onChange={event => { setPickupOtp(event.target.value.replace(/\D/g, "").slice(0, 6)); setPickupOtpError(null); }} aria-invalid={!!pickupOtpError} className="font-mono text-lg tracking-widest" />
+            {pickupOtpError && <p role="alert" className="text-sm text-destructive">{pickupOtpError}</p>}
+          </CardContent>
+        </Card>
+      )}
       {!isDelivered ? (
         <div className="flex flex-col gap-2">
           {canAdvance && (
             <Button
               size="lg"
               onClick={() => advance(nextStatus!)}
-              disabled={updating}
+              disabled={updating || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
               className="w-full"
             >
               {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -951,7 +966,6 @@ function ProofCapture({
   onDone: (completed: boolean) => void;
 }) {
   const { toast } = useToast();
-  const [otp, setOtp] = useState("");
   const [signatureSvg, setSignatureSvg] = useState<string | null>(null);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [recipientName, setRecipientName] = useState("");
@@ -973,8 +987,8 @@ function ProofCapture({
 
   async function submit() {
     setError(null);
-    if (!otp && !signatureSvg && !photoDataUrl) {
-      setError("Provide at least one proof artifact (OTP, signature, or photo).");
+    if (!signatureSvg && !photoDataUrl) {
+      setError("Provide a recipient signature or a drop-off photo.");
       return;
     }
     setSubmitting(true);
@@ -983,7 +997,6 @@ function ProofCapture({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          otp: otp || undefined,
           signatureSvg: signatureSvg || undefined,
           photoDataUrl: photoDataUrl || undefined,
           recipientName: recipientName || undefined,
@@ -1012,31 +1025,10 @@ function ProofCapture({
           <ShieldCheck className="h-5 w-5 text-primary" /> Capture e-POD
         </CardTitle>
         <CardDescription>
-          Collect at least one of: OTP from the customer, recipient signature,
-          or a drop-off photo. A code or signature is required to complete the delivery.
+          Collect the recipient's signature to complete delivery. You can also save a drop-off photo as supporting proof.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 min-w-0 [&>*]:min-w-0">
-        {/* OTP */}
-        <div className="space-y-2">
-          <Label htmlFor="otp" className="text-sm font-medium flex items-center gap-1.5">
-            <KeyRound className="h-4 w-4 text-primary" /> OTP from customer
-          </Label>
-          <Input
-            id="otp"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={6}
-            placeholder="6-digit code"
-            value={otp}
-            onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            className="font-mono text-lg tracking-widest"
-          />
-          <p className="text-xs text-muted-foreground">
-            Ask the customer to reveal their hand-off code in their tracking view.
-          </p>
-        </div>
-
         {/* Signature */}
         <div className="space-y-2">
           <Label className="text-sm font-medium flex items-center gap-1.5">
@@ -1107,7 +1099,7 @@ function ProofCapture({
 
         <Button className="w-full" onClick={submit} disabled={submitting}>
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-          Submit proof & complete delivery
+          {signatureSvg ? "Submit proof & complete delivery" : "Save photo proof"}
         </Button>
       </CardContent>
     </Card>

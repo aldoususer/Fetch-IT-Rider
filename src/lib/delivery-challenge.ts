@@ -1,11 +1,14 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 
+// Used for ride pickup verification. Keep the legacy helper/table/secret names
+// so existing deployments can use the shared challenge store without migration.
+
 export const CHALLENGE_TTL_MS = 15 * 60 * 1000;
 export const MAX_CHALLENGE_ATTEMPTS = 5;
 
 function key() {
   const secret = process.env.DELIVERY_CODE_SECRET || process.env.SESSION_SECRET;
-  if (!secret) throw new Error("Configure DELIVERY_CODE_SECRET or SESSION_SECRET for delivery codes.");
+  if (!secret) throw new Error("Configure the shared DELIVERY_CODE_SECRET or SESSION_SECRET for ride pickup codes.");
   return createHash("sha256").update(`fetch-delivery-code:${secret}`).digest();
 }
 export function challengeHash(bookingId: string, code: string) {
