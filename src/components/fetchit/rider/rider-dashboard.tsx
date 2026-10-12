@@ -126,6 +126,8 @@ interface Job {
   customer: { id: string; name: string; phone: string | null };
 }
 
+type JobTab = "available" | "active" | "history";
+
 function riderShare(job: Job) {
   return isDemoPayment(job.paymentMethod) ? job.demoRiderEarnings ?? demoSplit(job.totalFare.toFixed(2), job.demoCommissionBps ?? 1500).riderEarnings : job.totalFare;
 }
@@ -137,11 +139,15 @@ export function RiderDashboard() {
   const { toast } = useToast();
 
   const [stats, setStats] = useState<RiderStats | null>(null);
-  const [tab, setTab] = useState<"available" | "active" | "history">("available");
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<JobTab>("available");
+  const [jobLists, setJobLists] = useState<Partial<Record<JobTab, Job[]>>>({});
   const [activeJob, setActiveJob] = useState<Job | null>(null);
+  const [jobErrors, setJobErrors] = useState<Partial<Record<JobTab, string>>>({});
   const jobsRequest = useRef(0);
+  const jobs = jobLists[tab] ?? [];
+  // Only a tab's first load uses skeletons. Refreshes preserve its existing
+  // cards and their mounted state, including any open job actions.
+  const loading = jobLists[tab] === undefined && !jobErrors[tab];
 
   const loadStats = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -154,20 +160,22 @@ export function RiderDashboard() {
     }
   }, []);
 
-  const loadJobs = useCallback(async (signal?: AbortSignal, background = false) => {
+  const loadJobs = useCallback(async (signal?: AbortSignal) => {
     const request = ++jobsRequest.current;
-    if (!background) setLoading(true);
     try {
       const path = tab === "available" ? "/api/rider/available?includeMatched=true" : `/api/bookings?filter=${tab}`;
       const res = await fetch(path, { cache: "no-store", signal });
       if (!res.ok) throw new Error("Jobs unavailable");
       const data = await res.json();
       if (signal?.aborted || request !== jobsRequest.current) return;
-      const latest = (tab === "available" ? data.jobs : data.bookings) as Job[];
-      setJobs(latest ?? []);
-      if (tab === "active") setActiveJob(previous => previous ? latest?.find(job => job.id === previous.id) ?? null : null);
-    } finally {
-      if (!signal?.aborted && request === jobsRequest.current) setLoading(false);
+      const latest = tab === "available" ? data.jobs : data.bookings;
+      if (!Array.isArray(latest)) throw new Error("Jobs unavailable");
+      setJobLists(previous => ({ ...previous, [tab]: latest as Job[] }));
+      setJobErrors(previous => ({ ...previous, [tab]: undefined }));
+      if (tab === "active") setActiveJob(previous => previous ? latest.find(job => job.id === previous.id) ?? null : null);
+    } catch (error) {
+      if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [tab]: "Couldn’t update jobs. Please try again." }));
+      throw error;
     }
   }, [tab]);
 
@@ -186,7 +194,7 @@ export function RiderDashboard() {
 
   // Pause hidden/offline pages, prevent overlaps, and back off after failures.
   useVisiblePoll(tab !== "history" && user ? `${user.id}:${tab}` : "", async signal => {
-    await Promise.all([loadJobs(signal, true), loadStats(signal)]);
+    await Promise.all([loadJobs(signal), loadStats(signal)]);
   }, 10000);
 
   async function toggleOnline(next: boolean) {
@@ -229,10 +237,13 @@ export function RiderDashboard() {
       return;
     }
     toast({ title: "Job accepted", description: job.refCode });
+    setJobLists(previous => ({ ...previous,
+      available: previous.available?.filter(item => item.id !== job.id),
+      active: [data.booking, ...(previous.active ?? []).filter(item => item.id !== job.id)],
+    }));
     setActiveJob(data.booking);
     setTab("active");
     await loadStats();
-    await loadJobs();
   }
 
   // Clicking the logo always brings you back to the main dashboard view.
@@ -350,6 +361,10 @@ export function RiderDashboard() {
         </Tabs>
 
         {/* Job list */}
+        {jobErrors[tab] && <div role="status" className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+          <p>{jobLists[tab] ? "Couldn’t refresh. Your current jobs remain visible." : jobErrors[tab]}</p>
+          <Button variant="outline" size="sm" onClick={() => void loadJobs().catch(() => {})}>Try again</Button>
+        </div>}
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 [&>*]:min-w-0">
             {[0, 1, 2, 3].map((i) => (
@@ -362,7 +377,7 @@ export function RiderDashboard() {
               </Card>
             ))}
           </div>
-        ) : jobs.length === 0 ? (
+        ) : jobLists[tab] === undefined ? null : jobs.length === 0 ? (
           <EmptyJobs
             tab={tab}
             isOnline={stats?.isOnline ?? false}
