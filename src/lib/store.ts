@@ -10,6 +10,22 @@
 
 import { create } from "zustand";
 
+let sessionEpoch = 0;
+let pendingLogout = false;
+const LOGOUT_KEY = "fetchit:rider:pending-logout";
+function hasPendingLogout() {
+  try { return pendingLogout || localStorage.getItem(LOGOUT_KEY) === "1"; }
+  catch { return pendingLogout; }
+}
+function setPendingLogout(value: boolean) {
+  pendingLogout = value;
+  try { if (value) localStorage.setItem(LOGOUT_KEY, "1"); else localStorage.removeItem(LOGOUT_KEY); }
+  catch { /* Retain the in-memory flag when device storage is unavailable. */ }
+}
+function guestView(view: AppView): AppView {
+  return view === "login" || view === "signup" ? view : "landing";
+}
+
 export type Role = "CUSTOMER" | "RIDER";
 
 export interface AuthUser {
@@ -61,37 +77,69 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingRole: null,
   setView: (v) => set({ view: v }),
   setPendingRole: (r) => set({ pendingRole: r }),
-  setUser: (u) =>
+  setUser: (u) => {
+    sessionEpoch++;
+    if (isAllowedRole(u?.role)) setPendingLogout(false);
     set({
       user: isAllowedRole(u?.role) ? u : null,
       view: isAllowedRole(u?.role) ? "rider-dashboard" : "landing",
-    }),
+    });
+  },
   bootstrap: async () => {
+    const epoch = sessionEpoch;
     try {
+      if (hasPendingLogout()) {
+        const response = await fetch("/api/auth/logout", { method: "POST" });
+        if (!response.ok) throw new Error("Sign-out is waiting for a connection.");
+        if (epoch !== sessionEpoch) return;
+        setPendingLogout(false);
+      }
       const res = await fetch("/api/auth/me", { cache: "no-store" });
+      if (epoch !== sessionEpoch) return;
       if (!res.ok) {
-        set({ bootstrapped: true });
+        set({ user: null, view: guestView(get().view), bootstrapped: true });
         return;
       }
       const data = (await res.json()) as { user: AuthUser | null };
+      if (epoch !== sessionEpoch) return;
       const allowed = isAllowedRole(data.user?.role);
       set({
         user: allowed ? data.user : null,
-        view: allowed ? "rider-dashboard" : "landing",
+        view: allowed ? "rider-dashboard" : guestView(get().view),
         bootstrapped: true,
       });
     } catch {
-      set({ bootstrapped: true });
+      if (epoch === sessionEpoch) set({ bootstrapped: true });
     }
   },
   logout: async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
+    const epoch = ++sessionEpoch;
+    setPendingLogout(true);
     set({ user: null, view: "landing", pendingRole: null });
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (response.ok && epoch === sessionEpoch) setPendingLogout(false);
+    } catch { /* Retry cookie revocation before checking the account on reconnect. */ }
   },
   refreshUser: async () => {
-    const res = await fetch("/api/auth/me", { cache: "no-store" });
-    if (!res.ok) return;
-    const data = (await res.json()) as { user: AuthUser | null };
-    if (data.user) set({ user: data.user });
+    const epoch = sessionEpoch;
+    try {
+      if (hasPendingLogout()) {
+        const response = await fetch("/api/auth/logout", { method: "POST" });
+        if (!response.ok) return;
+        if (epoch !== sessionEpoch) return;
+        setPendingLogout(false);
+      }
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      if (epoch !== sessionEpoch) return;
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) set({ user: null, view: guestView(get().view) });
+        return;
+      }
+      const data = (await res.json()) as { user: AuthUser | null };
+      if (epoch !== sessionEpoch) return;
+      if (isAllowedRole(data.user?.role)) set({ user: data.user });
+      else set({ user: null, view: guestView(get().view) });
+    } catch { /* A temporary network failure must not restore or switch accounts. */ }
   },
 }));

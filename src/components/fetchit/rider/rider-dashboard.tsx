@@ -141,6 +141,7 @@ export function RiderDashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
+  const jobsRequest = useRef(0);
 
   const loadStats = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -153,27 +154,20 @@ export function RiderDashboard() {
     }
   }, []);
 
-  const loadJobs = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
+  const loadJobs = useCallback(async (signal?: AbortSignal, background = false) => {
+    const request = ++jobsRequest.current;
+    if (!background) setLoading(true);
     try {
-      if (tab === "history") {
-        const res = await fetch("/api/bookings?filter=history", { cache: "no-store", signal });
-        if (!res.ok) throw new Error("Jobs unavailable");
-        const data = await res.json();
-        setJobs((data.bookings ?? []) as Job[]);
-      } else if (tab === "active") {
-        const res = await fetch("/api/bookings?filter=active", { cache: "no-store", signal });
-        if (!res.ok) throw new Error("Jobs unavailable");
-        const data = await res.json();
-        setJobs((data.bookings ?? []) as Job[]);
-      } else {
-        const res = await fetch("/api/rider/available?includeMatched=true", { cache: "no-store", signal });
-        if (!res.ok) throw new Error("Jobs unavailable");
-        const data = await res.json();
-        setJobs((data.jobs ?? []) as Job[]);
-      }
+      const path = tab === "available" ? "/api/rider/available?includeMatched=true" : `/api/bookings?filter=${tab}`;
+      const res = await fetch(path, { cache: "no-store", signal });
+      if (!res.ok) throw new Error("Jobs unavailable");
+      const data = await res.json();
+      if (signal?.aborted || request !== jobsRequest.current) return;
+      const latest = (tab === "available" ? data.jobs : data.bookings) as Job[];
+      setJobs(latest ?? []);
+      if (tab === "active") setActiveJob(previous => previous ? latest?.find(job => job.id === previous.id) ?? null : null);
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted && request === jobsRequest.current) setLoading(false);
     }
   }, [tab]);
 
@@ -184,14 +178,16 @@ export function RiderDashboard() {
   }, [loadStats]);
 
   useEffect(() => {
-    if (tab === "available") return;
+    if (tab !== "history") return;
     const controller = new AbortController();
     queueMicrotask(() => { if (!controller.signal.aborted) void loadJobs(controller.signal).catch(() => {}); });
     return () => controller.abort();
   }, [loadJobs, tab]);
 
   // Pause hidden/offline pages, prevent overlaps, and back off after failures.
-  useVisiblePoll(tab === "available" && user ? user.id : "", loadJobs, 10000);
+  useVisiblePoll(tab !== "history" && user ? `${user.id}:${tab}` : "", async signal => {
+    await Promise.all([loadJobs(signal, true), loadStats(signal)]);
+  }, 10000);
 
   async function toggleOnline(next: boolean) {
     const res = await fetch("/api/rider/status", {
@@ -722,7 +718,7 @@ function ActiveJobFlow({
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const [status, setStatus] = useState<BookingStatus>(job.status);
+  const status = job.status;
   const [updating, setUpdating] = useState(false);
   const [showProof, setShowProof] = useState(false);
   const [pickupOtp, setPickupOtp] = useState("");
@@ -739,7 +735,6 @@ function ActiveJobFlow({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Update failed");
-      setStatus(data.booking.status);
       setPickupOtp("");
       onUpdated({ status: data.booking.status, etaMinutes: data.booking.etaMinutes });
       // Broadcast status change so the customer UI updates (no-op when no
@@ -939,7 +934,7 @@ function ActiveJobFlow({
           bookingId={job.id}
           onDone={(completed) => {
             setShowProof(false);
-            if (completed) { setStatus("DELIVERED"); onUpdated({ status: "DELIVERED" }); }
+            if (completed) onUpdated({ status: "DELIVERED" });
             void loadStatsThroughReload(onUpdated, job.id);
           }}
         />

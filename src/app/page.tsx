@@ -13,6 +13,16 @@ export default function Home() {
     void bootstrap();
   }, [bootstrap]);
 
+  useEffect(() => {
+    const refresh = () => { void useAppStore.getState().refreshUser(); };
+    window.addEventListener("online", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
   if (!bootstrapped) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
