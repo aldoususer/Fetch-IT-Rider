@@ -18,6 +18,12 @@ enum BookingType {
   RIDE
 }
 
+enum CustomerNotificationCategory {
+  DELIVERY
+  RIDE
+  SUPPORT
+}
+
 enum BookingStatus {
   PENDING
   MATCHED
@@ -137,6 +143,8 @@ model User {
   supportTickets         SupportTicket[]
   assignedSupportTickets SupportTicket[]  @relation("SupportAssignee")
   checkoutDrafts CheckoutDraft[]
+  notifications CustomerNotification[]
+  pushSubscriptions CustomerPushSubscription[]
 }
 
 model Booking {
@@ -205,6 +213,7 @@ model Booking {
   paymentEvents     PaymentEvent[]
   demoCheckouts     DemoCheckout[]
   checkoutDraft    CheckoutDraft?
+  notifications    CustomerNotification[]
 
   @@index([customerId, createdAt, id])
   @@index([riderId, status, createdAt])
@@ -343,6 +352,7 @@ model SupportTicket {
   lastAdminReplyAt DateTime?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+  notifications   CustomerNotification[]
   customer        User             @relation(fields: [customerId], references: [id])
   booking         Booking?         @relation(fields: [bookingId], references: [id])
   assignedAdmin   User?            @relation("SupportAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
@@ -475,4 +485,54 @@ model BookingLocation {
   heading   Float?
   createdAt DateTime @default(now())
   booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+// Shared, server-only VAPID identity. Only the public key is exposed to devices.
+// Keeping one persistent identity lets the three deployments send to the same
+// customer subscriptions without putting a private key in a browser or Git.
+model WebPushIdentity {
+  id         String @id
+  publicKey  String
+  privateKey String
+  createdAt  DateTime @default(now())
+}
+
+model CustomerPushSubscription {
+  id         String @id @default(cuid())
+  customerId String
+  deviceId   String @unique
+  endpoint   String @unique
+  p256dh     String
+  auth       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  customer   User @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model CustomerNotification {
+  id          String @id @default(cuid())
+  sourceId    String @unique
+  customerId  String
+  category    CustomerNotificationCategory
+  bookingId   String?
+  ticketId    String?
+  status      BookingStatus?
+  title       String
+  body        String
+  url         String
+  createdAt   DateTime @default(now())
+  readAt      DateTime?
+  pushDeliveredAt DateTime?
+  pushLeaseUntil DateTime?
+  pushNextAttemptAt DateTime @default(now())
+  pushAttempts Int @default(0)
+  customer    User @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  booking     Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  ticket      SupportTicket? @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, category, readAt])
+  @@index([customerId, createdAt, id])
+  @@index([pushDeliveredAt, pushNextAttemptAt])
 }

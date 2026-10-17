@@ -1,5 +1,7 @@
 import type { Booking, Prisma, PrismaClient } from "@prisma/client";
 import { isDemoPayment } from "./payment-policy";
+import { recordBookingEvent } from "./booking-events";
+import { schedulePushDelivery } from "./push-delivery";
 export const dispatchPaymentWhere: Prisma.BookingWhereInput = { OR: [{ paymentMethod: "CASH" }, { paymentMethod: { in: ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"] }, paymentStatus: "PAID" }] };
 export const OFFER_TTL_MS = 2 * 60_000;
 const activeStatuses = ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] as const;
@@ -52,8 +54,8 @@ async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: 
   // Remove location and unused proof challenges belonging to the previous rider.
   await tx.bookingLocation.deleteMany({ where: { bookingId: booking.id } });
   await tx.deliveryChallenge.deleteMany({ where: { bookingId: booking.id } });
-  await tx.bookingEvent.create({ data: { bookingId: booking.id, actorId: actor.uid ?? null, actorName: actor.name, actorRole: actor.role,
-    action: booking.riderId ? "REASSIGNED" : "ASSIGNED", fromStatus: booking.status, toStatus, riderId, reason } });
+  await recordBookingEvent(tx, booking.id, actor, {
+    action: booking.riderId ? "REASSIGNED" : "ASSIGNED", fromStatus: booking.status, toStatus, riderId, reason });
   if (actor.uid && actor.role === "ADMIN") await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "RIDER_ASSIGNED", entityType: "BOOKING", entityId: booking.id, details: { previousRiderId: booking.riderId, riderId, reason } } });
   return updated;
 }
@@ -87,5 +89,6 @@ export async function expireRiderOffers(db: PrismaClient) {
     }, { maxWait: 10000, timeout: 20000 });
     if (changed) expired++;
   }
+  if (expired) schedulePushDelivery();
   return expired;
 }

@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { db } from "./db";
 import { sessionSecret } from "./session-secret";
+import { schedulePushDelivery } from "./push-delivery";
 
 export class RateLimitError extends Error {
   constructor(public retryAfter: number) { super("Too many requests. Please wait before trying again."); }
@@ -59,6 +60,7 @@ export function withRequestLog<Args extends [NextRequest, ...unknown[]]>(scope: 
     }
     response.headers.set("X-Request-ID", requestId);
     response.headers.set("Cache-Control", "private, no-store");
+    if (args[0].method !== "GET" && /bookings|support/.test(scope)) schedulePushDelivery();
     if (args[0].method !== "GET" || response.status >= 400) console.info(JSON.stringify({ requestId, operation: scope, method: args[0].method, status: response.status, durationMs: Date.now() - started, ...(code || response.status >= 500 ? { code: code || "INTERNAL" } : {}) }));
     return response;
   };
