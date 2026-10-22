@@ -1,4 +1,5 @@
 "use client";
+import { prepareDeliveryPhoto } from "@/lib/epod-photo-client";
 import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
 
 // Rider dashboard — stats header, available jobs feed, active job tracker
@@ -978,24 +979,24 @@ function ProofCapture({
   const { toast } = useToast();
   const [signatureSvg, setSignatureSvg] = useState<string | null>(null);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [processingPhoto, setProcessingPhoto] = useState(false);
   const [recipientName, setRecipientName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
-    if (file.size > 140 * 1024) {
-      toast({ title: "Photo too large", description: "Max 140 KB while temporary photo storage is enabled.", variant: "destructive" });
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => setPhotoDataUrl(reader.result as string);
-    reader.readAsDataURL(file);
+    setProcessingPhoto(true);
+    try { setPhotoDataUrl(await prepareDeliveryPhoto(file)); }
+    catch (error) { toast({ title: "Could not use photo", description: error instanceof Error ? error.message : "Choose another photo.", variant: "destructive" }); }
+    finally { setProcessingPhoto(false); }
   }
 
   async function submit() {
+    if (submitting || processingPhoto) return;
     setError(null);
     if (!signatureSvg && !photoDataUrl) {
       setError("Provide a recipient signature or a drop-off photo.");
@@ -1065,12 +1066,14 @@ function ProofCapture({
           <Label className="text-sm font-medium flex items-center gap-1.5">
             <Camera className="h-4 w-4 text-primary" /> Drop-off photo (optional)
           </Label>
+          <p className="text-xs text-muted-foreground">Saved photos are available to authorized staff for delivery review.</p>
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             capture="environment"
             onChange={onPhotoChange}
+            disabled={submitting || processingPhoto}
             className="hidden"
           />
           {photoDataUrl ? (
@@ -1085,6 +1088,8 @@ function ProofCapture({
                 variant="outline"
                 className="absolute top-1 right-1 h-7 w-7 bg-card"
                 onClick={() => setPhotoDataUrl(null)}
+                disabled={submitting || processingPhoto}
+                aria-label="Remove drop-off photo"
               >
                 <X className="h-3.5 w-3.5" />
               </Button>
@@ -1095,8 +1100,9 @@ function ProofCapture({
               variant="outline"
               className="w-full border-dashed h-20"
               onClick={() => fileRef.current?.click()}
+              disabled={submitting || processingPhoto}
             >
-              <Upload className="h-4 w-4" /> Upload / take photo
+              <Upload className="h-4 w-4" /> {processingPhoto ? "Preparing photo…" : "Upload / take photo"}
             </Button>
           )}
         </div>
@@ -1107,7 +1113,7 @@ function ProofCapture({
           </div>
         )}
 
-        <Button className="w-full" onClick={submit} disabled={submitting}>
+        <Button className="w-full" onClick={submit} disabled={submitting || processingPhoto}>
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
           {signatureSvg ? "Submit proof & complete delivery" : "Save photo proof"}
         </Button>

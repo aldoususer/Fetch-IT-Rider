@@ -31,11 +31,14 @@ export function publicUser(user: RiderData & { id: string; name: string; email: 
 
 type Money = number | Prisma.Decimal;
 type BookingData = { excludedRiderIds?: string[]; baseFare?: Money; totalFare?: Money; surgeMultiplier?: Money; customerPaidAmount?: Money | null; riderReceivedAmount?: Money | null; demoCommission?: Money | null; demoRiderEarnings?: Money | null; rider?: (RiderData & { id?: string; name: string; phone: string | null }) | null;
-  liveLocation?: { lat: number; lng: number; createdAt: Date } | null };
+  liveLocation?: { lat: number; lng: number; createdAt: Date } | null;
+  deliveryProofs?: { id: string; bookingId: string; proofType: string; photoUrl: string | null }[] };
 export function bookingView<T extends BookingData>(booking: T) {
   const { liveLocation, excludedRiderIds: _excludedRiderIds, ...rest } = booking;
   return {
     ...rest,
+    // Participant APIs keep signature/OTP details, but saved photos are staff-only.
+    ...(booking.deliveryProofs !== undefined ? { deliveryProofs: booking.deliveryProofs.filter(proof => proof.proofType !== "PHOTO") } : {}),
     ...(booking.demoCommission !== undefined ? { demoCommission: booking.demoCommission === null ? null : Number(booking.demoCommission) } : {}),
     ...(booking.demoRiderEarnings !== undefined ? { demoRiderEarnings: booking.demoRiderEarnings === null ? null : Number(booking.demoRiderEarnings) } : {}),
     ...(booking.customerPaidAmount !== undefined ? { customerPaidAmount: booking.customerPaidAmount === null ? null : Number(booking.customerPaidAmount) } : {}),
