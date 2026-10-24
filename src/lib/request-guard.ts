@@ -49,7 +49,12 @@ export function withRequestLog<Args extends [NextRequest, ...unknown[]]>(scope: 
     const started = Date.now();
     let response: Response;
     let code: string | undefined;
-    try { response = await handler(...args); }
+    try {
+      const origin=args[0].headers.get("origin");
+      if(scope.startsWith("admin:") && !["GET","HEAD","OPTIONS"].includes(args[0].method) && ((origin && origin!==args[0].nextUrl.origin) || args[0].headers.get("sec-fetch-site")==="cross-site")) {
+        response=NextResponse.json({error:"This request is not allowed."},{status:403});
+      } else response = await handler(...args);
+    }
     catch (error) {
       if (error instanceof RateLimitError) {
         response = NextResponse.json({ error: error.message }, { status: 429, headers: { "Retry-After": String(error.retryAfter) } });

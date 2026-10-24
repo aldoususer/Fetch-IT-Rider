@@ -1,3 +1,4 @@
+import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { dispatchPaymentWhere } from "@/lib/dispatch";
 // GET /api/rider/stats
 // Aggregated stats for the rider dashboard header.
@@ -25,11 +26,15 @@ export async function GET() {
     where: { riderId: session.uid, status: "DELIVERED" },
   });
   const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
-  const available = rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass
-    ? await db.booking.count({
-        where: { AND: [dispatchPaymentWhere], status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, vehicleClass: rider.riderProfile?.vehicleClass, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
-      })
-    : 0;
+  let available = 0;
+  if (rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass) {
+    const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere() } });
+    const candidates = await db.booking.findMany({
+      where: { AND: [dispatchPaymentWhere], status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, vehicleClass: rider.riderProfile.vehicleClass, type: { in: [...new Set(approvals.map(a => a.service))] }, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
+      select: { type: true, vehicleClass: true, pickupLat: true, pickupLng: true, dropoffLat: true, dropoffLng: true },
+    });
+    available = candidates.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).length;
+  }
   const earningsResult = await db.booking.aggregate({
     where: { riderId: session.uid, status: "DELIVERED", paymentMethod: "CASH" },
     _sum: { totalFare: true },

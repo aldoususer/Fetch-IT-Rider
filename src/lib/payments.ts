@@ -4,7 +4,7 @@ import { amountInCents, confirmationsMatch, isDemoPayment } from "./payment-poli
 export class PaymentError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
-type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" };
+type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" | "SUPERADMIN" };
 
 // Lock the booking so concurrent confirmations cannot lose each other or race
 // a cancellation/reassignment. Store every change as an immutable event.
@@ -44,7 +44,7 @@ export async function confirmCashPayment(db: PrismaClient, id: string, actor: Ac
 }
 
 export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, body: { status?: unknown; reason?: unknown; reference?: unknown }) {
-  if (actor.role !== "ADMIN") throw new PaymentError("Admin account required.", 403);
+  if (actor.role !== "ADMIN" && actor.role !== "SUPERADMIN") throw new PaymentError("Admin account required.", 403);
   if (!["UNPAID", "PENDING", "PAID", "REFUNDED", "FAILED"].includes(String(body.status)) || typeof body.reason !== "string" || !body.reason.trim() || body.reason.length > 500 || (body.reference != null && (typeof body.reference !== "string" || body.reference.length > 100))) throw new PaymentError("Choose a status and add a reason of up to 500 characters.");
   const status = body.status as PaymentStatus;
   const reason = body.reason.trim();
@@ -64,7 +64,7 @@ export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, 
       ...(isDemoPayment(booking.paymentMethod) && status === "REFUNDED" ? { demoCommission: null, demoRiderEarnings: null } : {}),
       ...(status === "UNPAID" ? { customerPaidAmount: null, riderReceivedAmount: null, customerPaidAt: null, riderReceivedAt: null } : {}),
     } });
-    await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: "ADMIN", action: isDemoPayment(booking.paymentMethod) ? "DEMO_REFUND_RECORDED" : "ADMIN_REVIEWED", fromStatus: booking.paymentStatus, toStatus: status, reason, reference } });
+    await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: actor.role, action: isDemoPayment(booking.paymentMethod) ? "DEMO_REFUND_RECORDED" : "ADMIN_REVIEWED", fromStatus: booking.paymentStatus, toStatus: status, reason, reference } });
     await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "PAYMENT_UPDATED", entityType: "BOOKING", entityId: id, details: { fromStatus: booking.paymentStatus, status, reason, reference } } });
     return updated;
   }, { maxWait: 10000, timeout: 20000 });

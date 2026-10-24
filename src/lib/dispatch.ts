@@ -1,11 +1,13 @@
+import { riderCanTakeBooking } from "./rider-eligibility";
 import type { Booking, Prisma, PrismaClient } from "@prisma/client";
 import { isDemoPayment } from "./payment-policy";
 import { recordBookingEvent } from "./booking-events";
 import { schedulePushDelivery } from "./push-delivery";
+import { defaultPlatformSettings, validatePlatformSettings } from "./platform-policy";
 export const dispatchPaymentWhere: Prisma.BookingWhereInput = { OR: [{ paymentMethod: "CASH" }, { paymentMethod: { in: ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"] }, paymentStatus: "PAID" }] };
 export const OFFER_TTL_MS = 2 * 60_000;
 const activeStatuses = ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] as const;
-type Actor = { uid: string; name: string; role: "ADMIN" | "RIDER" };
+type Actor = { uid: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" };
 export class DispatchError extends Error {
   constructor(message: string, public status = 409) { super(message); }
 }
@@ -16,6 +18,7 @@ async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: 
   await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${riderId} FOR UPDATE`;
   const rider = await tx.user.findUnique({ where: { id: riderId }, include: { riderProfile: true, riderPresence: true } });
   if (!rider || rider.role !== "RIDER" || rider.isBanned || rider.riderProfile?.vehicleClass !== booking.vehicleClass || !rider.riderPresence?.isOnline || rider.riderPresence.updatedAt.getTime() < now.getTime() - 5 * 60_000) return false;
+  if (!await riderCanTakeBooking(tx, riderId, booking)) return false;
   return await tx.booking.count({ where: { id: { not: booking.id }, riderId, status: { in: [...activeStatuses] } } }) === 0;
 }
 
@@ -24,8 +27,10 @@ export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderI
   if (!await eligible(tx, riderId, booking, now)) throw new DispatchError("Choose an online rider with a matching vehicle and no active booking.");
 }
 
-async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "RIDER" }, reason: string, requested?: string) {
+async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" }, reason: string, requested?: string) {
   const now = new Date();
+  const config=await tx.platformConfig.findUnique({where:{id:"platform"}});
+  const settings=config?validatePlatformSettings(config.settings):defaultPlatformSettings();
   if (!["PENDING", "MATCHED", "ACCEPTED"].includes(booking.status) || booking.pickedUpAt) throw new DispatchError("Reassignment is available only before pickup.");
   if (isDemoPayment(booking.paymentMethod)) {
     if (booking.paymentStatus !== "PAID") throw new DispatchError("Complete online payment before assigning or accepting this booking.");
@@ -35,20 +40,13 @@ async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: 
   const excluded = [...new Set([...booking.excludedRiderIds, ...(booking.riderId ? [booking.riderId] : [])])];
   let riderId: string | null = null;
   if (requested) {
+    if(excluded.length>settings.maxReassignments) throw new DispatchError("The configured reassignment limit has been reached.");
     await reserveAvailableRider(tx, requested, booking, now);
     riderId = requested;
-  } else if (excluded.length < 5) {
-    const candidates = await tx.user.findMany({ where: { role: "RIDER", isBanned: false, id: { notIn: excluded },
-      riderProfile: { vehicleClass: booking.vehicleClass }, riderPresence: { isOnline: true, updatedAt: { gte: new Date(now.getTime() - 5 * 60_000) } },
-      bookingsAsRider: { none: { id: { not: booking.id }, status: { in: [...activeStatuses] } } },
-    }, select: { id: true }, orderBy: { id: "asc" }, take: 20 });
-    for (const candidate of candidates) {
-      if (await eligible(tx, candidate.id, booking, now)) { riderId = candidate.id; break; }
-    }
   }
   const toStatus = riderId ? "MATCHED" : "PENDING";
   const updated = await tx.booking.update({ where: { id: booking.id }, data: { riderId, status: toStatus,
-    matchedAt: riderId ? now : null, assignmentExpiresAt: riderId ? new Date(now.getTime() + OFFER_TTL_MS) : null,
+    matchedAt: riderId ? now : null, assignmentExpiresAt: riderId ? new Date(now.getTime() + settings.offerSeconds*1000) : null,
     excludedRiderIds: requested ? excluded.filter(id => id !== requested) : excluded,
   } });
   // Remove location and unused proof challenges belonging to the previous rider.
@@ -56,19 +54,19 @@ async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: 
   await tx.deliveryChallenge.deleteMany({ where: { bookingId: booking.id } });
   await recordBookingEvent(tx, booking.id, actor, {
     action: booking.riderId ? "REASSIGNED" : "ASSIGNED", fromStatus: booking.status, toStatus, riderId, reason });
-  if (actor.uid && actor.role === "ADMIN") await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "RIDER_ASSIGNED", entityType: "BOOKING", entityId: booking.id, details: { previousRiderId: booking.riderId, riderId, reason } } });
+  if (actor.uid && actor.role !== "RIDER") await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "RIDER_ASSIGNED", entityType: "BOOKING", entityId: booking.id, details: { previousRiderId: booking.riderId, riderId, reason } } });
   return updated;
 }
 
 export async function assignRider(db: PrismaClient, id: string, actor: Actor, reason: unknown, riderId?: unknown) {
   if (typeof reason !== "string" || !reason.trim() || reason.length > 500) throw new DispatchError("Add a reason of up to 500 characters.", 400);
-  if (actor.role === "ADMIN" && (typeof riderId !== "string" || !riderId || riderId.length > 100)) throw new DispatchError("Choose a rider.", 400);
+  if (actor.role !== "RIDER" && (typeof riderId !== "string" || !riderId || riderId.length > 100)) throw new DispatchError("Choose a rider.", 400);
   return db.$transaction(async tx => {
     await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
     const booking = await tx.booking.findUnique({ where: { id } });
     if (!booking) throw new DispatchError("Booking not found.", 404);
     if (actor.role === "RIDER" && booking.riderId !== actor.uid) throw new DispatchError("This booking is no longer assigned to you.", 403);
-    return offerNext(tx, booking, actor, reason.trim(), actor.role === "ADMIN" ? riderId as string : undefined);
+    return offerNext(tx, booking, actor, reason.trim(), actor.role !== "RIDER" ? riderId as string : undefined);
   }, { maxWait: 10000, timeout: 20000 });
 }
 
@@ -84,7 +82,7 @@ export async function expireRiderOffers(db: PrismaClient) {
       if (!locked.length) return false;
       const booking = await tx.booking.findUnique({ where: { id: row.id } });
       if (!booking || booking.status !== "MATCHED" || !booking.assignmentExpiresAt || booking.assignmentExpiresAt > now) return false;
-      await offerNext(tx, booking, { name: "Automatic dispatch", role: "ADMIN" }, "Rider did not accept within 2 minutes");
+      await offerNext(tx, booking, { name: "Offer expiry", role: "ADMIN" }, "Offer expired without rider acceptance; returned to available jobs");
       return true;
     }, { maxWait: 10000, timeout: 20000 });
     if (changed) expired++;

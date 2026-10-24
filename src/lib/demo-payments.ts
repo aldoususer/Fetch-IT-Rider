@@ -2,7 +2,7 @@ import type { Booking, Prisma, PrismaClient } from "@prisma/client";
 import { demoSplit, isDemoPayment } from "./payment-policy";
 import { PaymentError } from "./payments";
 
-type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" };
+type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" | "SUPERADMIN" };
 
 // Snapshot the configured rate when the booking is created, so a later rate
 // change cannot silently change an existing rider's demo earnings.
@@ -78,7 +78,7 @@ export async function cancelDemoPayment(tx: Prisma.TransactionClient, booking: B
 }
 
 export async function recordDemoPayout(db: PrismaClient, id: string, actor: Actor, body: { reference?: unknown; reason?: unknown }) {
-  if (actor.role !== "ADMIN") throw new PaymentError("Admin account required.", 403);
+  if (actor.role !== "ADMIN" && actor.role !== "SUPERADMIN") throw new PaymentError("Admin account required.", 403);
   if (typeof body.reference !== "string" || !body.reference.trim() || body.reference.length > 100 || typeof body.reason !== "string" || !body.reason.trim() || body.reason.length > 500) throw new PaymentError("Add a payout reference and a reason.");
   const reference = `DEMO-${body.reference.trim()}`;
   const reason = body.reason.trim();
@@ -92,7 +92,7 @@ export async function recordDemoPayout(db: PrismaClient, id: string, actor: Acto
       throw new PaymentError("A payout is already recorded.", 409);
     }
     const updated = await tx.booking.update({ where: { id }, data: { demoPayoutAt: new Date(), demoPayoutReference: reference } });
-    await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: "ADMIN", action: "DEMO_PAYOUT_RECORDED", amount: booking.demoRiderEarnings, fromStatus: "PAID", toStatus: "PAID", reason, reference } });
+    await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: actor.role, action: "DEMO_PAYOUT_RECORDED", amount: booking.demoRiderEarnings, fromStatus: "PAID", toStatus: "PAID", reason, reference } });
     await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "DEMO_PAYOUT_RECORDED", entityType: "BOOKING", entityId: id, details: { riderId: booking.riderId, amount: booking.demoRiderEarnings.toString(), reference, reason, simulated: true } } });
     return updated;
   }, { maxWait: 10000, timeout: 20000 });

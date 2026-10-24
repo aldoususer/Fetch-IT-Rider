@@ -1,3 +1,4 @@
+import { approvedServices, liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { expireRiderOffers, dispatchPaymentWhere } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import type { Prisma } from "@prisma/client";
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
 
   // PENDING jobs are open to any rider of the matching vehicle class.
   // MATCHED jobs are pre-assigned to *this* rider and waiting for acceptance.
+  const services = await approvedServices(db, session.uid, rider.riderProfile.vehicleClass);
   const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] };
   const where: Prisma.BookingWhereInput = includeMatched
     ? {
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
       };
 
   const jobs = await db.booking.findMany({
-    where,
+    where: { ...where, type: { in: services } },
     orderBy: { createdAt: "asc" },
     take: 50,
     include: {
@@ -65,7 +67,9 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const withTickets = jobs.map((job) => riderJobView(bookingView(job)));
+  const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere() } });
+  const eligibleJobs = jobs.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job)));
+  const withTickets = eligibleJobs.map((job) => riderJobView(bookingView(job)));
 
   return NextResponse.json({ jobs: withTickets }, { headers: { "Cache-Control": "private, no-store" } });
 }

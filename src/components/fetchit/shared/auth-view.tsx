@@ -35,6 +35,7 @@ import {
 import { FetchItLogo } from "./logo";
 import { useAppStore } from "@/lib/store";
 import { VEHICLE_LIST, type VehicleClass } from "@/lib/constants";
+import { APPLICATION_VEHICLES } from "@/lib/rider-application-policy";
 
 const DEMO_EMAIL = "rider@fetchit.app";
 const DEMO_PASSWORD = "demo1234";
@@ -50,7 +51,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
   // Signup-only fields
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [vehicleClass, setVehicleClass] = useState<VehicleClass>("CLOSED_VAN");
+  const [vehicleClass, setVehicleClass] = useState<VehicleClass>("MOTORCYCLE");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -286,7 +287,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                             <SelectValue placeholder="Pick a vehicle" />
                           </SelectTrigger>
                           <SelectContent>
-                            {VEHICLE_LIST.map((v) => (
+                            {VEHICLE_LIST.filter(v => (APPLICATION_VEHICLES as readonly string[]).includes(v.id)).map((v) => (
                               <SelectItem key={v.id} value={v.id}>
                                 {v.label}
                               </SelectItem>

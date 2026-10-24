@@ -9,7 +9,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 import { createSessionToken, setSessionCookie } from "@/lib/session";
-import { VEHICLES, type Role, type VehicleClass } from "@/lib/constants";
+import { type Role, type VehicleClass } from "@/lib/constants";
+
+import { APPLICATION_VEHICLES } from "@/lib/rider-application-policy";
 
 async function handlePOST(req: NextRequest) {
   try {
@@ -44,9 +46,9 @@ async function handlePOST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (role === "RIDER" && (!vehicleClass || !Object.hasOwn(VEHICLES, vehicleClass))) {
+    if (role === "RIDER" && (!vehicleClass || !(APPLICATION_VEHICLES as readonly string[]).includes(vehicleClass))) {
       return NextResponse.json(
-        { error: "Riders must specify a vehicle class." },
+        { error: "Choose Motorcycle, Tricycle or Car for your application." },
         { status: 400 },
       );
     }
@@ -69,6 +71,7 @@ async function handlePOST(req: NextRequest) {
         authIdentities: { create: { provider: "PASSWORD", providerUserId: normalizedEmail, passwordHash: hashPassword(password) } },
         riderProfile: { create: { vehicleClass: vehicleClass!, vehiclePlate: vehiclePlate ?? null } },
         riderPresence: { create: {} },
+        riderApplication: { create: { vehicleClass: vehicleClass!, services: ["DELIVERY"], fields: { legalName: name.trim(), mobile: phone ?? "", plateNumber: vehiclePlate ?? "" } } },
       },
       include: { riderProfile: true, riderPresence: true },
     });

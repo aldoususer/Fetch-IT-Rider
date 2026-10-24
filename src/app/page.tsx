@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useAppStore } from "@/lib/store";
 import { LandingView } from "@/components/fetchit/shared/landing";
 import { AuthView } from "@/components/fetchit/shared/auth-view";
-import { RiderDashboard } from "@/components/fetchit/rider/rider-dashboard";
+import { RiderApplicationBoundary } from "@/components/fetchit/rider/rider-application";
 
 export default function Home() {
   const { view, bootstrapped, bootstrap } = useAppStore();
@@ -50,6 +50,6 @@ export default function Home() {
   if (view === "landing") return <LandingView />;
   if (view === "login") return <AuthView initialMode="login" />;
   if (view === "signup") return <AuthView initialMode="signup" />;
-  if (view === "rider-dashboard") return <RiderDashboard />;
+  if (view === "rider-dashboard") return <RiderApplicationBoundary />;
   return <LandingView />;
 }
