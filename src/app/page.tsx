@@ -7,7 +7,7 @@ import { AuthView } from "@/components/fetchit/shared/auth-view";
 import { RiderApplicationBoundary } from "@/components/fetchit/rider/rider-application";
 
 export default function Home() {
-  const { view, bootstrapped, bootstrap } = useAppStore();
+  const { view, bootstrapped, bootstrap, user } = useAppStore();
 
   useEffect(() => {
     void bootstrap();
@@ -50,6 +50,6 @@ export default function Home() {
   if (view === "landing") return <LandingView />;
   if (view === "login") return <AuthView initialMode="login" />;
   if (view === "signup") return <AuthView initialMode="signup" />;
-  if (view === "rider-dashboard") return <RiderApplicationBoundary />;
+  if (view === "rider-dashboard") return <RiderApplicationBoundary key={user?.id} />;
   return <LandingView />;
 }

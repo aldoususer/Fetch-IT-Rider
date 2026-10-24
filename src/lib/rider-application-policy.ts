@@ -43,6 +43,11 @@ export function normalizeFields(input: unknown): Fields {
     if (raw[key] !== undefined && (typeof raw[key] !== "string" || (raw[key] as string).length > (key === "address" ? 1000 : 200))) throw new ApplicationError(`Check ${FIELD_LABELS[key]}.`);
     fields[key] = String(raw[key] ?? "").trim();
   }
+  // A resume hint only; it never changes review status, validation or eligibility.
+  if (raw.registrationStep !== undefined) {
+    if (!["vehicle", "details", "documents", "review"].includes(String(raw.registrationStep)) || typeof raw.registrationStep !== "string") throw new ApplicationError("Choose a valid registration step.");
+    fields.registrationStep = raw.registrationStep;
+  }
   return fields;
 }
 export function validateSelection(vehicle: unknown, services: unknown) {

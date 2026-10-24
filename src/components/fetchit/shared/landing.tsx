@@ -67,8 +67,8 @@ const FEATURES = [
 ];
 
 const STEPS = [
-  { n: "01", t: "Sign up & add your vehicle", d: "Tell us your vehicle class — motorcycle to refrigerated van — and plate number." },
-  { n: "02", t: "Go online", d: "Toggle your status to see due jobs for your vehicle class." },
+  { n: "01", t: "Complete your rider application", d: "Create your account, choose Motorcycle, Tricycle or Car, and upload your checklist. Save and return whenever you need." },
+  { n: "02", t: "Get approved & go online", d: "Complete document review, orientation and assessment. Go online once your selected services are activated." },
   { n: "03", t: "Claim & pick up", d: "Accept a job, navigate to pickup, and verify the ride OTP or collect the cargo." },
   { n: "04", t: "Complete the job", d: "Complete the ride at drop-off or capture delivery signature proof, then review the recorded fare." },
 ];

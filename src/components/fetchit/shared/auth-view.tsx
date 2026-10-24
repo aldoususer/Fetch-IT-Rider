@@ -2,8 +2,7 @@
 
 // Auth view for the Fetch-It RIDER app.
 // Riders only — customers book deliveries from the separate Fetch-It
-// Customer app. Rider signups include vehicle class + plate so the
-// matching engine can filter jobs.
+// Customer app. Registration creates a resumable application before vehicle selection.
 
 import { validNewPassword, PASSWORD_REQUIREMENT, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { useState } from "react";
@@ -20,13 +19,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
-import {
   Tabs,
   TabsList,
   TabsTrigger,
@@ -34,8 +26,8 @@ import {
 } from "@/components/ui/tabs";
 import { FetchItLogo } from "./logo";
 import { useAppStore } from "@/lib/store";
-import { VEHICLE_LIST, type VehicleClass } from "@/lib/constants";
-import { APPLICATION_VEHICLES } from "@/lib/rider-application-policy";
+import { RegistrationProgress } from "../rider/registration-progress";
+import "../rider/rider-application.css";
 
 const DEMO_EMAIL = "rider@fetchit.app";
 const DEMO_PASSWORD = "demo1234";
@@ -50,9 +42,6 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
   const [password, setPassword] = useState("");
   // Signup-only fields
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [vehicleClass, setVehicleClass] = useState<VehicleClass>("MOTORCYCLE");
-  const [vehiclePlate, setVehiclePlate] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,9 +70,6 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
             email,
             password,
             role: "RIDER",
-            phone,
-            vehicleClass,
-            vehiclePlate,
           }),
         });
         const data = await res.json();
@@ -130,8 +116,9 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
         </div>
       </header>
 
-      <main className="flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md">
+      <main className={`flex-1 px-4 py-8 ${mode === "signup" ? "ra ra-auth" : "flex items-center justify-center"}`}>
+        <div className={`w-full mx-auto ${mode === "signup" ? "max-w-2xl" : "max-w-md"}`}>
+          {mode === "signup" && <><div className="ra-intro"><p className="ra-eyebrow">BECOME A FETCH-IT RIDER</p><h1>Your road<br/>starts here.</h1><p>One application, from your first detail to your final review. Save your progress and come back anytime.</p></div><RegistrationProgress step={0}/></>}
           <Card className="border-2 shadow-sm">
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -140,12 +127,12 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 </div>
                 <div>
                   <CardTitle className="text-xl">
-                    {mode === "login" ? "Welcome back, rider" : "Create your rider account"}
+                    {mode === "login" ? "Welcome back, rider" : "Step 1 · Create your account"}
                   </CardTitle>
                   <CardDescription>
                     {mode === "login"
                       ? "Sign in to go online and start earning."
-                      : "Tell us about your vehicle so we can match you with jobs."}
+                      : "Start with your name and email. Verify your email next, then choose your vehicle and services."}
                   </CardDescription>
                 </div>
               </div>
@@ -153,7 +140,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
             <CardContent>
               <Tabs
                 value={mode}
-                onValueChange={(v) => setMode(v as "login" | "signup")}
+                onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); }}
               >
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Login</TabsTrigger>
@@ -161,7 +148,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 </TabsList>
 
                 <TabsContent value="login" className="space-y-4">
-                  <form onSubmit={submit} className="space-y-4">
+                  <form onSubmit={submit} className="space-y-4" aria-busy={loading}>
                     <div className="space-y-2">
                       <Label htmlFor="email">Email</Label>
                       <Input
@@ -189,7 +176,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                       />
                     </div>
                     {error && (
-                      <p className="text-sm text-destructive">{error}</p>
+                      <p role="alert" className="text-sm text-destructive">{error}</p>
                     )}
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
@@ -226,11 +213,13 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 </TabsContent>
 
                 <TabsContent value="signup" className="space-y-4">
-                  <form onSubmit={submit} className="space-y-4">
+                  <form onSubmit={submit} className="space-y-4" aria-busy={loading}>
                     <div className="space-y-2">
                       <Label htmlFor="name">Full name</Label>
                       <Input
                         id="name"
+                        autoComplete="name"
+                        maxLength={80}
                         required
                         value={name}
                         onChange={(e) => setName(e.target.value)}
@@ -249,65 +238,17 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                         placeholder="you@example.com"
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="phone">Phone (optional)</Label>
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="+63 917 000 0000"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="password-su">Password</Label>
-                        <Input
-                          id="password-su"
-                          type="password"
-                          autoComplete="new-password"
-                          required
-                          minLength={mode === "signup" ? PASSWORD_MIN_LENGTH : 1}
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          maxLength={128}
-                          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="password-su">Create a password</Label>
+                      <Input id="password-su" type="password" autoComplete="new-password" required
+                        minLength={PASSWORD_MIN_LENGTH} maxLength={128} value={password}
+                        onChange={e => setPassword(e.target.value)} aria-describedby="signup-password-help"/>
+                      <p id="signup-password-help" className="text-xs text-muted-foreground">{PASSWORD_REQUIREMENT}</p>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2 col-span-2 sm:col-span-1">
-                        <Label htmlFor="vehicleClass">Vehicle class</Label>
-                        <Select
-                          value={vehicleClass}
-                          onValueChange={(v) => setVehicleClass(v as VehicleClass)}
-                        >
-                          <SelectTrigger id="vehicleClass">
-                            <SelectValue placeholder="Pick a vehicle" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {VEHICLE_LIST.filter(v => (APPLICATION_VEHICLES as readonly string[]).includes(v.id)).map((v) => (
-                              <SelectItem key={v.id} value={v.id}>
-                                {v.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2 col-span-2 sm:col-span-1">
-                        <Label htmlFor="plate">Vehicle plate</Label>
-                        <Input
-                          id="plate"
-                          value={vehiclePlate}
-                          onChange={(e) => setVehiclePlate(e.target.value)}
-                          placeholder="ABC-1234"
-                        />
-                      </div>
-                    </div>
+                    <p className="ra-help">Already started? Sign in to continue your saved application. Vehicle information and documents come in the next steps.</p>
 
                     {error && (
-                      <p className="text-sm text-destructive">{error}</p>
+                      <p role="alert" className="text-sm text-destructive">{error}</p>
                     )}
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? (
@@ -315,7 +256,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                       ) : (
                         <UserPlus className="h-4 w-4" />
                       )}
-                      Create rider account
+                      Create account & continue
                     </Button>
                   </form>
                 </TabsContent>

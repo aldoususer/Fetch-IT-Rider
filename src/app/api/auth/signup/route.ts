@@ -46,12 +46,15 @@ async function handlePOST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (role === "RIDER" && (!vehicleClass || !(APPLICATION_VEHICLES as readonly string[]).includes(vehicleClass))) {
+    if (vehicleClass !== undefined && !(APPLICATION_VEHICLES as readonly unknown[]).includes(vehicleClass)) {
       return NextResponse.json(
         { error: "Choose Motorcycle, Tricycle or Car for your application." },
         { status: 400 },
       );
     }
+    // A provisional profile keeps existing relations intact. The applicant chooses
+    // their actual vehicle in step 2; this grants no service or dispatch access.
+    const initialVehicle = vehicleClass ?? "MOTORCYCLE";
 
     const normalizedEmail = email.trim().toLowerCase();
     const existing = await db.user.findUnique({ where: { email: normalizedEmail } });
@@ -69,9 +72,9 @@ async function handlePOST(req: NextRequest) {
         phone,
         role,
         authIdentities: { create: { provider: "PASSWORD", providerUserId: normalizedEmail, passwordHash: hashPassword(password) } },
-        riderProfile: { create: { vehicleClass: vehicleClass!, vehiclePlate: vehiclePlate ?? null } },
+        riderProfile: { create: { vehicleClass: initialVehicle, vehiclePlate: vehiclePlate ?? null } },
         riderPresence: { create: {} },
-        riderApplication: { create: { vehicleClass: vehicleClass!, services: ["DELIVERY"], fields: { legalName: name.trim(), mobile: phone ?? "", plateNumber: vehiclePlate ?? "" } } },
+        riderApplication: { create: { vehicleClass: initialVehicle, services: ["DELIVERY"], fields: { legalName: name.trim(), mobile: phone ?? "", plateNumber: vehiclePlate ?? "", registrationStep: "vehicle" } } },
       },
       include: { riderProfile: true, riderPresence: true },
     });
