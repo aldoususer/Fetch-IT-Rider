@@ -1,7 +1,7 @@
 import { sessionSecret } from "./session-secret";
-// Session helper — minimal cookie-based token (no external JWT dep needed).
-// For production on Vercel, swap to NextAuth or signed JWT; current impl is a
-// stateless JSON token signed with a shared secret, suitable for a demo.
+import { db } from "./db";
+// Signed sessions retain their authentication time so password resets can
+// invalidate both browser cookies and native bearer sessions.
 
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
@@ -15,6 +15,7 @@ export interface SessionPayload {
   name: string;
   role: Role;
   exp: number;
+  iat?: number;
 }
 
 // --- base64url helpers (no Buffer needed on the edge in Next 16, but works server-side too) ---
@@ -38,6 +39,7 @@ function sign(payloadStr: string): string {
 export function createSessionToken(payload: Omit<SessionPayload, "exp">): string {
   const fullPayload: SessionPayload = {
     ...payload,
+    iat: payload.iat ?? Date.now(),
     exp: Date.now() + 1000 * 60 * 60 * 24 * 7, // 7 days
   };
   const payloadStr = b64encode(fullPayload);
@@ -53,15 +55,23 @@ export function verifySessionToken(token: string): SessionPayload | null {
   const received = Buffer.from(sig);
   if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) return null;
   const payload = b64decode<SessionPayload>(payloadStr);
-  if (!payload || typeof payload.uid !== "string" || !payload.uid || typeof payload.email !== "string" || typeof payload.name !== "string" || !Number.isFinite(payload.exp) || payload.exp < Date.now() || !["CUSTOMER", "RIDER", "ADMIN"].includes(payload.role)) return null;
+  if (!payload || typeof payload.uid !== "string" || !payload.uid || typeof payload.email !== "string" || typeof payload.name !== "string" || !Number.isFinite(payload.exp) || payload.exp < Date.now() || (payload.iat !== undefined && (!Number.isFinite(payload.iat) || payload.iat < 0)) || !["CUSTOMER", "RIDER", "ADMIN"].includes(payload.role)) return null;
   return payload;
+}
+
+export function isSessionCurrent(session: SessionPayload, user: { role: string; isBanned: boolean; authInvalidBefore: Date | null } | null): boolean {
+  return !!user && !user.isBanned && user.role === session.role
+    && (!user.authInvalidBefore || (session.iat !== undefined && session.iat > user.authInvalidBefore.getTime()));
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  return verifySessionToken(token);
+  const session = verifySessionToken(token);
+  if (!session) return null;
+  const user = await db.user.findUnique({ where: { id: session.uid }, select: { role: true, isBanned: true, authInvalidBefore: true } });
+  return isSessionCurrent(session, user) ? session : null;
 }
 
 /** Authenticate native clients with the same signed token used by the web
