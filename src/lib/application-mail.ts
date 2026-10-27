@@ -42,7 +42,11 @@ export async function orientationLetter(p: Payload) {
 }
 export function applicationTransport() {
   const sender = process.env.GMAIL_SENDER?.trim(), password = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
-  if (!sender || !/^[^\s@]+@gmail\.com$/i.test(sender) || !password || password.length < 16) throw new ApplicationError("Application email sender is not configured. The review is saved; configure the existing Gmail sender and retry.", 503);
+  if (!sender || !/^[^\s@]+@gmail\.com$/i.test(sender) || !password || password.length < 16) {
+    // Booleans only: never log sender values, app passwords or SMTP responses.
+    console.error("[application-email] configuration", { code: "EMAIL_SENDER_UNAVAILABLE", senderPresent: !!sender, senderValid: !!sender && /^[^\s@]+@gmail\.com$/i.test(sender), passwordPresent: !!password, passwordLengthValid: !!password && password.length >= 16 });
+    throw Object.assign(new ApplicationError("Email delivery is currently unavailable. Your account and application are saved. Please contact Fetch-It support or try again later.", 503), { code: "EMAIL_SENDER_UNAVAILABLE" });
+  }
   return { sender, transport: nodemailer.createTransport({ host: "smtp.gmail.com", port: 465, secure: true, auth: { user: sender, pass: password }, connectionTimeout: 8000, greetingTimeout: 8000, socketTimeout: 12000 }) };
 }
 export async function sendApplicationEmail(id: string) {

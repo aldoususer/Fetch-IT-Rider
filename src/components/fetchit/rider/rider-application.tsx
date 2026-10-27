@@ -18,6 +18,16 @@ export function RiderApplicationBoundary() {
   const [app, setApp] = useState<Application | null>(null), [approvals, setApprovals] = useState<Approval[]>([]), [fields, setFields] = useState<Fields>({}), [vehicle, setVehicle] = useState("MOTORCYCLE"), [services, setServices] = useState(["DELIVERY"]);
   const [working, setWorking] = useState(false), [canWork, setCanWork] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [code, setCode] = useState("");
   const [extra, setExtra] = useState(false);
+  const [resendUntil, setResendUntil] = useState(0), [resendRemaining, setResendRemaining] = useState(0);
+  useEffect(() => {
+    if (!resendUntil) return;
+    const timer = window.setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((resendUntil - Date.now()) / 1000));
+      setResendRemaining(remaining);
+      if (!remaining) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendUntil]);
   const [step, setStep] = useState<RegistrationStep>(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const editable = !!app && ["DRAFT", "NEEDS_CORRECTION"].includes(app.status);
@@ -46,10 +56,17 @@ export function RiderApplicationBoundary() {
 
   async function request(body: Record<string, unknown>) {
     const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: app?.version, ...body }) });
-    const result = await res.json(); if (!res.ok) throw new Error(result.error || "Could not save your application.");
+    const result = await res.json();
+    if (body.action === "send-code" && (res.ok || res.status === 429)) {
+      const retry = res.ok ? 60 : Number(res.headers.get("Retry-After") || 60);
+      const seconds = Number.isFinite(retry) && retry > 0 ? Math.min(Math.ceil(retry), 86400) : 60;
+      setResendRemaining(seconds); setResendUntil(Date.now() + seconds * 1000);
+    }
+    if (!res.ok) throw new Error(result.error || "Could not save your application.");
     if (result.application) hydrate(result.application); return result;
   }
   async function perform(action: string) {
+    if (busy || action === "send-code" && resendRemaining > 0) return;
     setBusy(true); setError(""); setNotice("");
     try {
       await request({ action, fields, vehicleClass: vehicle, services, code });
@@ -98,7 +115,7 @@ export function RiderApplicationBoundary() {
     {app && <>
       <RegistrationProgress step={step} verified={!!app.emailVerifiedAt} busy={busy} onSelect={next => void goTo(next)}/>
       <div className="ra-step-heading"><p className="ra-eyebrow">STEP {step + 1} OF 5</p><h2 ref={heading} tabIndex={-1}>{REGISTRATION_STEPS[step]}</h2><span className="ra-save-state">{busy ? "Saving…" : dirty ? "Unsaved changes · save before leaving" : "Your progress is saved"}</span></div>
-      {step === 0 && <section className="ra-card"><h3>Verify your email</h3><p>Your account is created. We’ll use <strong>{email}</strong> for application updates.</p>{app.emailVerifiedAt ? <><p className="ra-success">✓ Email verified</p><p>Your account details are saved. Continue to your vehicle and services.</p></> : <><p className="ra-help">Send a six-digit code to this address, then enter it below. You can sign in later to continue.</p><div className="ra-inline"><button disabled={busy} onClick={() => void perform("send-code")}>Send verification code</button><label>Six-digit code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}/></label><button disabled={busy || code.length !== 6} onClick={() => void perform("verify-code")}>Verify email & continue</button></div></>}</section>}
+      {step === 0 && <section className="ra-card"><h3>Verify your email</h3><p>Your account is created. We’ll use <strong>{email}</strong> for application updates.</p>{app.emailVerifiedAt ? <><p className="ra-success">✓ Email verified</p><p>Your account details are saved. Continue to your vehicle and services.</p></> : <><p className="ra-help">Send a six-digit code to this address, then enter it below. You can sign in later to continue.</p><div className="ra-inline"><button disabled={busy || resendRemaining > 0} onClick={() => void perform("send-code")}>{resendRemaining > 0 ? `Resend available in ${resendRemaining}s` : "Send verification code"}</button><label>Six-digit code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}/></label><button disabled={busy || code.length !== 6} onClick={() => void perform("verify-code")}>Verify email & continue</button></div></>}</section>}
       {step === 1 && <section className="ra-card"><h3>What will you drive?</h3><p className="ra-help">Choose your vehicle once. Your details and document checklist will adapt to it.</p><div className="ra-vehicle-options">{[["MOTORCYCLE", "Motorcycle", "Two-wheel journeys"], ["TRICYCLE", "Tricycle", "Local trips and deliveries"], ["SEDAN", "Car", "More room for the road"]].map(([value, name, description]) => <label key={value} className={`ra-choice ${vehicle === value ? "is-selected" : ""}`}><input type="radio" name="application-vehicle" value={value} checked={vehicle === value} disabled={!editable || app.status !== "DRAFT" || busy} onChange={() => setVehicle(value)}/><strong>{name}</strong><span>{description}</span></label>)}</div><h3>Which services would you like to offer?</h3><div className="ra-service-options">{["DELIVERY", "RIDE"].map(service => <label className={`ra-choice ${services.includes(service) ? "is-selected" : ""}`} key={service}><input type="checkbox" disabled={!editable || app.status !== "DRAFT" || busy} checked={services.includes(service)} onChange={e => setServices(e.target.checked ? ["DELIVERY", "RIDE"].filter(s => s === service || services.includes(s)) : services.filter(s => s !== service))}/><strong>{service === "RIDE" ? "Passenger rides" : "Delivery"}</strong><span>{service === "RIDE" ? "Take people to their next stop" : "Bring parcels where they need to go"}</span></label>)}</div><p className="ra-help">Select one or both. Each service requires its own approval. Passenger permits and operating-area requirements depend on the vehicle and location.</p></section>}
       {step === 2 && <section><p className="ra-help">{vehicleName} · {services.map(s => s === "RIDE" ? "Passenger rides" : "Delivery").join(" + ")}. Your name is filled from your account. Complete the remaining details below.</p>{Object.entries(SECTION_FIELDS).map(([section, keys]) => {
         const review = app.fieldReviews[section], locked = !editable || app.status === "NEEDS_CORRECTION" && review?.status !== "NEEDS_CORRECTION";

@@ -7,7 +7,7 @@ import { readApplicationDocument } from "./application-storage";
 import { storeApplicationDocument, removeUnusedApplicationDocument } from "./application-upload";
 import { applicationErrorResponse, pdfResponse, readApplicationBody } from "./application-staff-api";
 import { applicationTransport, orientationLetter } from "./application-mail";
-import { limitRequests } from "./request-guard";
+import { limitRequests, RateLimitError, safeErrorCode } from "./request-guard";
 import { sessionSecret } from "./session-secret";
 
 const codeHash = (id: string, code: string) => createHmac("sha256", sessionSecret()).update(JSON.stringify(["rider-verify", id, code])).digest("hex");
@@ -64,15 +64,22 @@ export async function applicantRequest(req: NextRequest, userId: string) {
     } else {
       const body = await readApplicationBody(req, 16000);
       if (body.action === "send-code") {
-        await limitRequests("rider:application-email-minute", userId, 1, 60_000);
-        await limitRequests("rider:application-email-hour", userId, 6, 3600_000);
-        await limitRequests("rider:application-email-budget", "shared", 100, 86400_000);
+        // A broken sender must not consume the applicant's email resend quota.
         const { sender, transport } = applicationTransport();
-        const id = randomUUID(), code = String(randomInt(0, 1000000)).padStart(6, "0");
-        await db.authEmailCode.upsert({ where: { email_purpose: { email: app.user.email, purpose: "RIDER_VERIFY_EMAIL" } }, create: { id, email: app.user.email, purpose: "RIDER_VERIFY_EMAIL", provider: "PASSWORD", subjectId: userId, codeHash: codeHash(id, code), expiresAt: new Date(Date.now() + 600000) }, update: { id, subjectId: userId, codeHash: codeHash(id, code), expiresAt: new Date(Date.now() + 600000), attempts: 0, usedAt: null } });
+        let stage = "resend-limit";
         try {
+          await limitRequests("rider:application-email-minute", userId, 1, 60_000);
+          await limitRequests("rider:application-email-hour", userId, 6, 3600_000);
+          await limitRequests("rider:application-email-budget", "shared", 100, 86400_000);
+          const id = randomUUID(), code = String(randomInt(0, 1000000)).padStart(6, "0");
+          stage = "verification-challenge";
+          await db.authEmailCode.upsert({ where: { email_purpose: { email: app.user.email, purpose: "RIDER_VERIFY_EMAIL" } }, create: { id, email: app.user.email, purpose: "RIDER_VERIFY_EMAIL", provider: "PASSWORD", subjectId: userId, codeHash: codeHash(id, code), expiresAt: new Date(Date.now() + 600000) }, update: { id, subjectId: userId, codeHash: codeHash(id, code), expiresAt: new Date(Date.now() + 600000), attempts: 0, usedAt: null } });
+          stage = "smtp-send";
           const result = await transport.sendMail({ from: { name: "Fetch-It", address: sender }, to: app.user.email, subject: "Verify your Fetch-It rider application email", text: `Your Fetch-It rider verification code is ${code}. It expires in 10 minutes and allows five attempts. Do not share this code.` });
           if (!result.accepted?.length) throw new ApplicationError("Verification email was not accepted.", 503);
+        } catch (error) {
+          if (!(error instanceof RateLimitError)) console.error("[rider-verification-email] failed", { stage, code: safeErrorCode(error) });
+          throw error;
         } finally { transport.close(); }
         return NextResponse.json({ message: "Verification code sent." });
       } else if (body.action === "verify-code") {

@@ -45,10 +45,12 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [existingAccount, setExistingAccount] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setExistingAccount(false);
     setLoading(true);
     try {
       if (mode === "login") {
@@ -73,6 +75,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
           }),
         });
         const data = await res.json();
+        if (res.status === 409) setExistingAccount(true);
         if (!res.ok) throw new Error(data.error || "Sign up failed");
         setUser(data.user);
       }
@@ -140,7 +143,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
             <CardContent>
               <Tabs
                 value={mode}
-                onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); }}
+                onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); setExistingAccount(false); }}
               >
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Login</TabsTrigger>
@@ -250,6 +253,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                     {error && (
                       <p role="alert" className="text-sm text-destructive">{error}</p>
                     )}
+                    {existingAccount && <div className="rounded-lg border p-3 text-sm"><p>Your account may already be created. Sign in with the same email and password to continue.</p><Button type="button" variant="outline" className="mt-2 w-full" onClick={() => { setMode("login"); setError(null); setExistingAccount(false); }}>Sign in & continue application</Button></div>}
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
