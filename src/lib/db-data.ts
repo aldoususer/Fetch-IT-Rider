@@ -6,16 +6,18 @@ export const riderSelect = {
   // Booking participants never expose a rider's current global location.
   // Customers receive only the latest location recorded for their own booking.
   riderProfile: true,
+  _count: { select: { reviewsAsRider: true } },
 } as const satisfies Prisma.UserSelect;
 
-type RiderData = { riderProfile?: RiderProfile | null; riderPresence?: RiderPresence | null };
+type RiderData = { _count?: { reviewsAsRider: number }; riderProfile?: RiderProfile | null; riderPresence?: RiderPresence | null };
 export function riderView<T extends RiderData>(user: T) {
-  const { riderProfile, riderPresence, ...account } = user;
+  const { riderProfile, riderPresence, _count, ...account } = user;
   return {
     ...account,
     vehicleClass: riderProfile?.vehicleClass ?? null,
     vehiclePlate: riderProfile?.vehiclePlate ?? null,
     rating: riderProfile?.rating ?? 5,
+    ratingCount: _count?.reviewsAsRider ?? 0,
     totalDeliveries: riderProfile?.totalDeliveries ?? 0,
     isOnline: riderPresence?.isOnline ?? false,
     lat: riderPresence?.lat ?? null, lng: riderPresence?.lng ?? null,
@@ -30,11 +32,11 @@ export function publicUser(user: RiderData & { id: string; name: string; email: 
 }
 
 type Money = number | Prisma.Decimal;
-type BookingData = { excludedRiderIds?: string[]; baseFare?: Money; totalFare?: Money; surgeMultiplier?: Money; customerPaidAmount?: Money | null; riderReceivedAmount?: Money | null; demoCommission?: Money | null; demoRiderEarnings?: Money | null; rider?: (RiderData & { id?: string; name: string; phone: string | null }) | null;
+type BookingData = { receiptEmailQueuedAt?: Date | null; receiptEmailedAt?: Date | null; receiptEmailLeaseUntil?: Date | null; receiptEmailAttempts?: number; receiptEmailNextAttemptAt?: Date; excludedRiderIds?: string[]; baseFare?: Money; totalFare?: Money; surgeMultiplier?: Money; customerPaidAmount?: Money | null; riderReceivedAmount?: Money | null; demoCommission?: Money | null; demoRiderEarnings?: Money | null; rider?: (RiderData & { id?: string; name: string; phone: string | null }) | null;
   liveLocation?: { lat: number; lng: number; createdAt: Date } | null;
   deliveryProofs?: { id: string; bookingId: string; proofType: string; photoUrl: string | null }[] };
 export function bookingView<T extends BookingData>(booking: T) {
-  const { liveLocation, excludedRiderIds: _excludedRiderIds, ...rest } = booking;
+  const { liveLocation, excludedRiderIds: _excludedRiderIds, receiptEmailQueuedAt: _receiptEmailQueuedAt, receiptEmailedAt: _receiptEmailedAt, receiptEmailLeaseUntil: _receiptEmailLeaseUntil, receiptEmailAttempts: _receiptEmailAttempts, receiptEmailNextAttemptAt: _receiptEmailNextAttemptAt, ...rest } = booking;
   return {
     ...rest,
     // Participant APIs keep signature/OTP details, but saved photos are staff-only.

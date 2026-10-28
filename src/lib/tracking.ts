@@ -12,7 +12,7 @@ export function locationInput(body: unknown) {
     throw new RiderError("Provide valid coordinates, speed, and heading.", 400);
   return { lat: value.lat, lng: value.lng, speedKph: value.speedKph as number | undefined, heading: value.heading as number | undefined };
 }
-export async function publishLocation(ticketId: string, riderId: string, input: ReturnType<typeof locationInput>) {
+export async function publishLocation(ticketId: string, riderId: string, input: ReturnType<typeof locationInput>, source: "NATIVE" | "BROWSER" = "NATIVE") {
   return db.$transaction(async tx => {
     await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "ticketId" = ${ticketId} FOR UPDATE`;
     const booking = await tx.booking.findUnique({ where: { ticketId } });
@@ -23,9 +23,9 @@ export async function publishLocation(ticketId: string, riderId: string, input: 
     const data = { riderId, lat: input.lat, lng: input.lng, speedKph: input.speedKph ?? null, heading: input.heading ?? null, createdAt: now };
     const latest = await tx.bookingLocation.upsert({ where: { bookingId: booking.id }, create: { bookingId: booking.id, ...data }, update: data });
     await tx.riderPresence.upsert({ where: { userId: riderId }, create: { userId: riderId, lat: input.lat, lng: input.lng, locationAt: now }, update: { lat: input.lat, lng: input.lng, locationAt: now } });
-    const previous = await tx.trackingUpdate.findFirst({ where: { bookingId: booking.id, source: "NATIVE" }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+    const previous = await tx.trackingUpdate.findFirst({ where: { bookingId: booking.id, source }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
     if (!previous || now.getTime() - previous.createdAt.getTime() >= TRACKING_SAMPLE_MS)
-      await tx.trackingUpdate.create({ data: { bookingId: booking.id, source: "NATIVE", ...data } });
+      await tx.trackingUpdate.create({ data: { bookingId: booking.id, source, ...data } });
     return latest;
   });
 }

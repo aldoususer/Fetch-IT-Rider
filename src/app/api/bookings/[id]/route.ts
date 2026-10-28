@@ -1,6 +1,6 @@
 import { settleDemoEarnings } from "@/lib/demo-payments";
 import { isDemoPayment } from "@/lib/payment-policy";
-import { expireRiderOffers, reserveAvailableRider, DispatchError } from "@/lib/dispatch";
+import { reserveAvailableRider, DispatchError } from "@/lib/dispatch";
 import { withRequestLog, RateLimitError, limitRequests, safeErrorCode } from "@/lib/request-guard";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -72,13 +72,15 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
     const body = await req.json().catch(() => null);
     const status = body?.status as BookingStatus;
     if (!["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(status)) return NextResponse.json({ error: "Invalid status. Use release booking to decline before pickup." }, { status: 400 });
-    await expireRiderOffers(db);
     const updated = await db.$transaction(async tx => {
       await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
       const booking = await tx.booking.findUnique({ where: { id } });
       if (!booking) throw new DispatchError("Booking not found.", 404);
       if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("This demo booking needs a successful demo payment before it can progress.");
       const now = new Date();
+      if (status === "ACCEPTED" && booking.status === "ACCEPTED" && booking.riderId === session.uid) {
+        return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
+      }
       if (status === "ACCEPTED") {
         if (!["PENDING", "MATCHED"].includes(booking.status) || (booking.riderId && booking.riderId !== session.uid) || booking.excludedRiderIds.includes(session.uid)) throw new DispatchError("This booking is no longer available to you.");
         if (booking.scheduledAt && booking.scheduledAt > now) throw new DispatchError("This scheduled booking is not due yet.");
@@ -117,7 +119,8 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
       if (status === "DELIVERED") await tx.riderProfile.update({ where: { userId: session.uid }, data: { totalDeliveries: { increment: 1 } } });
       if (status === "DELIVERED") await settleDemoEarnings(tx, result);
       await recordBookingEvent(tx, id, { ...session, role: "RIDER" }, { action: status === "ACCEPTED" && !booking.riderId ? "ASSIGNED" : "STATUS_CHANGED", fromStatus: booking.status, toStatus: status, riderId: session.uid });
-      return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
+      if (status === "DELIVERED") return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
+      return result;
     }, { maxWait: 10000, timeout: 20000 });
     if ("error" in updated) return NextResponse.json({ error: updated.error }, { status: updated.status });
     const snapshot = buildTicketSnapshot(updated);

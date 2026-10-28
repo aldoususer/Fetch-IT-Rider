@@ -1,3 +1,4 @@
+import { scheduleReceiptDelivery } from "./receipt-email";
 import type { Booking, Prisma, PrismaClient } from "@prisma/client";
 import { demoSplit, isDemoPayment } from "./payment-policy";
 import { PaymentError } from "./payments";
@@ -61,10 +62,13 @@ export async function resolveDemoCheckout(db: PrismaClient, checkoutId: string, 
     const reference = `DEMO-${checkout.id}`;
     await tx.demoCheckout.update({ where: { id: checkoutId }, data: { status: outcome as "SUCCEEDED" | "FAILED" | "CANCELLED", resolvedAt: now } });
     const updated = await tx.booking.update({ where: { id: booking.id }, data: { paymentStatus: status, paymentReference: reference,
-      ...(outcome === "SUCCEEDED" ? { paidAt: now, customerPaidAt: now, customerPaidAmount: booking.totalFare } : {}) } });
+      ...(outcome === "SUCCEEDED" ? { paidAt: now, receiptEmailQueuedAt: now, receiptEmailNextAttemptAt: now, customerPaidAt: now, customerPaidAmount: booking.totalFare } : {}) } });
     await tx.paymentEvent.create({ data: { bookingId: booking.id, actorId: actor.uid, actorName: actor.name, actorRole: "CUSTOMER", action: `DEMO_CHECKOUT_${outcome}`, amount: outcome === "SUCCEEDED" ? booking.totalFare : null, fromStatus: booking.paymentStatus, toStatus: status, reference, reason: "Simulated checkout; no real money moved." } });
     return updated;
-  }, { maxWait: 10000, timeout: 20000 });
+  }, { maxWait: 10000, timeout: 20000 }).then(booking => {
+    if (booking?.paymentStatus === "PAID") scheduleReceiptDelivery(db);
+    return booking;
+  });
 }
 
 // Caller holds the booking lock. Booking cancellation and refund are atomic,

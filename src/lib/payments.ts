@@ -1,3 +1,4 @@
+import { scheduleReceiptDelivery } from "./receipt-email";
 import type { PrismaClient, PaymentStatus } from "@prisma/client";
 import { amountInCents, confirmationsMatch, isDemoPayment } from "./payment-policy";
 
@@ -35,12 +36,15 @@ export async function confirmCashPayment(db: PrismaClient, id: string, actor: Ac
     const reference = matched ? `CASH-${booking.refCode}` : booking.paymentReference;
     const updated = await tx.booking.update({ where: { id }, data: {
       ...(customer ? { customerPaidAmount: cents / 100, customerPaidAt: now } : { riderReceivedAmount: cents / 100, riderReceivedAt: now }),
-      paymentStatus: status, ...(matched ? { paidAt: now, paymentReference: reference } : {}),
+      paymentStatus: status, ...(matched ? { paidAt: now, receiptEmailQueuedAt: now, receiptEmailNextAttemptAt: now, paymentReference: reference } : {}),
     } });
     await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: actor.role,
       action: customer ? "CUSTOMER_CONFIRMED" : "RIDER_CONFIRMED", amount: cents / 100, fromStatus: booking.paymentStatus, toStatus: status, reference } });
     return updated;
-  }, { maxWait: 10000, timeout: 20000 });
+  }, { maxWait: 10000, timeout: 20000 }).then(booking => {
+    if (booking?.paymentStatus === "PAID") scheduleReceiptDelivery(db);
+    return booking;
+  });
 }
 
 export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, body: { status?: unknown; reason?: unknown; reference?: unknown }) {
@@ -61,11 +65,15 @@ export async function reviewPayment(db: PrismaClient, id: string, actor: Actor, 
     const updated = await tx.booking.update({ where: { id }, data: { paymentStatus: status,
       paidAt: status === "PAID" ? booking.paidAt ?? new Date() : status === "REFUNDED" ? booking.paidAt : null,
       paymentReference: reference,
+      ...(status === "PAID" ? { receiptEmailQueuedAt: booking.receiptEmailQueuedAt ?? new Date(), receiptEmailNextAttemptAt: new Date() } : {}),
       ...(isDemoPayment(booking.paymentMethod) && status === "REFUNDED" ? { demoCommission: null, demoRiderEarnings: null } : {}),
       ...(status === "UNPAID" ? { customerPaidAmount: null, riderReceivedAmount: null, customerPaidAt: null, riderReceivedAt: null } : {}),
     } });
     await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: actor.role, action: isDemoPayment(booking.paymentMethod) ? "DEMO_REFUND_RECORDED" : "ADMIN_REVIEWED", fromStatus: booking.paymentStatus, toStatus: status, reason, reference } });
     await tx.adminAudit.create({ data: { actorId: actor.uid, actorName: actor.name, action: "PAYMENT_UPDATED", entityType: "BOOKING", entityId: id, details: { fromStatus: booking.paymentStatus, status, reason, reference } } });
     return updated;
-  }, { maxWait: 10000, timeout: 20000 });
+  }, { maxWait: 10000, timeout: 20000 }).then(booking => {
+    if (booking?.paymentStatus === "PAID") scheduleReceiptDelivery(db);
+    return booking;
+  });
 }

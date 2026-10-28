@@ -113,7 +113,7 @@ export const VEHICLES: Record<VehicleClass, VehicleMeta> = {
   },
   SEDAN: {
     id: "SEDAN",
-    label: "Sedan",
+    label: "Car",
     description: "Ideal for documents and boxed goods up to 200 kg.",
     baseFare: 130,
     includedKm: 2,

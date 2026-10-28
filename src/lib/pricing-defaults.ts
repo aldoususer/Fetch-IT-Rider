@@ -93,7 +93,7 @@ export interface VehicleMeta {
 export const VEHICLES: Record<VehicleClass, VehicleMeta> = {
   MOTORCYCLE: {
     id: "MOTORCYCLE",
-    label: "Motor",
+    label: "Motorcycle",
     description: "Best for small parcels under 20 kg in dense urban traffic.",
     baseFare: 60,
     includedKm: 2,

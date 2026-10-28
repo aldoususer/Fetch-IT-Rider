@@ -1,3 +1,5 @@
+import { scheduleReceiptDelivery } from "@/lib/receipt-email";
+import { db } from "@/lib/db";
 import { cleanupRateLimits, withRequestLog } from "@/lib/request-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
@@ -9,6 +11,7 @@ async function handleGET(req: NextRequest) {
   const received = Buffer.from(req.headers.get("authorization") ?? "");
   const expected = Buffer.from(`Bearer ${secret}`);
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  scheduleReceiptDelivery(db);
   return NextResponse.json({ ...await cleanupTracking(), rateLimitsDeleted: await cleanupRateLimits() });
 }
 

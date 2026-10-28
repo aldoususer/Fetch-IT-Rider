@@ -51,6 +51,7 @@ enum VehicleClass {
 enum TrackingSource {
   LEGACY
   NATIVE
+  BROWSER
 }
 
 enum ProofType {
@@ -348,6 +349,11 @@ model Booking {
   customerPaidAt      DateTime?
   riderReceivedAt     DateTime?
   paidAt              DateTime?
+  receiptEmailQueuedAt DateTime?
+  receiptEmailedAt     DateTime?
+  receiptEmailLeaseUntil DateTime?
+  receiptEmailAttempts Int           @default(0)
+  receiptEmailNextAttemptAt DateTime @default(now())
   paymentReference    String?
   // Demo accounting only: never a provider balance or a real transfer.
   demoCommissionBps   Int?
@@ -380,6 +386,7 @@ model Booking {
   @@index([status, vehicleClass, createdAt])
   @@index([type, createdAt])
   @@index([status, assignmentExpiresAt])
+  @@index([paymentStatus, receiptEmailedAt, receiptEmailNextAttemptAt])
 }
 
 model DemoCheckout {
@@ -455,7 +462,7 @@ model TrackingUpdate {
   riderId    String
   lat        Float
   lng        Float
-  source     TrackingSource @default(LEGACY) // NATIVE only for ticket-authenticated phone updates
+  source     TrackingSource @default(LEGACY) // Browser or ticket-authenticated device updates
   speedKph   Float?
   heading    Float?
   etaMinutes Int?

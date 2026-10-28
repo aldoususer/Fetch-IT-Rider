@@ -1,4 +1,6 @@
 "use client";
+import { BrowserLocation } from "./browser-location";
+import { RiderProfileDetails, type RiderProfileData } from "../shared/rider-profile";
 import { prepareDeliveryPhoto } from "@/lib/epod-photo-client";
 import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
 
@@ -142,6 +144,7 @@ export function RiderDashboard() {
   const refreshUser = useAppStore((s) => s.refreshUser);
   const { toast } = useToast();
 
+  const [profile, setProfile] = useState<RiderProfileData | null>(null);
   const [statusPending, setStatusPending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<RiderStats | null>(null);
@@ -203,6 +206,12 @@ export function RiderDashboard() {
     await Promise.all([loadJobs(signal), loadStats(signal)]);
   }, 10000);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/rider/profile", { signal: controller.signal, cache: "no-store" }).then(response => response.ok ? response.json() : null).then(data => { if (data && !controller.signal.aborted) setProfile(data.profile); }).catch(() => {});
+    return () => controller.abort();
+  }, [user?.id, stats?.rating, stats?.completedJobs]);
+
   async function toggleOnline(next: boolean) {
     if (statusPending) return;
     setStatusPending(true);
@@ -239,8 +248,9 @@ export function RiderDashboard() {
         description: data.error || "Could not accept this job.",
         variant: "destructive",
       });
-      return;
+      throw new Error(data.error || "Could not accept this job.");
     }
+    jobsRequest.current++;
     toast({ title: "Job accepted", description: job.refCode });
     setJobLists(previous => ({ ...previous,
       available: previous.available?.filter(item => item.id !== job.id),
@@ -248,7 +258,7 @@ export function RiderDashboard() {
     }));
     setActiveJob(data.booking);
     setTab("active");
-    await loadStats();
+    void loadStats();
   }
 
   // Clicking the logo always brings you back to the main dashboard view.
@@ -316,7 +326,7 @@ export function RiderDashboard() {
           <StatCard
             icon={<Star className="h-5 w-5 text-amber-500 fill-amber-500" />}
             label="Rating"
-            value={(stats?.rating ?? 5).toFixed(1)}
+            value={profile?.ratingCount ? (profile.rating ?? 0).toFixed(1) : "New"}
             loading={!stats}
           />
           <StatCard
@@ -331,6 +341,8 @@ export function RiderDashboard() {
           <summary><Wallet size={18} aria-hidden="true"/><span>Online earnings<small>Test transactions</small></span><strong>₱{stats.demoEarnings.toFixed(2)}</strong><ChevronDown size={16} aria-hidden="true"/></summary>
           <div><p>Test payments and payouts — no money transferred.</p><dl><div><dt>Earned</dt><dd>₱{stats.demoEarnings.toFixed(2)}</dd></div><div><dt>Awaiting review</dt><dd>₱{stats.demoAwaitingPayout.toFixed(2)}</dd></div><div><dt>Payouts</dt><dd>₱{stats.demoPaidOut.toFixed(2)}</dd></div></dl></div>
         </details>}
+        {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs ?? 0) > 0} />}
+        {profile && <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Your rider profile · {profile.ratingCount && profile.rating != null ? `★ ${profile.rating.toFixed(1)} (${profile.ratingCount} ratings)` : "No ratings yet"}</summary><div className="pt-4"><RiderProfileDetails profile={profile} /></div></details>}
         <div className="rd-board-heading"><div><p className="rd-eyebrow">YOUR WORKSPACE</p><h2>Jobs board</h2></div><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={16} className={refreshing ? "animate-spin" : ""}/>Refresh</Button></div>
         {/* Tabs */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -543,13 +555,13 @@ function TrackingTicketCard({ job }: { job: Job }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Smartphone className="h-4 w-4 text-primary" />
-          Native tracking ticket
+          Optional tracking ticket
         </div>
         <span className="font-mono text-sm font-semibold text-primary">{job.ticketId}</span>
       </div>
       <p className="text-xs text-muted-foreground">
-        Copy this and paste it into the Fetch-It tracking app on your phone — it carries the
-        order details so the app can track your location in the background.
+        Use Share location on your dashboard for browser GPS. This ticket is only needed
+        if you use a compatible native tracking app.
       </p>
       <Button
         type="button"
@@ -580,12 +592,14 @@ function JobCard({
   onOpen: () => void;
 }) {
   const [accepting, setAccepting] = useState(false);
+  const acceptPending = useRef(false);
   const [acceptError, setAcceptError] = useState("");
   const vIcon = useVehicleIcon(job.vehicleClass);
   const v = VEHICLES[job.vehicleClass];
 
   async function handleAccept() {
-    if (accepting) return;
+    if (acceptPending.current) return;
+    acceptPending.current = true;
     setAccepting(true);
     setAcceptError("");
     try {
@@ -593,6 +607,7 @@ function JobCard({
     } catch {
       setAcceptError("Couldn’t accept this booking. Check your connection and retry.");
     } finally {
+      acceptPending.current = false;
       setAccepting(false);
     }
   }
