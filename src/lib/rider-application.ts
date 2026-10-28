@@ -42,7 +42,7 @@ export async function removeApplicationDocument(userId: string, version: unknown
     if (doc.status !== "PENDING") throw new ApplicationError("Only unreviewed uploads can be removed. Replace documents marked Needs correction.", 409);
     // Archive the accidental upload; keep private history and any required correction.
     const flagged = app.status === "NEEDS_CORRECTION"
-      ? app.documents.filter(d => !d.current && d.kind === doc.kind && d.status === "NEEDS_CORRECTION").sort((a, b) => b.version - a.version)[0]
+      ? app.documents.filter(d => !d.current && d.kind === doc.kind && d.status === "NEEDS_CORRECTION" && d.reviewedAt && app.submittedAt && d.reviewedAt >= app.submittedAt).sort((a, b) => b.version - a.version)[0]
       : undefined;
     await tx.riderApplicationDocument.update({ where: { id: doc.id }, data: { current: false } });
     if (flagged) await tx.riderApplicationDocument.update({ where: { id: flagged.id }, data: { current: true } });
