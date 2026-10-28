@@ -14,7 +14,22 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
       const records = await db.riderApplication.findMany({ where: { ...(['demo', 'real'].includes(mode || '') ? { isDemo: mode === 'demo' } : {}), ...(q ? { user: { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } } : {}), ...(status ? { status } : {}) }, select: { id: true, isDemo: true, status: true, vehicleClass: true, services: true, updatedAt: true, assignedToId: true, user: { select: { name: true, email: true } } }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 26, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
       return NextResponse.json({ applications: records.slice(0, 25), nextCursor: records.length > 25 ? records[24].id : null });
     }
-    let app = await db.riderApplication.findUnique({ where: { id }, include: applicationDetail });
+    const body = req.method === "GET" ? null : await readApplicationBody(req, 32000);
+    // Mutations validate ownership and version under the application lock. Reuse
+    // their committed snapshot instead of loading every relation before and after.
+    if (body && body.action !== "preview" && body.action !== "email") {
+      let saved = await reviewApplication(id, actor, body);
+      const kind = ({ corrections: "CORRECTIONS", schedule: "ORIENTATION", activate: "ACTIVATED", "complete-demo": "ACTIVATED" } as Record<string, string>)[String(body.action)];
+      const pending = kind ? saved.emails.find(email => email.kind === kind && email.status === "PENDING") : undefined;
+      if (pending) {
+        await sendApplicationEmail(pending.id);
+        saved = await db.riderApplication.findUniqueOrThrow({ where: { id }, include: applicationDetail });
+      }
+      const approvals = ["activate", "reopen"].includes(String(body.action))
+        ? await db.riderServiceApproval.findMany({ where: { userId: saved.userId } }) : undefined;
+      return NextResponse.json({ application: publicApplication(saved, true), ...(approvals ? { approvals } : {}) });
+    }
+    const app = await db.riderApplication.findUnique({ where: { id }, include: applicationDetail });
     if (!app) throw new ApplicationError("Application unavailable.", 404);
     if (!canActivateApplications(actor.role) && app.assignedToId && app.assignedToId !== actor.id) throw new ApplicationError("This application belongs to another reviewer.", 403);
     if (req.method === "GET") {
@@ -33,7 +48,7 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
       const approvals = await db.riderServiceApproval.findMany({ where: { userId: app.userId } });
       return NextResponse.json({ application: publicApplication(app, true), approvals, actor: { id: actor.id, canActivate: canActivateApplications(actor.role) } });
     }
-    const body = await readApplicationBody(req, 32000);
+    if (!body) throw new ApplicationError("Request details are required.");
     if (body.action === "preview") {
       if (!canActivateApplications(actor.role)) throw new ApplicationError("Admin access required.", 403);
       const at = new Date(String(body.orientationAt));
@@ -52,11 +67,6 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
         await db.riderApplicationEmail.updateMany({ where: { id: email.id, status: email.status }, data: { status: "FAILED" } });
       }
       await sendApplicationEmail(email.id);
-    } else {
-      app = await reviewApplication(id, actor, body);
-      const kind = ({ corrections: "CORRECTIONS", schedule: "ORIENTATION", activate: "ACTIVATED", "complete-demo": "ACTIVATED" } as Record<string, string>)[String(body.action)];
-      const pending = kind ? app.emails.find(email => email.kind === kind && email.status === "PENDING") : undefined;
-      if (pending) await sendApplicationEmail(pending.id);
     }
     return NextResponse.json({ application: publicApplication(await db.riderApplication.findUniqueOrThrow({ where: { id }, include: applicationDetail }), true) });
   } catch (error) { return applicationErrorResponse(error); }

@@ -2,7 +2,7 @@
 import { useEffect, useRef } from "react";
 
 // Use the latest callback without restarting the timer on every render.
-export function useVisiblePoll(key: string, poll: (signal: AbortSignal) => Promise<void | number>, intervalMs = 3000) {
+export function useVisiblePoll(key: string, poll: (signal: AbortSignal) => Promise<void | number>, intervalMs = 3000, immediate = true) {
   const callback = useRef(poll);
   useEffect(() => { callback.current = poll; }, [poll]);
   useEffect(() => {
@@ -28,7 +28,7 @@ export function useVisiblePoll(key: string, poll: (signal: AbortSignal) => Promi
       }
       finally { clearTimeout(deadline); running = false; }
     };
-    void refresh();
+    if (immediate) void refresh();
     const timer = setInterval(() => void refresh(), intervalMs);
     const resume = () => { nextAllowedAt = 0; void refresh(); };
     window.addEventListener("online", resume);
@@ -40,5 +40,5 @@ export function useVisiblePoll(key: string, poll: (signal: AbortSignal) => Promi
       window.removeEventListener("focus", resume);
       document.removeEventListener("visibilitychange", resume);
     };
-  }, [key, intervalMs]);
+  }, [key, intervalMs, immediate]);
 }

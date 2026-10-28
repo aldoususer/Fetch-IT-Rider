@@ -169,9 +169,9 @@ export async function reviewApplication(id: string, actor: ApplicationActor, bod
       await tx.riderApplicationDocument.updateMany({ where: { applicationId: id, current: true }, data: { status: "PENDING", reviewedAt: null, reviewedById: null, reason: null } });
       eventDetails = { reason: note };
     } else throw new ApplicationError("Choose a valid review action.");
-    const updated = await tx.riderApplication.update({ where: { id }, data, include: detail });
+    await tx.riderApplication.update({ where: { id }, data });
     await applicationEvent(tx, id, actor, String(body.action).toUpperCase(), eventDetails);
-    return updated;
+    return tx.riderApplication.findUniqueOrThrow({ where: { id }, include: detail });
   }, { maxWait: 10000, timeout: 20000 });
 }
 export async function riderApprovals(userId: string) { return db.riderServiceApproval.findMany({ where: { userId, ...liveApprovalWhere() } }); }
