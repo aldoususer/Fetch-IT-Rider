@@ -4,8 +4,9 @@ import { SECTION_FIELDS, FIELD_LABELS, DOCUMENT_LABELS, requiredDocuments, type 
 import { useAppStore } from "@/lib/store";
 import { RiderDashboard } from "./rider-dashboard";
 import { RegistrationProgress } from './registration-progress';
-import { REGISTRATION_STEPS, STEP_KEYS, resumeRegistration, registrationIssues, visibleFields, type RegistrationStep, type RegistrationIssue } from '@/lib/rider-registration';
+import { REGISTRATION_STEPS, STEP_KEYS, resumeRegistration, registrationScreen, registrationIssues, visibleFields, type RegistrationStep, type RegistrationIssue } from '@/lib/rider-registration';
 import { ApplicationPopup } from './application-popup';
+import { ApplicationWaiting } from './application-waiting';
 import { DocumentUploadStatus } from './document-upload-status';
 import { DocumentUploadQueue, sendDocumentUpload, uploadPending, type UploadState, type UploadProgress } from '@/lib/document-upload-client';
 import "./rider-application.css";
@@ -15,13 +16,11 @@ import { readApplicationJson } from '@/lib/application-client-response';
 
 type Doc = { id: string; kind: string; current: boolean; status: string; reason?: string; originalName?: string | null; mimeType?: string };
 type Application = { uploadContext: string; isDemo: boolean; id: string; version: number; status: string; vehicleClass: string; services: string[]; fields: Fields; fieldReviews: Record<string, Review>; documents: Doc[]; emailVerifiedAt?: string; orientationAt?: string; orientationVenue?: string; orientationInstructions?: string; emails: { id: string; kind: string; status: string }[] };
-type Approval = { service: string; vehicleClass: string; source: string; validUntil?: string };
 const label = (s: string) => s.replaceAll("_", " ").toLowerCase().replace(/^./, c => c.toUpperCase());
 const endpoint = "/api/rider/application";
 export function RiderApplicationBoundary() {
   const lab = useLocalDemo();
   const mutationVersion = useRef(0);
-  const priorAccess = useRef(false);
   const applicationRef = useRef<Application | null>(null);
   const pendingUploadSave = useRef<Promise<unknown> | null>(null);
   const uploadRunner = useRef<(kind: string, file: File, retry: boolean, signal: AbortSignal, progress: (value: UploadProgress) => void) => Promise<void>>(async () => {});
@@ -32,8 +31,8 @@ export function RiderApplicationBoundary() {
   const [demoInbox, setDemoInbox] = useState<{ id: string; subject: string; text: string }[]>([]);
   const email = useAppStore(s => s.user?.email);
   const userId = useAppStore(s => s.user?.id), logout = useAppStore(s => s.logout);
-  const [app, setApp] = useState<Application | null>(null), [approvals, setApprovals] = useState<Approval[]>([]), [fields, setFields] = useState<Fields>({}), [vehicle, setVehicle] = useState("MOTORCYCLE"), [services, setServices] = useState(["DELIVERY"]);
-  const [working, setWorking] = useState(false), [canWork, setCanWork] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [code, setCode] = useState("");
+  const [app, setApp] = useState<Application | null>(null), [fields, setFields] = useState<Fields>({}), [vehicle, setVehicle] = useState("MOTORCYCLE"), [services, setServices] = useState(["DELIVERY"]);
+  const [canWork, setCanWork] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [code, setCode] = useState("");
   const [extra, setExtra] = useState(false);
   const [confirmReal, setConfirmReal] = useState(false);
   const [demoProgress, setDemoProgress] = useState('');
@@ -54,10 +53,6 @@ export function RiderApplicationBoundary() {
   const [step, setStep] = useState<RegistrationStep>(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const editable = !!app && ["DRAFT", "NEEDS_CORRECTION"].includes(app.status);
-  const syncAccess = useCallback((allowed: boolean, initial = false) => {
-    if (initial || allowed && !priorAccess.current || !allowed) setWorking(allowed);
-    priorAccess.current = allowed;
-  }, []);
   const dirty = !!app && editable && (JSON.stringify(fields) !== JSON.stringify(app.fields) || vehicle !== app.vehicleClass || JSON.stringify(services) !== JSON.stringify(app.services));
   const dirtyRef = useRef(dirty);
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
@@ -78,19 +73,19 @@ export function RiderApplicationBoundary() {
       const res = await fetch(endpoint, { cache: "no-store", signal }); const data = await readApplicationJson(res);
       if (signal?.aborted || mutationVersion.current !== startedVersion) return;
       if (!res.ok) throw new Error(data.error || "Application unavailable.");
-      hydrate(data.application); setApprovals(data.approvals); setCanWork(data.canWork); syncAccess(data.canWork);
-      if (initial) { syncAccess(data.canWork, true); setStep(resumeRegistration(data.application)); }
+      hydrate(data.application); setCanWork(data.canWork);
+      if (initial) { setStep(resumeRegistration(data.application)); }
       else if (data.application.status === 'NEEDS_CORRECTION') { setNotice(''); setStep(resumeRegistration(data.application)); }
       else if (!["DRAFT", "NEEDS_CORRECTION"].includes(data.application.status)) setStep(4);
     } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Application unavailable."); } finally { if (!signal?.aborted) setLoading(false); }
-  }, [hydrate, syncAccess]);
+  }, [hydrate]);
   useEffect(() => { const controller = new AbortController(); // Initial fetch updates state only after the response; abort prevents stale account data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (userId) void load(true, controller.signal); return () => controller.abort(); }, [userId, load]);
-  useVisiblePoll(app && !editable && !working && !busy && !hasUploads && !checkingStatus ? userId || '' : '', signal => load(false, signal), 3000, false);
-  async function checkStatus() {
+  useVisiblePoll(app && !editable && !canWork && !busy && !hasUploads && !checkingStatus ? userId || '' : '', signal => load(false, signal), 3000, false);
+  async function checkStatus(showPopup = true) {
     if (busy || checkingStatus || uploadQueue.hasPending()) return;
-    setPopup({ kind: 'status' }); setStatusError(''); setCheckingStatus(true); setNotice('');
+    if (showPopup) setPopup({ kind: 'status' }); setError(''); setStatusError(''); setCheckingStatus(true); setNotice('');
     const startedVersion = mutationVersion.current;
     try {
       const response = await fetch(endpoint, { cache: 'no-store' }), data = await readApplicationJson(response);
@@ -98,8 +93,9 @@ export function RiderApplicationBoundary() {
       if (mutationVersion.current !== startedVersion) return;
       if (!dirtyRef.current || !['DRAFT', 'NEEDS_CORRECTION'].includes(data.application.status)) hydrate(data.application);
       else { applicationRef.current = data.application; setApp(data.application); }
-      setApprovals(data.approvals); setCanWork(data.canWork); syncAccess(data.canWork);
-      if (!['DRAFT', 'NEEDS_CORRECTION'].includes(data.application.status)) setStep(4);
+      setCanWork(data.canWork);
+      if (data.application.status === 'NEEDS_CORRECTION') setStep(resumeRegistration(data.application));
+      else if (!['DRAFT', 'NEEDS_CORRECTION'].includes(data.application.status)) setStep(4);
     } catch (e) { setStatusError(e instanceof Error ? e.message : 'Could not check application status.'); }
     finally { setCheckingStatus(false); }
   }
@@ -164,7 +160,7 @@ export function RiderApplicationBoundary() {
       await request({ action, fields, vehicleClass: vehicle, services, code });
       setNotice(action === "submit" ? "" : action === "send-code" ? "Code sent. Check your inbox and spam folder." : action === "verify-code" ? "Email verified." : "Draft saved.");
       if (action === "verify-code") { setCode(""); setStep(1); }
-      if (action === "submit") { setStep(4); setPopup({ kind: 'status' }); }
+      if (action === "submit") { setStep(4); setPopup(null); }
       if (action === 'demo-enable' || action === 'demo-reset') { setStep(1); setConfirmReal(false); setNotice(action === 'demo-enable' ? 'Autofill is ready. Review your details before continuing.' : 'Draft reset. Enter your details and upload your documents.'); }
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save your application."); } finally { setBusy(false); }
   }
@@ -220,7 +216,8 @@ export function RiderApplicationBoundary() {
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save your progress."); } finally { setBusy(false); }
   }
   if (loading) return <main className="ra"><p role="status">Loading your rider application…</p></main>;
-  if (working && canWork) return <><div className="ra-work-link"><button onClick={() => { setWorking(false); void load(); }}>Application & service approvals</button></div><RiderDashboard/></>;
+  if (app && registrationScreen(app.status, canWork) === 'dashboard') return <RiderDashboard/>;
+  if (app && registrationScreen(app.status, canWork) === 'waiting') return <ApplicationWaiting application={app} email={email} refreshing={checkingStatus} error={statusError || error} onRefresh={() => void checkStatus(false)} onSignOut={() => void logout()}/>;
   const documents = requiredDocuments(vehicle, services, fields);
   const issues = app ? registrationIssues(app, vehicle, services, fields) : [];
   const vehicleName = vehicle === "SEDAN" ? "Car" : label(vehicle);
@@ -270,8 +267,7 @@ export function RiderApplicationBoundary() {
         <p>{app.status === 'DRAFT' ? 'Your application has not been submitted. Finish your checklist when ready.' : app.status === 'NEEDS_CORRECTION' ? 'Replace the flagged documents or update the details below, then resubmit.' : app.status === 'DEMO_COMPLETED' ? 'Your review is complete. Ask Admin to confirm the selected services to open your rider dashboard.' : app.status === 'ACTIVE' ? 'Your approved services are listed below.' : app.status === 'ORIENTATION_SCHEDULED' ? 'Attend your scheduled orientation and complete the required assessments.' : 'Your application is with the reviewing team. We will notify you about updates.'}</p>
         {app.status === 'NEEDS_CORRECTION' && <ul className="ra-missing">{registrationIssues(app, vehicle, services, fields).filter(issue => issue.message.startsWith('Replace') || issue.message.startsWith('Correct')).map((issue, index) => <li key={index}><button onClick={() => { setPopup(null); void goTo(issue.step); }}>{issue.message} ↗</button></li>)}</ul>}
         {app.orientationAt && <section><h3>Your orientation</h3><p><strong>{new Date(app.orientationAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'full', timeStyle: 'short' })} — Philippine time</strong></p><p>{app.orientationVenue}</p><p>{app.orientationInstructions}</p><a href={`${endpoint}?letter=1`}>Download invitation letter (PDF)</a></section>}
-        {approvals.length > 0 && <section><h3>Current service access</h3>{approvals.map((a, i) => <p key={i}><strong>{label(a.vehicleClass)} · {label(a.service)}</strong><br/><small>{a.source === 'LEGACY_EXISTING' ? 'Existing rider access; not a document-verification badge.' : `Approved${a.validUntil ? ' until ' + new Date(a.validUntil).toLocaleDateString('en-PH') : ''}`}</small></p>)}</section>}
-        {canWork && <button className="ra-primary" onClick={() => { setPopup(null); setWorking(true); }}>Open rider dashboard</button>}
+
       </>}
     </ApplicationPopup>
   </main>;

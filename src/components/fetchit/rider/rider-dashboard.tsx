@@ -27,6 +27,8 @@ import {
   Wallet,
   PowerCircle,
   Activity,
+  RefreshCw,
+  ChevronDown,
   X,
   Upload,
   Users,
@@ -75,6 +77,7 @@ import { StatusBadge } from "../shared/status-badge";
 import { JobRouteMap } from "./job-route-map";
 import { SignaturePad } from "../shared/signature-pad";
 import { ProfileMenu } from "../shared/profile-menu";
+import "./rider-dashboard.css";
 
 interface RiderStats {
   activeJobs: number;
@@ -139,6 +142,8 @@ export function RiderDashboard() {
   const refreshUser = useAppStore((s) => s.refreshUser);
   const { toast } = useToast();
 
+  const [statusPending, setStatusPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<RiderStats | null>(null);
   const [tab, setTab] = useState<JobTab>("available");
   const [jobLists, setJobLists] = useState<Partial<Record<JobTab, Job[]>>>({});
@@ -199,25 +204,24 @@ export function RiderDashboard() {
   }, 10000);
 
   async function toggleOnline(next: boolean) {
-    const res = await fetch("/api/rider/status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ online: next }),
-    });
-    if (!res.ok) {
-      toast({ title: "Failed to toggle status", variant: "destructive" });
-      return;
-    }
-    const data = await res.json();
-    setStats((s) => (s ? { ...s, isOnline: data.isOnline } : s));
-    await refreshUser();
-    toast({
-      title: data.isOnline ? "You're online" : "You're offline",
-      description: data.isOnline
-        ? "Due jobs matching your vehicle will appear on the job board."
-        : "You won't see new jobs until you go back online.",
-    });
-    if (data.isOnline) void loadJobs().catch(() => {});
+    if (statusPending) return;
+    setStatusPending(true);
+    try {
+      const res = await fetch("/api/rider/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ online: next }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not update your availability.");
+      setStats(previous => previous ? { ...previous, isOnline: data.isOnline } : previous);
+      await refreshUser().catch(() => {});
+      toast({ title: data.isOnline ? "You're online" : "You're offline", description: data.isOnline ? "Jobs matching your vehicle will appear on the board." : "Go online again when you're ready for jobs." });
+      if (data.isOnline) void loadJobs().catch(() => {});
+    } catch (error) { toast({ title: "Availability not updated", description: error instanceof Error ? error.message : "Check your connection and try again.", variant: "destructive" }); }
+    finally { setStatusPending(false); }
+  }
+  async function refreshBoard() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try { await Promise.all([loadJobs(), loadStats()]); } catch { /* Existing board retry message handles failed refreshes. */ }
+    finally { setRefreshing(false); }
   }
 
   async function accept(job: Job) {
@@ -254,10 +258,10 @@ export function RiderDashboard() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="rd">
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/65">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <header className="rd-header">
+        <div className="rd-header-inner">
           <button
             type="button"
             onClick={goHome}
@@ -266,8 +270,9 @@ export function RiderDashboard() {
           >
             <FetchItLogo />
           </button>
-          <div className="flex items-center gap-3">
+          <div className="rd-account">
             <OnlineToggle
+              pending={statusPending}
               isOnline={stats?.isOnline ?? false}
               onToggle={(v) => toggleOnline(v)}
             />
@@ -288,23 +293,14 @@ export function RiderDashboard() {
         </div>
       </header>
 
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
-        {/* Welcome + stats */}
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              Hey, {user?.name?.split(" ")[0] ?? "rider"} 🛵
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              {stats?.isOnline
-                ? "You're online — new jobs will appear below."
-                : "Go online to start receiving job matches."}
-            </p>
-          </div>
-        </div>
+      <main className="rd-main">
+        <section className={cn("rd-welcome", stats?.isOnline && "is-online")}>
+          <div><p className="rd-eyebrow">YOUR DAY, ON THE MOVE</p><h1>Let’s get moving, {user?.name?.split(" ")[0] ?? "rider"}.</h1><p>{stats?.isOnline ? "You're online. Your next job could be just around the corner." : "Your jobs, routes and earnings. All in one place."}</p></div>
+          <div className="rd-vehicle"><span className="rd-availability-dot"/>{stats?.vehicleClass ? VEHICLES[stats.vehicleClass as VehicleClass]?.label ?? stats.vehicleClass : "Your rider workspace"}{stats?.vehiclePlate && <span>{stats.vehiclePlate}</span>}</div>
+        </section>
 
         {/* Stats grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rd-stats" aria-label="Rider activity">
           <StatCard
             icon={<Activity className="h-5 w-5 text-primary" />}
             label="Active jobs"
@@ -331,14 +327,14 @@ export function RiderDashboard() {
           />
         </div>
 
-        <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 space-y-2" aria-label="Online earnings">
-          <strong>Online earnings</strong><p className="text-xs">Test payments and payouts — no money transferred.</p>
-          <div className="grid gap-2 sm:grid-cols-3"><span>Earned: ₱{(stats?.demoEarnings ?? 0).toFixed(2)}</span><span>Awaiting review: ₱{(stats?.demoAwaitingPayout ?? 0).toFixed(2)}</span><span>Payouts: ₱{(stats?.demoPaidOut ?? 0).toFixed(2)}</span></div>
-        </section>
-
+        {!!stats && (stats.demoEarnings > 0 || stats.demoAwaitingPayout > 0 || stats.demoPaidOut > 0) && <details className="rd-earnings">
+          <summary><Wallet size={18} aria-hidden="true"/><span>Online earnings<small>Test transactions</small></span><strong>₱{stats.demoEarnings.toFixed(2)}</strong><ChevronDown size={16} aria-hidden="true"/></summary>
+          <div><p>Test payments and payouts — no money transferred.</p><dl><div><dt>Earned</dt><dd>₱{stats.demoEarnings.toFixed(2)}</dd></div><div><dt>Awaiting review</dt><dd>₱{stats.demoAwaitingPayout.toFixed(2)}</dd></div><div><dt>Payouts</dt><dd>₱{stats.demoPaidOut.toFixed(2)}</dd></div></dl></div>
+        </details>}
+        <div className="rd-board-heading"><div><p className="rd-eyebrow">YOUR WORKSPACE</p><h2>Jobs board</h2></div><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={16} className={refreshing ? "animate-spin" : ""}/>Refresh</Button></div>
         {/* Tabs */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList>
+          <TabsList className="rd-tabs">
             <TabsTrigger value="available" className="gap-1.5">
               <Package className="h-4 w-4" /> Available
               {stats?.availableJobs != null && stats.availableJobs > 0 && (
@@ -367,7 +363,7 @@ export function RiderDashboard() {
           <Button variant="outline" size="sm" onClick={() => void loadJobs().catch(() => {})}>Try again</Button>
         </div>}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 [&>*]:min-w-0">
+          <div className="rd-jobs-grid">
             {[0, 1, 2, 3].map((i) => (
               <Card key={i} className="border">
                 <CardHeader><Skeleton className="h-6 w-40" /></CardHeader>
@@ -385,7 +381,7 @@ export function RiderDashboard() {
             onGoOnline={() => toggleOnline(true)}
           />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 [&>*]:min-w-0">
+          <div className="rd-jobs-grid">
             {jobs.map((job) => (
               <JobCard
                 key={job.id}
@@ -402,7 +398,7 @@ export function RiderDashboard() {
 
       {/* Active job modal */}
       <Dialog open={!!activeJob} onOpenChange={(o) => !o && setActiveJob(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[92vh] overflow-y-auto">
+        <DialogContent className="rd-job-dialog sm:max-w-2xl max-h-[92vh] overflow-y-auto">
           {activeJob && (
             <>
               <DialogHeader>
@@ -428,8 +424,8 @@ export function RiderDashboard() {
         </DialogContent>
       </Dialog>
 
-      <footer className="mt-auto border-t py-4 text-center text-xs text-muted-foreground">
-        Fetch-It · Rider dashboard · Built with Next.js 16
+      <footer className="rd-footer">
+        Fetch-It Rider · Your next move starts here.
       </footer>
     </div>
   );
@@ -446,31 +442,15 @@ function StatCard({
   value: React.ReactNode;
   loading?: boolean;
 }) {
-  return (
-    <Card className="border">
-      <CardContent className="py-4">
-        {loading ? (
-          <Skeleton className="h-12 w-full" />
-        ) : (
-          <div className="flex items-center gap-3">
-            <div className="grid place-items-center h-10 w-10 rounded-lg bg-primary/10">
-              {icon}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">{label}</div>
-              <div className="text-xl font-semibold leading-tight">{value}</div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
+  return <article className="rd-stat">{loading ? <Skeleton className="h-12 w-full"/> : <><div className="rd-stat-icon" aria-hidden="true">{icon}</div><div className="rd-stat-copy"><p>{label}</p><strong>{value}</strong></div></>}</article>;
 }
 
 function OnlineToggle({
+  pending,
   isOnline,
   onToggle,
 }: {
+  pending: boolean;
   isOnline: boolean;
   onToggle: (next: boolean) => void;
 }) {
@@ -479,10 +459,11 @@ function OnlineToggle({
       variant={isOnline ? "default" : "outline"}
       size="sm"
       onClick={() => onToggle(!isOnline)}
-      className={cn("gap-1.5", isOnline && "ring-2 ring-emerald-400/40")}
+      disabled={pending}
+      className={cn("rd-online-toggle", isOnline && "is-online")}
     >
       <PowerCircle className={cn("h-4 w-4", isOnline ? "text-emerald-500" : "text-muted-foreground")} />
-      {isOnline ? "Online" : "Offline"}
+      {pending ? "Updating…" : isOnline ? "Online" : "Offline"}
     </Button>
   );
 }
@@ -498,7 +479,7 @@ function EmptyJobs({
 }) {
   if (tab === "history") {
     return (
-      <Card className="border-2 border-dashed bg-card">
+      <Card className="rd-empty border-2 border-dashed bg-card">
         <CardContent className="py-16 text-center">
           <div className="mx-auto h-14 w-14 rounded-full bg-muted grid place-items-center mb-4">
             <Clock className="h-7 w-7 text-muted-foreground" />
@@ -512,7 +493,7 @@ function EmptyJobs({
     );
   }
   return (
-    <Card className="border-2 border-dashed bg-card">
+    <Card className="rd-empty border-2 border-dashed bg-card">
       <CardContent className="py-16 text-center">
         <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 grid place-items-center mb-4">
           <Package className="h-7 w-7 text-primary" />
@@ -617,7 +598,7 @@ function JobCard({
   }
 
   return (
-    <Card className="border hover:shadow-md transition flex flex-col min-w-0 overflow-hidden">
+    <Card className="rd-job-card border hover:shadow-md transition flex flex-col min-w-0 overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

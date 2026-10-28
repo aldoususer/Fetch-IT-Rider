@@ -3,6 +3,11 @@ import { SECTION_FIELDS, FIELD_LABELS, DOCUMENT_LABELS, requiredDocuments, valid
 export const REGISTRATION_STEPS = ['Account', 'Vehicle & services', 'Details', 'Documents', 'Review'] as const;
 export const STEP_KEYS = ['account', 'vehicle', 'details', 'documents', 'review'] as const;
 export type RegistrationStep = 0 | 1 | 2 | 3 | 4;
+export function registrationScreen(status: string, canWork: boolean): 'application' | 'waiting' | 'dashboard' {
+  if (status === 'NEEDS_CORRECTION') return 'application';
+  if (canWork) return 'dashboard';
+  return status === 'DRAFT' ? 'application' : 'waiting';
+}
 export type RegistrationDocument = { id: string; kind: string; current: boolean; status: string; reason?: string };
 type ProgressApplication = { status: string; emailVerifiedAt?: string; vehicleClass: string; services: string[]; fields: Fields; fieldReviews: Record<string, Review>; documents: RegistrationDocument[] };
 export function visibleFields(keys: readonly string[], vehicle: string, services: string[]) {

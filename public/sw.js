@@ -3,7 +3,7 @@
 // assets, so the user always gets fresh content when online but can still
 // load the app shell offline.
 
-const CACHE_VERSION = "fetchit-rider-logo-v2";
+const CACHE_VERSION = "fetchit-rider-workspace-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",

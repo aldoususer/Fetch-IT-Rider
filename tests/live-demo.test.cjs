@@ -52,5 +52,5 @@ test('autofilled approvals use normal emails while historical demo messages reta
   assert(!applicationMessage('ORIENTATION', { ...payload, demo: undefined, autofilled: true }).text.includes('demonstration appointment'));
   const source = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/components/fetchit/rider/rider-application.tsx'), 'utf8');
   assert(!source.includes('No real rider services were activated')); assert(!source.includes('FOR DEMO')); assert(source.includes('Autofill this step'));
-  assert(source.includes('if (working && canWork)'));
+  assert.equal(load('src/lib/rider-registration.ts').registrationScreen('ACTIVE', true), 'dashboard');
 });
