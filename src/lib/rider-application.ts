@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { createHash } from "node:crypto";
 import type { Prisma, RiderApplication, RiderApplicationDocument } from "@prisma/client";
 import { ApplicationError, SECTION_FIELDS, DOCUMENT_LABELS, normalizeFields, requiredDocuments, validateApplication, validateSelection, approvalExpiry, type Fields, type Review } from "./rider-application-policy";
 import { liveApprovalWhere, validOperatingZone } from "./rider-eligibility";
@@ -10,8 +11,17 @@ export const canActivateApplications = (role: string) => ["ADMIN", "SUPERADMIN"]
 const detail = { documents: { orderBy: { createdAt: "desc" as const } }, events: { orderBy: { createdAt: "desc" as const }, take: 80 }, emails: { orderBy: { createdAt: "desc" as const }, take: 20 }, user: { select: { id: true, name: true, email: true, isBanned: true } } };
 export const applicationDetail = detail;
 export type ApplicationDetail = Prisma.RiderApplicationGetPayload<{ include: typeof detail }>;
+// Different slots can upload concurrently, while edits to the application context
+// and replacements of the same slot still conflict. Navigation does not change it.
+export function applicationUploadContext(app: Pick<RiderApplication, 'status' | 'vehicleClass' | 'services' | 'fields' | 'isDemo'>) {
+  const fields = app.fields as Fields;
+  return createHash('sha256').update(JSON.stringify([app.status, app.vehicleClass, app.services, app.isDemo, Object.keys(fields).filter(key => key !== 'registrationStep').sort().map(key => [key, fields[key]])])).digest('hex');
+}
+export function applicationFilename(value: string) {
+  return value.split(/[\\/]/).pop()!.normalize('NFC').replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 160) || 'Uploaded document';
+}
 export function publicApplication(app: ApplicationDetail, staff = false) {
-  return { ...app, documents: app.documents.map(({ pathname: _path, ...doc }) => doc), emails: app.emails.map(({ payload: _payload, recipient: _recipient, ...email }) => email), events: staff ? app.events : app.events.map(({ details: _details, ...event }) => event) };
+  return { ...app, uploadContext: applicationUploadContext(app), documents: app.documents.map(({ pathname: _path, ...doc }) => doc), emails: app.emails.map(({ payload: _payload, recipient: _recipient, ...email }) => email), events: staff ? app.events : app.events.map(({ details: _details, ...event }) => event) };
 }
 export async function ensureApplication(userId: string) {
   const existing = await db.riderApplication.findUnique({ where: { userId, user: { is: { role: "RIDER", isBanned: false } } }, include: detail });
@@ -20,11 +30,11 @@ export async function ensureApplication(userId: string) {
   if (!user || user.role !== "RIDER" || user.isBanned) throw new ApplicationError("Rider account unavailable.", 403);
   return db.riderApplication.upsert({ where: { userId }, update: {}, create: { userId, vehicleClass: ["MOTORCYCLE", "TRICYCLE", "SEDAN"].includes(user.riderProfile?.vehicleClass ?? "") ? user.riderProfile!.vehicleClass : "MOTORCYCLE", services: ["DELIVERY"], fields: { legalName: user.name, mobile: user.phone ?? "", plateNumber: user.riderProfile?.vehiclePlate ?? "" } }, include: detail });
 }
-export async function lockApplication(tx: Prisma.TransactionClient, id: string, version: unknown) {
+export async function lockApplication(tx: Prisma.TransactionClient, id: string, version: unknown, upload?: { kind: string; context: string; documentId: string }) {
   await tx.$queryRaw`SELECT "id" FROM "RiderApplication" WHERE "id"=${id} FOR UPDATE`;
   const app = await tx.riderApplication.findUnique({ where: { id }, include: detail });
   if (!app) throw new ApplicationError("Application not found.", 404);
-  if (app.version !== version) throw new ApplicationError("This application changed. Refresh before continuing.", 409);
+  if (upload ? !Number.isInteger(version) || (version as number) < 1 || (version as number) > app.version || applicationUploadContext(app) !== upload.context || (app.documents.find(d => d.current && d.kind === upload.kind)?.id ?? '') !== upload.documentId : app.version !== version) throw new ApplicationError("This application or document changed. Refresh before continuing.", 409);
   return app;
 }
 export async function applicationEvent(tx: Prisma.TransactionClient, id: string, actor: ApplicationActor, action: string, details: Prisma.InputJsonValue = {}) {

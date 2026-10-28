@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID, randomInt, createHmac, timingSafeEqual } from "node:crypto";
 import { db } from "./db";
-import { ensureApplication, publicApplication, applicationDetail, saveApplication, removeApplicationDocument, riderApprovals, lockApplication, requireEditable, applicationEvent } from "./rider-application";
+import { ensureApplication, publicApplication, applicationDetail, saveApplication, removeApplicationDocument, riderApprovals, lockApplication, requireEditable, applicationEvent, applicationUploadContext, applicationFilename } from "./rider-application";
 import { ApplicationError, DOCUMENT_LABELS, requiredDocuments, type Fields } from "./rider-application-policy";
 import { readApplicationDocument } from "./application-storage";
 import { storeApplicationDocument, removeUnusedApplicationDocument } from "./application-upload";
@@ -13,6 +13,7 @@ import { changeApplicationDemoMode } from './application-demo-mode';
 
 const codeHash = (id: string, code: string) => createHmac("sha256", sessionSecret()).update(JSON.stringify(["rider-verify", id, code])).digest("hex");
 export async function applicantRequest(req: NextRequest, userId: string) {
+  const started = performance.now();
   try {
     let app = await ensureApplication(userId);
     if (req.method === "GET") {
@@ -39,20 +40,26 @@ export async function applicantRequest(req: NextRequest, userId: string) {
       const version = Number(form.get("version"));
       requireEditable(app);
       const current = app.documents.find(d => d.current && d.kind === kind);
+      const context = form.get('uploadContext'), documentId = form.get('documentId');
+      if (context !== null && (typeof context !== 'string' || !/^[a-f0-9]{64}$/.test(context) || typeof documentId !== 'string' || documentId.length > 160)) throw new ApplicationError('Refresh the application before uploading.');
+      const upload = typeof context === 'string' ? { kind, context, documentId: documentId as string } : undefined;
+      if (upload && (applicationUploadContext(app) !== upload.context || (current?.id ?? '') !== upload.documentId)) throw new ApplicationError('This application or document changed. Refresh before continuing.', 409);
       if (app.status === "NEEDS_CORRECTION" && (current ? current.status !== "NEEDS_CORRECTION" : !requiredDocuments(app.vehicleClass, app.services, app.fields as Fields).includes(kind))) throw new ApplicationError("Only flagged or newly required documents can be uploaded.");
       const issuedAt = form.get("issuedAt") ? new Date(String(form.get("issuedAt")) + "T00:00:00+08:00") : null;
       const expiresAt = form.get("expiresAt") ? new Date(String(form.get("expiresAt")) + "T23:59:59+08:00") : null;
       if ((issuedAt && (!Number.isFinite(issuedAt.getTime()) || issuedAt > new Date())) || (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date())) || (issuedAt && expiresAt && issuedAt >= expiresAt)) throw new ApplicationError("Check the document issue and expiry dates.");
       await limitRequests("rider:application-upload", userId, 35, 60 * 60_000);
+      const fileStarted = performance.now();
       const saved = await storeApplicationDocument(app.id, kind, Buffer.from(await file.arrayBuffer()));
+      const databaseStarted = performance.now();
       try {
         app = await db.$transaction(async tx => {
-          const locked = await lockApplication(tx, app.id, version); requireEditable(locked);
+          const locked = await lockApplication(tx, app.id, version, upload); requireEditable(locked);
           const old = locked.documents.find(d => d.kind === kind && d.current);
           if (locked.status === "NEEDS_CORRECTION" && (old ? old.status !== "NEEDS_CORRECTION" : !requiredDocuments(locked.vehicleClass, locked.services, locked.fields as Fields).includes(kind))) throw new ApplicationError("Only flagged or newly required documents can be uploaded.");
           if (locked.documents.filter(d => d.kind === kind).length >= 12) throw new ApplicationError("Too many replacements. Ask the reviewing team for help.");
           await tx.riderApplicationDocument.updateMany({ where: { applicationId: app.id, kind, current: true }, data: { current: false } });
-          await tx.riderApplicationDocument.create({ data: { applicationId: app.id, kind, version: Math.max(0, ...locked.documents.filter(d => d.kind === kind).map(d => d.version)) + 1, ...saved, issuedAt, expiresAt } });
+          await tx.riderApplicationDocument.create({ data: { applicationId: app.id, kind, version: Math.max(0, ...locked.documents.filter(d => d.kind === kind).map(d => d.version)) + 1, ...saved, originalName: applicationFilename(file.name), issuedAt, expiresAt } });
           await tx.riderApplication.update({ where: { id: app.id }, data: { version: { increment: 1 }, fields: { ...locked.fields as Fields, registrationStep: 'documents' } } });
           await applicationEvent(tx, app.id, { id: userId, name: app.user.name, role: "RIDER" }, "DOCUMENT_UPLOADED", { kind });
           return tx.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: applicationDetail });
@@ -62,7 +69,7 @@ export async function applicantRequest(req: NextRequest, userId: string) {
         try { if (!await db.riderApplicationDocument.findFirst({ where: { pathname: saved.pathname } })) await removeUnusedApplicationDocument(saved.pathname); } catch { /* Reconcile conservatively. */ }
         throw error;
       }
-      return NextResponse.json({ application: publicApplication(app) });
+      return NextResponse.json({ application: publicApplication(app) }, { headers: { 'Server-Timing': `prepare;dur=${(fileStarted - started).toFixed(1)}, file;dur=${(databaseStarted - fileStarted).toFixed(1)}, database;dur=${(performance.now() - databaseStarted).toFixed(1)}` } });
     } else {
       const body = await readApplicationBody(req, 16000);
       if (body.action === "send-code") {

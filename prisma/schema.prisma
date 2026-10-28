@@ -637,6 +637,7 @@ model RiderApplicationDocument {
   current       Boolean          @default(true)
   pathname      String
   mimeType      String
+  originalName  String?
   status        String           @default("PENDING")
   reason        String?
   issuedAt      DateTime?
