@@ -27,8 +27,8 @@ test('random profiles stay in the requested corridor and pass normal vehicle/ser
   const addresses = new Set();
   for (let index = 0; index < 60; index++) {
     const identity = demoIdentity(), choice = demoSelection(), fields = demoFields(choice.vehicleClass, identity.name);
-    assert(identity.email.endsWith('@rider-demo.example.invalid')); assert(identity.name.startsWith('Demo '));
-    assert(/Lingayen|Binmaley|Dagupan City/.test(fields.address)); assert(fields.licenceNumber.startsWith('DEMO-')); addresses.add(fields.address);
+    assert(identity.email.endsWith('@rider-demo.example.invalid')); assert(!identity.name.startsWith('Demo ')); assert(!fields.address.startsWith('Demo '));
+    assert(/Lingayen|Binmaley|Dagupan City/.test(fields.address)); assert(fields.licenceNumber.startsWith('APP-LIC-')); addresses.add(fields.address);
     validateApplication(choice.vehicleClass, choice.services, fields);
   }
   assert(addresses.size > 15);

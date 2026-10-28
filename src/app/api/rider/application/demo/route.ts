@@ -16,23 +16,23 @@ async function handle(req: NextRequest) {
     const session = await getSession();
     if (!session || session.role !== 'RIDER') throw new ApplicationError('Sign in with your own rider account.', 401);
     let app = await db.riderApplication.findUnique({ where: { userId: session.uid }, include: applicationDetail });
-    if (!app?.isDemo || app.user.isBanned) throw new ApplicationError('Start a demo application first.', 403);
-    if (!app.emailVerifiedAt || app.verifiedEmail !== app.user.email) throw new ApplicationError('Verify your own email first. The demo never bypasses email verification.', 403);
+    if (!app?.isDemo || app.user.isBanned) throw new ApplicationError('Enable autofill first.', 403);
+    if (!app.emailVerifiedAt || app.verifiedEmail !== app.user.email) throw new ApplicationError('Verify your email before filling this step.', 403);
     if (!['DRAFT', 'NEEDS_CORRECTION'].includes(app.status)) throw new ApplicationError('Wait for review before changing this application.', 409);
     const body = await readApplicationBody(req, 4096);
     if (body.version !== app.version) throw new ApplicationError('This application changed. Refresh before continuing.', 409);
-    if (!['vehicle', 'details', 'documents', 'review'].includes(String(body.action))) throw new ApplicationError('Choose a demo step.');
+    if (!['vehicle', 'details', 'documents', 'review'].includes(String(body.action))) throw new ApplicationError('Choose an application step.');
     // Each call now performs at most one upload; normal write/upload quotas still apply.
     await limitRequests('rider:demo-part', session.uid, 80, 3600_000);
     async function normal(value: Record<string, unknown>) {
       const result = await applicantRequest(new NextRequest(new URL('/api/rider/application', req.url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: app!.version, ...value }) }), session!.uid);
-      const data = await result.json(); if (!result.ok) throw new ApplicationError(data.error || 'Demo action failed.', result.status);
+      const data = await result.json(); if (!result.ok) throw new ApplicationError(data.error || 'Could not fill this step.', result.status);
       app = await db.riderApplication.findUniqueOrThrow({ where: { userId: session!.uid }, include: applicationDetail });
     }
     async function fillDetails(onlyMissing = false) {
       const previous = app!.fields as Fields;
       if (onlyMissing) { try { validateApplication(app!.vehicleClass, app!.services, previous); return false; } catch { /* Complete the draft through normal validation. */ } }
-      const generated = demoFields(app!.vehicleClass, previous.legalName || `Demo ${app!.user.name}`), fields = { ...previous };
+      const generated = demoFields(app!.vehicleClass, previous.legalName || app!.user.name), fields = { ...previous };
       for (const [section, keys] of Object.entries(SECTION_FIELDS)) {
         if (app!.status === 'NEEDS_CORRECTION' && (app!.fieldReviews as Record<string, Review>)[section]?.status !== 'NEEDS_CORRECTION') continue;
         for (const key of keys) fields[key] = generated[key];
@@ -68,7 +68,7 @@ async function handle(req: NextRequest) {
         if (kind === 'NBI') form.set('expiresAt', (app!.fields as Fields).nbiExpiry);
         if (kind.startsWith('LICENCE')) form.set('expiresAt', (app!.fields as Fields).licenceExpiry);
         const result = await applicantRequest(new NextRequest(new URL('/api/rider/application', req.url), { method: 'POST', body: form }), session!.uid);
-        const data = await result.json(); if (!result.ok) throw new ApplicationError(data.error || 'Demo upload failed.', result.status);
+        const data = await result.json(); if (!result.ok) throw new ApplicationError(data.error || 'Could not save this document.', result.status);
         app = await db.riderApplication.findUniqueOrThrow({ where: { userId: session!.uid }, include: applicationDetail });
       }
     }

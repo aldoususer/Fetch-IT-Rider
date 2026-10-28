@@ -4,7 +4,7 @@ import { db } from "./db";
 import { ApplicationError } from "./rider-application-policy";
 import { localDemoEnabled } from './local-demo-runtime';
 import { captureLocalMail } from './local-demo-files';
-type Payload = { name: string; applicationId: string; vehicle?: string; services?: string; date?: string; venue?: string; instructions?: string; corrections?: string[]; demo?: boolean };
+type Payload = { name: string; applicationId: string; vehicle?: string; services?: string; date?: string; venue?: string; instructions?: string; corrections?: string[]; demo?: boolean; autofilled?: boolean };
 export function applicationMessage(kind: string, p: Payload) {
   const subject = kind === "ORIENTATION" ? "Your Fetch-It orientation invitation" : kind === "CORRECTIONS" ? "Your Fetch-It application needs corrections" : "Your Fetch-It services are activated";
   const date = p.date ? new Date(p.date).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "full", timeStyle: "short" }) + " (Philippine time)" : "";

@@ -25,7 +25,7 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
         await sendApplicationEmail(pending.id);
         saved = await db.riderApplication.findUniqueOrThrow({ where: { id }, include: applicationDetail });
       }
-      const approvals = ["activate", "reopen"].includes(String(body.action))
+      const approvals = ["activate", "complete-demo", "reopen"].includes(String(body.action))
         ? await db.riderServiceApproval.findMany({ where: { userId: saved.userId } }) : undefined;
       return NextResponse.json({ application: publicApplication(saved, true), ...(approvals ? { approvals } : {}) });
     }
@@ -53,7 +53,7 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
       if (!canActivateApplications(actor.role)) throw new ApplicationError("Admin access required.", 403);
       const at = new Date(String(body.orientationAt));
       if (!Number.isFinite(at.getTime()) || typeof body.venue !== "string" || body.venue.length > 2000 || typeof body.instructions !== "string" || body.instructions.length > 2000) throw new ApplicationError("Complete the schedule details.");
-      const p = { name: (app.fields as Record<string, string>).legalName, applicationId: app.id, vehicle: app.vehicleClass, services: app.services.join(" / "), date: at.toISOString(), venue: body.venue, instructions: body.instructions, demo: app.isDemo };
+      const p = { name: (app.fields as Record<string, string>).legalName, applicationId: app.id, vehicle: app.vehicleClass, services: app.services.join(" / "), date: at.toISOString(), venue: body.venue, instructions: body.instructions, autofilled: app.isDemo };
       return body.pdf ? pdfResponse(await orientationLetter(p)) : NextResponse.json(applicationMessage("ORIENTATION", p));
     }
     if (body.action === "email") {

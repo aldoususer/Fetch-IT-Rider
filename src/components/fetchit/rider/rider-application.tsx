@@ -21,6 +21,7 @@ const endpoint = "/api/rider/application";
 export function RiderApplicationBoundary() {
   const lab = useLocalDemo();
   const mutationVersion = useRef(0);
+  const priorAccess = useRef(false);
   const applicationRef = useRef<Application | null>(null);
   const pendingUploadSave = useRef<Promise<unknown> | null>(null);
   const uploadRunner = useRef<(kind: string, file: File, retry: boolean, signal: AbortSignal, progress: (value: UploadProgress) => void) => Promise<void>>(async () => {});
@@ -53,6 +54,10 @@ export function RiderApplicationBoundary() {
   const [step, setStep] = useState<RegistrationStep>(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const editable = !!app && ["DRAFT", "NEEDS_CORRECTION"].includes(app.status);
+  const syncAccess = useCallback((allowed: boolean, initial = false) => {
+    if (initial || allowed && !priorAccess.current || !allowed) setWorking(allowed);
+    priorAccess.current = allowed;
+  }, []);
   const dirty = !!app && editable && (JSON.stringify(fields) !== JSON.stringify(app.fields) || vehicle !== app.vehicleClass || JSON.stringify(services) !== JSON.stringify(app.services));
   const dirtyRef = useRef(dirty);
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
@@ -73,16 +78,16 @@ export function RiderApplicationBoundary() {
       const res = await fetch(endpoint, { cache: "no-store", signal }); const data = await readApplicationJson(res);
       if (signal?.aborted || mutationVersion.current !== startedVersion) return;
       if (!res.ok) throw new Error(data.error || "Application unavailable.");
-      hydrate(data.application); setApprovals(data.approvals); setCanWork(data.canWork);
-      if (initial) { setWorking(data.canWork); setStep(resumeRegistration(data.application)); }
+      hydrate(data.application); setApprovals(data.approvals); setCanWork(data.canWork); syncAccess(data.canWork);
+      if (initial) { syncAccess(data.canWork, true); setStep(resumeRegistration(data.application)); }
       else if (data.application.status === 'NEEDS_CORRECTION') { setNotice(''); setStep(resumeRegistration(data.application)); }
       else if (!["DRAFT", "NEEDS_CORRECTION"].includes(data.application.status)) setStep(4);
     } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Application unavailable."); } finally { if (!signal?.aborted) setLoading(false); }
-  }, [hydrate]);
+  }, [hydrate, syncAccess]);
   useEffect(() => { const controller = new AbortController(); // Initial fetch updates state only after the response; abort prevents stale account data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (userId) void load(true, controller.signal); return () => controller.abort(); }, [userId, load]);
-  useVisiblePoll(app && !editable && !working && !busy && !hasUploads && !checkingStatus ? userId || '' : '', signal => load(false, signal), 10000, false);
+  useVisiblePoll(app && !editable && !working && !busy && !hasUploads && !checkingStatus ? userId || '' : '', signal => load(false, signal), 3000, false);
   async function checkStatus() {
     if (busy || checkingStatus || uploadQueue.hasPending()) return;
     setPopup({ kind: 'status' }); setStatusError(''); setCheckingStatus(true); setNotice('');
@@ -93,7 +98,7 @@ export function RiderApplicationBoundary() {
       if (mutationVersion.current !== startedVersion) return;
       if (!dirtyRef.current || !['DRAFT', 'NEEDS_CORRECTION'].includes(data.application.status)) hydrate(data.application);
       else { applicationRef.current = data.application; setApp(data.application); }
-      setApprovals(data.approvals); setCanWork(data.canWork);
+      setApprovals(data.approvals); setCanWork(data.canWork); syncAccess(data.canWork);
       if (!['DRAFT', 'NEEDS_CORRECTION'].includes(data.application.status)) setStep(4);
     } catch (e) { setStatusError(e instanceof Error ? e.message : 'Could not check application status.'); }
     finally { setCheckingStatus(false); }
@@ -102,13 +107,13 @@ export function RiderApplicationBoundary() {
     if (!app || busy || uploadQueue.hasPending()) return;
     if (!lab.enabled && step === 0) {
       if (!app.emailVerifiedAt) await perform('send-code');
-      else setNotice('Your own email is verified. Continue to try the demo steps.');
+      else setNotice('Your email is verified. Continue to your vehicle and services.');
       return;
     }
-    setBusy(true); setError(''); setNotice(''); setDemoProgress('Preparing demo…');
+    setBusy(true); setError(''); setNotice(''); setDemoProgress('Filling this step…');
     let refreshAfterError = !dirty;
     try {
-      let version = app.version;
+      let version = applicationRef.current?.version ?? app.version;
       if (dirty) { const saved = await request({ action: 'save', fields, vehicleClass: vehicle, services }); version = saved.application.version; refreshAfterError = true; }
       else {
         // A previous request may have saved files before its gateway timed out.
@@ -116,17 +121,18 @@ export function RiderApplicationBoundary() {
         if (!latest.ok) throw Error(saved.error || 'Could not refresh saved progress.');
         version = saved.application.version; hydrate(saved.application);
       }
+      if (!lab.enabled && !applicationRef.current?.isDemo) { const enabled = await request({ action: 'demo-enable' }); version = enabled.application.version; }
       for (let part = 0; part < 20; part++) {
         const response = await fetch(lab.enabled ? '/api/local-demo' : `${endpoint}/demo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: ['verify', 'vehicle', 'details', 'documents', 'review'][step], version }) });
-        const data = await readApplicationJson(response); if (!response.ok) throw Error(data.error || 'Demo step failed.');
+        const data = await readApplicationJson(response); if (!response.ok) throw Error(data.error || 'Could not fill this step.');
         hydrate(data.application); version = data.application.version;
-        if (data.demoProgress) setDemoProgress(`Demo documents · ${data.demoProgress.completed} of ${data.demoProgress.total} saved`);
-        if (!data.demoContinue) { setNotice('Demo data saved. Review it, then continue normally.'); return; }
+        if (data.demoProgress) setDemoProgress(`Documents · ${data.demoProgress.completed} of ${data.demoProgress.total} saved`);
+        if (!data.demoContinue) { setNotice('This step is filled. Review it, then continue.'); return; }
       }
-      throw Error('Some demo documents are still pending. Try again to resume saved progress.');
+      throw Error('Some documents are still pending. Use autofill again to resume saved progress.');
     } catch (e) {
       if (refreshAfterError) await load(false);
-      setError(e instanceof Error ? e.message : 'Demo step failed.');
+      setError(e instanceof Error ? e.message : 'Could not fill this step.');
     } finally { setBusy(false); setDemoProgress(''); }
   }
   async function showLocalInbox() {
@@ -159,7 +165,7 @@ export function RiderApplicationBoundary() {
       setNotice(action === "submit" ? "" : action === "send-code" ? "Code sent. Check your inbox and spam folder." : action === "verify-code" ? "Email verified." : "Draft saved.");
       if (action === "verify-code") { setCode(""); setStep(1); }
       if (action === "submit") { setStep(4); setPopup({ kind: 'status' }); }
-      if (action === 'demo-enable' || action === 'demo-reset') { setStep(1); setConfirmReal(false); setNotice(action === 'demo-enable' ? 'Demo started. Your verified email will receive real demo review messages.' : 'Real application started. Upload your actual documents for a fresh review.'); }
+      if (action === 'demo-enable' || action === 'demo-reset') { setStep(1); setConfirmReal(false); setNotice(action === 'demo-enable' ? 'Autofill is ready. Review your details before continuing.' : 'Draft reset. Enter your details and upload your documents.'); }
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save your application."); } finally { setBusy(false); }
   }
   function upload(kind: string, file?: File) {
@@ -220,14 +226,12 @@ export function RiderApplicationBoundary() {
   const vehicleName = vehicle === "SEDAN" ? "Car" : label(vehicle);
   return <main className="ra"><header className="ra-header"><a href="/" aria-label="Fetch-It home"><img src="/rider-logo.png" alt="" width="44" height="44"/><strong>Fetch-It <span>Rider registration</span></strong></a><button disabled={busy || hasUploads} onClick={() => { if (editable) void goTo(step, false, true); else void logout(); }}>{editable ? "Save & exit" : "Sign out"}</button></header>
     <div className="ra-intro"><p className="ra-eyebrow">YOUR NEXT CHAPTER STARTS HERE</p><h1>{editable ? <>Your road.<br/>One step at a time.</> : <>Your application,<br/>at a glance.</>}</h1><p>{editable ? "One application. A clear checklist. Pick up where you left off." : "Review your saved details here. Open application status for the latest update."}</p>{app && <button disabled={busy || checkingStatus || hasUploads} onClick={() => void checkStatus()}>Check application status</button>}</div>
-    {lab.enabled && <aside className="ra-card" style={{ borderColor: '#c87338' }}><strong>LOCAL DEMO LAB · Lingayen–Dagupan</strong><p>Isolated test data. Sample documents are not valid credentials. Emails are captured here and never sent.</p><div className="ra-inline">{editable && <button disabled={busy || hasUploads || step === 1 && app?.status !== 'DRAFT'} onClick={() => void fillDemoStep()}>{`Use demo · ${REGISTRATION_STEPS[step]}`}</button>}<button onClick={() => void showLocalInbox()}>Local email inbox</button><a href={lab.adminUrl} target="_blank" rel="noreferrer">Open connected Admin ↗</a></div>{demoInbox.map(mail => <details key={mail.id}><summary>{mail.subject}</summary><p style={{ whiteSpace: 'pre-wrap' }}>{mail.text}</p></details>)}</aside>}
-    {!lab.enabled && app?.isDemo && <aside className="ra-card" style={{ borderColor: '#c87338' }}><strong>FOR DEMO · Lingayen–Dagupan</strong><p>Try each application step with sample data. Your application is connected to the live reviewing team. Verification, correction and orientation messages are sent to <strong>{email}</strong>; review emails are labeled DEMO.</p><p>Sample documents cannot activate real rider services.</p>{editable && <button disabled={busy || hasUploads || step === 0 && !app.emailVerifiedAt && resendRemaining > 0 || step === 1 && app.status !== 'DRAFT'} onClick={() => void fillDemoStep()}>{`Use demo · ${REGISTRATION_STEPS[step]}`}</button>}<details><summary>Ready to apply for real?</summary><p>Keep this account and verified email. Demo uploads and reviews will be archived. Your earlier real draft details are restored when available; real approval requires fresh documents.</p><label className="ra-inline"><input type="checkbox" checked={confirmReal} onChange={e => setConfirmReal(e.target.checked)}/>I want to start a real application with fresh documents.</label><button disabled={busy || hasUploads || !confirmReal} onClick={() => void perform('demo-reset')}>Start real application</button></details></aside>}
-    {!lab.enabled && app && !app.isDemo && app.status === 'DRAFT' && !canWork && !app.documents.some(d => d.current) && <aside className="ra-card"><strong>Want to try the application first?</strong><p>Use demo details and sample documents, with real review emails to your own verified address.</p><button disabled={busy || hasUploads || !app.emailVerifiedAt} onClick={() => void perform('demo-enable')}>Use demo · start application demo</button>{!app.emailVerifiedAt && <p>Verify your email to unlock the demo.</p>}</aside>}
+    {(lab.enabled || app?.isDemo && editable) && <details className="ra-application-tools"><summary>Application options</summary>{lab.enabled ? <><p>Local environment. Messages are captured in the local inbox.</p><button onClick={() => void showLocalInbox()}>Local email inbox</button><a href={lab.adminUrl} target="_blank" rel="noreferrer">Open connected Admin ↗</a>{demoInbox.map(mail => <details key={mail.id}><summary>{mail.subject}</summary><p style={{ whiteSpace: 'pre-wrap' }}>{mail.text}</p></details>)}</> : <><p>Autofill uses sample details and documents. Submit and track your application through the normal review process.</p><p>To enter your own documents instead, reset the draft. Current uploads are archived and earlier saved details are restored when available.</p><label className="ra-inline"><input type="checkbox" checked={confirmReal} onChange={e => setConfirmReal(e.target.checked)}/>Reset my draft and enter my own documents.</label><button disabled={busy || hasUploads || !confirmReal} onClick={() => void perform('demo-reset')}>Reset autofilled draft</button></>}</details>}
     {notice && <div role="status" className="ra-toast"><span>{notice}</span><button type="button" aria-label="Dismiss notification" onClick={() => setNotice('')}>×</button></div>}
     {!app && <button onClick={() => void load(true)}>Retry loading</button>}
     {app && <>
       <RegistrationProgress step={step} verified={!!app.emailVerifiedAt} busy={busy || hasUploads} onSelect={next => void goTo(next)}/>
-      <div className="ra-step-heading"><p className="ra-eyebrow">STEP {step + 1} OF 5</p><h2 ref={heading} tabIndex={-1}>{REGISTRATION_STEPS[step]}</h2><span className="ra-save-state" role="status">{busy ? demoProgress || busyLabel : dirty ? "Unsaved changes · save before leaving" : step === 3 ? "Your application details are saved" : "Your progress is saved"}</span></div>
+      <div className="ra-step-toolbar"><div className="ra-step-heading"><p className="ra-eyebrow">STEP {step + 1} OF 5</p><h2 ref={heading} tabIndex={-1}>{REGISTRATION_STEPS[step]}</h2><span className="ra-save-state" role="status">{busy ? demoProgress || busyLabel : dirty ? "Unsaved changes · save before leaving" : step === 3 ? "Your application details are saved" : "Your progress is saved"}</span></div>{editable && (step > 0 || lab.enabled) && (lab.enabled || app.isDemo || app.status === 'DRAFT' && !canWork && !app.documents.some(d => d.current)) && <button className="ra-autofill" type="button" disabled={busy || hasUploads || step === 0 && !app.emailVerifiedAt && resendRemaining > 0 || step > 0 && !app.emailVerifiedAt || step === 1 && app.status !== 'DRAFT'} onClick={() => void fillDemoStep()} title="Fill this step with generated details; review before continuing">{step === 0 ? app.emailVerifiedAt ? 'Account ready' : 'Send verification code' : 'Autofill this step'}</button>}</div>
       {step === 0 && <section className="ra-card"><h3>Verify your email</h3><p>Your account is created. We’ll use <strong>{email}</strong> for application updates.</p>{app.emailVerifiedAt ? <><p className="ra-success">✓ Email verified</p><p>Your account details are saved. Continue to your vehicle and services.</p></> : <><p className="ra-help">Send a six-digit code to this address, then enter it below. You can sign in later to continue.</p><div className="ra-inline"><button disabled={busy || resendRemaining > 0} onClick={() => void perform("send-code")}>{resendRemaining > 0 ? `Resend available in ${resendRemaining}s` : "Send verification code"}</button><label>Six-digit code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}/></label><button disabled={busy || code.length !== 6} onClick={() => void perform("verify-code")}>Verify email & continue</button></div></>}</section>}
       {step === 1 && <section className="ra-card"><h3>What will you drive?</h3><p className="ra-help">Choose your vehicle once. Your details and document checklist will adapt to it.</p><div className="ra-vehicle-options">{[["MOTORCYCLE", "Motorcycle", "Two-wheel journeys"], ["TRICYCLE", "Tricycle", "Local trips and deliveries"], ["SEDAN", "Car", "More room for the road"]].map(([value, name, description]) => <label key={value} className={`ra-choice ${vehicle === value ? "is-selected" : ""}`}><input type="radio" name="application-vehicle" value={value} checked={vehicle === value} disabled={!editable || app.status !== "DRAFT" || busy} onChange={() => setVehicle(value)}/><strong>{name}</strong><span>{description}</span></label>)}</div><h3>Which services would you like to offer?</h3><div className="ra-service-options">{["DELIVERY", "RIDE"].map(service => <label className={`ra-choice ${services.includes(service) ? "is-selected" : ""}`} key={service}><input type="checkbox" disabled={!editable || app.status !== "DRAFT" || busy} checked={services.includes(service)} onChange={e => setServices(e.target.checked ? ["DELIVERY", "RIDE"].filter(s => s === service || services.includes(s)) : services.filter(s => s !== service))}/><strong>{service === "RIDE" ? "Passenger rides" : "Delivery"}</strong><span>{service === "RIDE" ? "Take people to their next stop" : "Bring parcels where they need to go"}</span></label>)}</div><p className="ra-help">Select one or both. Each service requires its own approval. Passenger permits and operating-area requirements depend on the vehicle and location.</p></section>}
       {step === 2 && <section><p className="ra-help">{vehicleName} · {services.map(s => s === "RIDE" ? "Passenger rides" : "Delivery").join(" + ")}. Your name is filled from your account. Complete the remaining details below.</p>{Object.entries(SECTION_FIELDS).map(([section, keys]) => {
@@ -262,8 +266,8 @@ export function RiderApplicationBoundary() {
       {error ? <><p role="alert">{error}</p><button onClick={() => setError('')}>Back to application</button></> : popup?.kind === 'requirements' ? <>{popup.issues.length ? <ul className="ra-missing">{popup.issues.map((issue, index) => <li key={index}><button onClick={() => { setPopup(null); void goTo(issue.step); }}><span>{issue.message}</span><span aria-hidden="true">↗</span></button></li>)}</ul> : <p>Your checklist is complete. Review your details, then submit when ready.</p>}</> : popup?.kind === 'status' && app && <>
         {checkingStatus && <p role="status">Checking latest status…</p>}
         {statusError && <div role="alert"><p>{statusError}</p><button onClick={() => void checkStatus()}>Try again</button></div>}
-        <strong className="ra-status-large">{label(app.status)}</strong>
-        <p>{app.status === 'DRAFT' ? 'Your application has not been submitted. Finish your checklist when ready.' : app.status === 'NEEDS_CORRECTION' ? 'Replace the flagged documents or update the details below, then resubmit.' : app.status === 'DEMO_COMPLETED' ? 'Your demo is complete. No real rider services were activated.' : app.status === 'ACTIVE' ? 'Your approved services are listed below.' : app.status === 'ORIENTATION_SCHEDULED' ? 'Attend your scheduled orientation and complete the required assessments.' : 'Your application is with the reviewing team. We will notify you about updates.'}</p>
+        <strong className="ra-status-large">{app.status === 'DEMO_COMPLETED' ? 'Awaiting service activation' : label(app.status)}</strong>
+        <p>{app.status === 'DRAFT' ? 'Your application has not been submitted. Finish your checklist when ready.' : app.status === 'NEEDS_CORRECTION' ? 'Replace the flagged documents or update the details below, then resubmit.' : app.status === 'DEMO_COMPLETED' ? 'Your review is complete. Ask Admin to confirm the selected services to open your rider dashboard.' : app.status === 'ACTIVE' ? 'Your approved services are listed below.' : app.status === 'ORIENTATION_SCHEDULED' ? 'Attend your scheduled orientation and complete the required assessments.' : 'Your application is with the reviewing team. We will notify you about updates.'}</p>
         {app.status === 'NEEDS_CORRECTION' && <ul className="ra-missing">{registrationIssues(app, vehicle, services, fields).filter(issue => issue.message.startsWith('Replace') || issue.message.startsWith('Correct')).map((issue, index) => <li key={index}><button onClick={() => { setPopup(null); void goTo(issue.step); }}>{issue.message} ↗</button></li>)}</ul>}
         {app.orientationAt && <section><h3>Your orientation</h3><p><strong>{new Date(app.orientationAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'full', timeStyle: 'short' })} — Philippine time</strong></p><p>{app.orientationVenue}</p><p>{app.orientationInstructions}</p><a href={`${endpoint}?letter=1`}>Download invitation letter (PDF)</a></section>}
         {approvals.length > 0 && <section><h3>Current service access</h3>{approvals.map((a, i) => <p key={i}><strong>{label(a.vehicleClass)} · {label(a.service)}</strong><br/><small>{a.source === 'LEGACY_EXISTING' ? 'Existing rider access; not a document-verification badge.' : `Approved${a.validUntil ? ' until ' + new Date(a.validUntil).toLocaleDateString('en-PH') : ''}`}</small></p>)}</section>}

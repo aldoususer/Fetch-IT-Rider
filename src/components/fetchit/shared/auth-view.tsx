@@ -162,10 +162,10 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); setExistingAccount(false); }}
               >
                 {!lab.enabled && mode === 'signup' && <details className="ra-demo-options">
-                  <summary>Try the application with demo details</summary>
-                  <p className="text-sm">Explore every step with random Lingayen–Dagupan details and sample documents. Enter your own email and password below; verification and review emails go to your inbox.</p>
-                  <Button type="button" variant="outline" disabled={loading} onClick={() => { setForDemo(true); setName(`Demo ${['Mateo Dizon', 'Liza Cruz', 'Carlo Reyes', 'Ana Ramos', 'Paolo Soriano'][Math.floor(Math.random() * 5)]}`); }}>Use demo · Account</Button>
-                  <label className="ra-demo-option"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Register for demo. Sample documents cannot activate real rider services.</label>
+                  <summary>Autofill application steps</summary>
+                  <p className="text-sm">Fill steps faster with generated Lingayen–Dagupan details and sample documents. Use your own email for verification and application updates.</p>
+                  <Button type="button" variant="outline" disabled={loading} onClick={() => { setForDemo(true); setName(`${['Mateo Dizon', 'Liza Cruz', 'Carlo Reyes', 'Ana Ramos', 'Paolo Soriano'][Math.floor(Math.random() * 5)]}`); }}>Autofill account name</Button>
+                  <label className="ra-demo-option"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Enable autofill shortcuts. Submission and approval use the normal application process.</label>
                 </details>}
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Login</TabsTrigger>

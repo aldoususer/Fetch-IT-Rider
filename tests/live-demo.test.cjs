@@ -40,14 +40,17 @@ test('production sample assets and all document types remain visibly identified 
   }
 });
 
-test('demo completion emails are explicit and the server blocks real activation', () => {
+test('autofilled approvals use normal emails while historical demo messages retain their original meaning', () => {
   const load = loader({ NODE_ENV: 'production' }), { applicationMessage } = load('src/lib/application-mail.ts');
   const payload = { name: 'Demo Test Rider', applicationId: 'fixture', vehicle: 'TRICYCLE', services: 'DELIVERY / RIDE', demo: true };
   const complete = applicationMessage('ACTIVATED', payload);
   assert(complete.subject.startsWith('[DEMO]')); assert(!complete.text.includes('are activated')); assert(complete.text.includes('No real rider services'));
   assert(applicationMessage('CORRECTIONS', { ...payload, corrections: ['Replace only OR'] }).text.includes('Replace only OR'));
   assert(!applicationMessage('CORRECTIONS', { ...payload, demo: false }).subject.startsWith('[DEMO]'));
-  const { assertRealApplication } = load('src/lib/application-demo-policy.ts');
-  assert.throws(() => assertRealApplication({ isDemo: true }), e => e.status === 403);
-  assertRealApplication({ isDemo: false });
+  const approved = applicationMessage('ACTIVATED', { ...payload, demo: undefined, autofilled: true });
+  assert(approved.text.includes('are activated')); assert(!approved.subject.startsWith('[DEMO]'));
+  assert(!applicationMessage('ORIENTATION', { ...payload, demo: undefined, autofilled: true }).text.includes('demonstration appointment'));
+  const source = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/components/fetchit/rider/rider-application.tsx'), 'utf8');
+  assert(!source.includes('No real rider services were activated')); assert(!source.includes('FOR DEMO')); assert(source.includes('Autofill this step'));
+  assert(source.includes('if (working && canWork)'));
 });
