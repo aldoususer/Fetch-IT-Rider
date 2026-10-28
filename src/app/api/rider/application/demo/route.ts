@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/session';
 import { db } from '@/lib/db';
-import { applicationDetail, publicApplication } from '@/lib/rider-application';
+import { applicationDetail, publicApplication, lockApplication, applicationEvent } from '@/lib/rider-application';
 import { applicantRequest } from '@/lib/application-applicant-api';
 import { applicationErrorResponse, readApplicationBody } from '@/lib/application-staff-api';
 import { ApplicationError, SECTION_FIELDS, requiredDocuments, validateApplication, type Fields, type Review } from '@/lib/rider-application-policy';
@@ -22,7 +22,8 @@ async function handle(req: NextRequest) {
     const body = await readApplicationBody(req, 4096);
     if (body.version !== app.version) throw new ApplicationError('This application changed. Refresh before continuing.', 409);
     if (!['vehicle', 'details', 'documents', 'review'].includes(String(body.action))) throw new ApplicationError('Choose a demo step.');
-    await limitRequests('rider:demo-step', session.uid, 20, 3600_000);
+    // Each call now performs at most one upload; normal write/upload quotas still apply.
+    await limitRequests('rider:demo-part', session.uid, 80, 3600_000);
     async function normal(value: Record<string, unknown>) {
       const result = await applicantRequest(new NextRequest(new URL('/api/rider/application', req.url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: app!.version, ...value }) }), session!.uid);
       const data = await result.json(); if (!result.ok) throw new ApplicationError(data.error || 'Demo action failed.', result.status);
@@ -40,12 +41,27 @@ async function handle(req: NextRequest) {
       await normal({ action: 'save', fields, vehicleClass: app!.vehicleClass, services: app!.services });
       return true;
     }
-    async function fillDocuments(onlyMissing: boolean) {
-      const portrait = await demoPortrait();
-      for (const kind of requiredDocuments(app!.vehicleClass, app!.services, app!.fields as Fields)) {
+    function pendingDocuments() {
+      return requiredDocuments(app!.vehicleClass, app!.services, app!.fields as Fields).filter(kind => {
         const current = app!.documents.find(d => d.current && d.kind === kind);
-        if (app!.status === 'NEEDS_CORRECTION' && current && current.status !== 'NEEDS_CORRECTION') continue;
-        if (onlyMissing && current && current.status !== 'NEEDS_CORRECTION') continue;
+        return !current || current.status === 'NEEDS_CORRECTION';
+      });
+    }
+    async function archiveDraftDocuments() {
+      if (app!.status !== 'DRAFT' || !app!.documents.some(d => d.current)) return;
+      await db.$transaction(async tx => {
+        const locked = await lockApplication(tx, app!.id, app!.version);
+        if (!locked.isDemo || locked.status !== 'DRAFT') throw new ApplicationError('This application changed. Refresh before continuing.', 409);
+        await tx.riderApplicationDocument.updateMany({ where: { applicationId: locked.id, current: true }, data: { current: false } });
+        await tx.riderApplication.update({ where: { id: locked.id }, data: { version: { increment: 1 } } });
+        await applicationEvent(tx, locked.id, { id: session!.uid, name: locked.user.name, role: 'RIDER' }, 'DEMO_DOCUMENTS_REFRESHED');
+      }, { maxWait: 10000, timeout: 20000 });
+      app = await db.riderApplication.findUniqueOrThrow({ where: { userId: session!.uid }, include: applicationDetail });
+    }
+    async function fillOneDocument() {
+      const kind = pendingDocuments()[0];
+      if (kind) {
+        const portrait = ['PROFILE', 'LICENCE_FRONT', 'NBI'].includes(kind) ? await demoPortrait(app!.id) : undefined;
         const bytes = await demoDocument(kind, app!.fields as Fields, app!.vehicleClass, portrait), form = new FormData();
         form.set('file', new File([new Uint8Array(bytes)], `${kind}.${kind === 'PROFILE' ? 'png' : 'pdf'}`, { type: kind === 'PROFILE' ? 'image/png' : 'application/pdf' }));
         form.set('kind', kind); form.set('version', String(app!.version));
@@ -56,17 +72,24 @@ async function handle(req: NextRequest) {
         app = await db.riderApplication.findUniqueOrThrow({ where: { userId: session!.uid }, include: applicationDetail });
       }
     }
+    let demoContinue = false;
     if (body.action === 'vehicle') {
       if (app.status !== 'DRAFT') throw new ApplicationError('Vehicle selection is locked during corrections.', 409);
       await normal({ action: 'save', ...demoSelection(), fields: { ...app.fields as Fields, registrationStep: 'vehicle' } });
+      await archiveDraftDocuments();
     } else if (body.action === 'details') {
       await fillDetails();
-      if (app.documents.some(d => d.current)) await fillDocuments(false);
+      await archiveDraftDocuments();
     } else {
-      const changed = await fillDetails(true); await fillDocuments(!changed);
-      if (body.action === 'review') await normal({ action: 'save', vehicleClass: app.vehicleClass, services: app.services, fields: { ...app.fields as Fields, registrationStep: 'review' } });
+      const changed = await fillDetails(true);
+      // A preparation call never also uploads files. Subsequent calls resume this saved state.
+      if (changed) await archiveDraftDocuments();
+      else await fillOneDocument();
+      demoContinue = pendingDocuments().length > 0;
+      if (body.action === 'review' && !demoContinue) await normal({ action: 'save', vehicleClass: app.vehicleClass, services: app.services, fields: { ...app.fields as Fields, registrationStep: 'review' } });
     }
-    return NextResponse.json({ application: publicApplication(app), message: 'Sample data saved. Review and submit when ready.' });
+    const total = requiredDocuments(app.vehicleClass, app.services, app.fields as Fields).length;
+    return NextResponse.json({ application: publicApplication(app), demoContinue, demoProgress: { completed: total - pendingDocuments().length, total }, message: 'Sample data saved. Review and submit when ready.' });
   } catch (error) { return applicationErrorResponse(error); }
 }
 export const POST = withRequestLog('rider:application-demo:POST', handle);

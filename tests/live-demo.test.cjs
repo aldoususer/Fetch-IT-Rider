@@ -31,6 +31,7 @@ test('live demo endpoint requires own verified demo account, matching version an
 test('production sample assets and all document types remain visibly identified as demos', async () => {
   const load = loader({ NODE_ENV: 'production' }), data = load('src/lib/rider-demo-data.ts');
   const portrait = await data.demoPortrait(); assert(portrait.length > 1000 && portrait.length < 3 * 1024 * 1024);
+  assert((await data.demoPortrait('one-application')).equals(await data.demoPortrait('one-application')));
   const fields = data.demoFields('TRICYCLE', 'Demo Test Rider');
   const { DOCUMENT_LABELS } = load('src/lib/rider-application-policy.ts');
   for (const kind of Object.keys(DOCUMENT_LABELS).filter(k => k !== 'PROFILE')) {

@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
@@ -64,7 +64,8 @@ export async function demoDocument(kind: string, fields: Fields, vehicle: string
   page.drawText('Fetch-It application demo  |  1 / 1  |  Not for identity, legal or operational use', { x: 38, y: 44, font: regular, size: 8, color: muted });
   return Buffer.from(await pdf.save());
 }
-export async function demoPortrait() {
-  const name = pick(['mateo', 'liza', 'renato', 'ana', 'joel']);
+export async function demoPortrait(seed?: string) {
+  const names = ['mateo', 'liza', 'renato', 'ana', 'joel'];
+  const name = seed ? names[createHash('sha256').update(seed).digest()[0] % names.length] : pick(names);
   return fs.readFile(localDemoEnabled() ? path.join(localDemoDirectory(), 'portraits', `${name}.png`) : path.join(process.cwd(), 'assets', 'rider-demo', 'portraits', `${name}.png`));
 }
