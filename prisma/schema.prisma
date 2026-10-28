@@ -599,6 +599,7 @@ model RiderProfile {
 model RiderApplication {
   id                      String                     @id @default(cuid())
   userId                  String                     @unique
+  isDemo                  Boolean                    @default(false)
   status                  String                     @default("DRAFT")
   vehicleClass            VehicleClass
   services                BookingType[]

@@ -10,8 +10,8 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
   try {
     if (!canReviewApplications(actor.role)) throw new ApplicationError("Application review access required.", 403);
     if (!id) {
-      const q = req.nextUrl.searchParams.get("q")?.trim().slice(0, 100), status = req.nextUrl.searchParams.get("status"), cursor = req.nextUrl.searchParams.get("cursor");
-      const records = await db.riderApplication.findMany({ where: { ...(q ? { user: { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } } : {}), ...(status ? { status } : {}) }, select: { id: true, status: true, vehicleClass: true, services: true, updatedAt: true, assignedToId: true, user: { select: { name: true, email: true } } }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 26, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+      const q = req.nextUrl.searchParams.get("q")?.trim().slice(0, 100), status = req.nextUrl.searchParams.get("status"), cursor = req.nextUrl.searchParams.get("cursor"), mode = req.nextUrl.searchParams.get('mode');
+      const records = await db.riderApplication.findMany({ where: { ...(['demo', 'real'].includes(mode || '') ? { isDemo: mode === 'demo' } : {}), ...(q ? { user: { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } } : {}), ...(status ? { status } : {}) }, select: { id: true, isDemo: true, status: true, vehicleClass: true, services: true, updatedAt: true, assignedToId: true, user: { select: { name: true, email: true } } }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 26, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
       return NextResponse.json({ applications: records.slice(0, 25), nextCursor: records.length > 25 ? records[24].id : null });
     }
     let app = await db.riderApplication.findUnique({ where: { id }, include: applicationDetail });
@@ -25,7 +25,7 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
         return readApplicationDocument(app.id, doc);
       }
       if (req.nextUrl.searchParams.has("letter")) {
-        if (!app.orientationAt || !["ORIENTATION_SCHEDULED", "ASSESSED", "ACTIVE"].includes(app.status)) throw new ApplicationError("There is no current orientation invitation.", 404);
+        if (!app.orientationAt || !["ORIENTATION_SCHEDULED", "ASSESSED", "ACTIVE", "DEMO_COMPLETED"].includes(app.status)) throw new ApplicationError("There is no current orientation invitation.", 404);
         const email = await db.riderApplicationEmail.findFirst({ where: { applicationId: app.id, kind: "ORIENTATION" }, orderBy: { createdAt: "desc" } });
         if (!email) throw new ApplicationError("No invitation has been scheduled.", 404);
         return pdfResponse(await orientationLetter(email.payload as never));
@@ -38,14 +38,14 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
       if (!canActivateApplications(actor.role)) throw new ApplicationError("Admin access required.", 403);
       const at = new Date(String(body.orientationAt));
       if (!Number.isFinite(at.getTime()) || typeof body.venue !== "string" || body.venue.length > 2000 || typeof body.instructions !== "string" || body.instructions.length > 2000) throw new ApplicationError("Complete the schedule details.");
-      const p = { name: (app.fields as Record<string, string>).legalName, applicationId: app.id, vehicle: app.vehicleClass, services: app.services.join(" / "), date: at.toISOString(), venue: body.venue, instructions: body.instructions };
+      const p = { name: (app.fields as Record<string, string>).legalName, applicationId: app.id, vehicle: app.vehicleClass, services: app.services.join(" / "), date: at.toISOString(), venue: body.venue, instructions: body.instructions, demo: app.isDemo };
       return body.pdf ? pdfResponse(await orientationLetter(p)) : NextResponse.json(applicationMessage("ORIENTATION", p));
     }
     if (body.action === "email") {
       if (!canActivateApplications(actor.role)) throw new ApplicationError("Admin access required.", 403);
       const email = app.emails.find(e => e.id === body.emailId);
       if (!email) throw new ApplicationError("Email not found.", 404);
-      if (email.id !== app.emails.find(e => e.kind === email.kind)?.id || !({ CORRECTIONS: ["NEEDS_CORRECTION"], ORIENTATION: ["ORIENTATION_SCHEDULED", "ASSESSED", "ACTIVE"], ACTIVATED: ["ACTIVE"] } as Record<string, string[]>)[email.kind]?.includes(app.status)) throw new ApplicationError("This message has been superseded by the current application status or schedule.", 409);
+      if (email.id !== app.emails.find(e => e.kind === email.kind)?.id || !({ CORRECTIONS: ["NEEDS_CORRECTION"], ORIENTATION: ["ORIENTATION_SCHEDULED", "ASSESSED", "ACTIVE", "DEMO_COMPLETED"], ACTIVATED: ["ACTIVE", "DEMO_COMPLETED"] } as Record<string, string[]>)[email.kind]?.includes(app.status)) throw new ApplicationError("This message has been superseded by the current application status or schedule.", 409);
       if (email.status === "SENT") throw new ApplicationError("This invitation has already been sent.", 409);
       if (email.status === "UNCERTAIN" || (email.status === "SENDING" && email.startedAt && email.startedAt < new Date(Date.now() - 120000))) {
         if (body.confirmResend !== true) throw new ApplicationError("Check the recipient mailbox first, then explicitly confirm resending; the earlier message may have been delivered.", 409);
@@ -54,7 +54,7 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
       await sendApplicationEmail(email.id);
     } else {
       app = await reviewApplication(id, actor, body);
-      const kind = ({ corrections: "CORRECTIONS", schedule: "ORIENTATION", activate: "ACTIVATED" } as Record<string, string>)[String(body.action)];
+      const kind = ({ corrections: "CORRECTIONS", schedule: "ORIENTATION", activate: "ACTIVATED", "complete-demo": "ACTIVATED" } as Record<string, string>)[String(body.action)];
       const pending = kind ? app.emails.find(email => email.kind === kind && email.status === "PENDING") : undefined;
       if (pending) await sendApplicationEmail(pending.id);
     }

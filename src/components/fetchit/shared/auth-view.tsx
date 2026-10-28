@@ -9,6 +9,7 @@ import { useState } from "react";
 import { ArrowLeft, Loader2, LogIn, ShieldCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -28,11 +29,13 @@ import { FetchItLogo } from "./logo";
 import { useAppStore } from "@/lib/store";
 import { RegistrationProgress } from "../rider/registration-progress";
 import "../rider/rider-application.css";
+import { useLocalDemo } from '@/hooks/use-local-demo';
 
 const DEMO_EMAIL = "rider@fetchit.app";
 const DEMO_PASSWORD = "demo1234";
 
 export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
+  const lab = useLocalDemo();
   const setView = useAppStore((s) => s.setView);
   const setUser = useAppStore((s) => s.setUser);
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
@@ -42,10 +45,20 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
   const [password, setPassword] = useState("");
   // Signup-only fields
   const [name, setName] = useState("");
+  const [forDemo, setForDemo] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [existingAccount, setExistingAccount] = useState(false);
+  async function createDemoAccount() {
+    if (loading) return;
+    setLoading(true); setError(null);
+    try {
+      const response = await fetch('/api/local-demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'account' }) });
+      const data = await response.json(); if (!response.ok) throw Error(data.error || 'Demo account could not be created.');
+      setUser(data.user);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Demo account failed.'); } finally { setLoading(false); }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,6 +85,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
             email,
             password,
             role: "RIDER",
+            forDemo,
           }),
         });
         const data = await res.json();
@@ -122,6 +136,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
       <main className={`flex-1 px-4 py-8 ${mode === "signup" ? "ra ra-auth" : "flex items-center justify-center"}`}>
         <div className={`w-full mx-auto ${mode === "signup" ? "max-w-2xl" : "max-w-md"}`}>
           {mode === "signup" && <><div className="ra-intro"><p className="ra-eyebrow">BECOME A FETCH-IT RIDER</p><h1>Your road<br/>starts here.</h1><p>One application, from your first detail to your final review. Save your progress and come back anytime.</p></div><RegistrationProgress step={0}/></>}
+          {lab.enabled && <aside className="ra-card" style={{ borderColor: '#c87338' }}><strong>LOCAL DEMO LAB</strong><p>Fictional test accounts and Lingayen–Dagupan data. Documents and emails stay in this isolated lab.</p><Button type="button" disabled={loading} onClick={() => void createDemoAccount()}>Use demo · new random rider</Button><p><a href={lab.adminUrl} target="_blank" rel="noreferrer">Open connected demo Admin ↗</a></p></aside>}
           <Card className="border-2 shadow-sm">
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -145,6 +160,12 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 value={mode}
                 onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); setExistingAccount(false); }}
               >
+                {!lab.enabled && mode === 'signup' && <aside className="rounded-xl border border-orange-200 bg-orange-50 p-4 mb-4 space-y-3">
+                  <strong>Try the rider application — for demo</strong>
+                  <p className="text-sm">Explore every step with random Lingayen–Dagupan details and sample documents. Enter your own email and password below; verification and review emails go to your inbox.</p>
+                  <Button type="button" variant="outline" disabled={loading} onClick={() => { setForDemo(true); setName(`Demo ${['Mateo Dizon', 'Liza Cruz', 'Carlo Reyes', 'Ana Ramos', 'Paolo Soriano'][Math.floor(Math.random() * 5)]}`); }}>Use demo · Account</Button>
+                  <label className="flex gap-2 items-start text-sm"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Register for demo. Sample documents cannot activate real rider services.</label>
+                </aside>}
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Login</TabsTrigger>
                   <TabsTrigger value="signup">Sign up</TabsTrigger>
@@ -166,9 +187,8 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="password">Password</Label>
-                      <Input
+                      <PasswordInput
                         id="password"
-                        type="password"
                         autoComplete="current-password"
                         required
                         minLength={mode === "signup" ? PASSWORD_MIN_LENGTH : 1}
@@ -186,7 +206,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                       Sign in as rider
                     </Button>
                   </form>
-                  {(process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true") && <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  {!lab.enabled && (process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true") && <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
                     <div className="flex items-center gap-1.5 font-medium text-foreground mb-1.5">
                       <ShieldCheck className="h-3.5 w-3.5 text-primary" />
                       Demo account
@@ -243,7 +263,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="password-su">Create a password</Label>
-                      <Input id="password-su" type="password" autoComplete="new-password" required
+                      <PasswordInput id="password-su" autoComplete="new-password" required
                         minLength={PASSWORD_MIN_LENGTH} maxLength={128} value={password}
                         onChange={e => setPassword(e.target.value)} aria-describedby="signup-password-help"/>
                       <p id="signup-password-help" className="text-xs text-muted-foreground">{PASSWORD_REQUIREMENT}</p>
@@ -267,7 +287,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
               </Tabs>
             </CardContent>
             <CardFooter className="text-xs text-muted-foreground justify-center">
-              By continuing, you agree to Fetch-It's Terms of Service and Privacy Policy.
+              {lab.enabled ? 'Local demonstration only. This does not create a real rider registration or agreement.' : "By continuing, you agree to Fetch-It's Terms of Service and Privacy Policy."}
             </CardFooter>
           </Card>
         </div>

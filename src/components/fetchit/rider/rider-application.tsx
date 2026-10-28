@@ -6,18 +6,23 @@ import { RiderDashboard } from "./rider-dashboard";
 import { RegistrationProgress } from './registration-progress';
 import { REGISTRATION_STEPS, STEP_KEYS, resumeRegistration, registrationIssues, visibleFields, type RegistrationStep } from '@/lib/rider-registration';
 import "./rider-application.css";
+import { useLocalDemo } from '@/hooks/use-local-demo';
+import { useVisiblePoll } from '@/hooks/use-visible-poll';
 
 type Doc = { id: string; kind: string; current: boolean; status: string; reason?: string };
-type Application = { id: string; version: number; status: string; vehicleClass: string; services: string[]; fields: Fields; fieldReviews: Record<string, Review>; documents: Doc[]; emailVerifiedAt?: string; orientationAt?: string; orientationVenue?: string; orientationInstructions?: string; emails: { id: string; kind: string; status: string }[] };
+type Application = { isDemo: boolean; id: string; version: number; status: string; vehicleClass: string; services: string[]; fields: Fields; fieldReviews: Record<string, Review>; documents: Doc[]; emailVerifiedAt?: string; orientationAt?: string; orientationVenue?: string; orientationInstructions?: string; emails: { id: string; kind: string; status: string }[] };
 type Approval = { service: string; vehicleClass: string; source: string; validUntil?: string };
 const label = (s: string) => s.replaceAll("_", " ").toLowerCase().replace(/^./, c => c.toUpperCase());
 const endpoint = "/api/rider/application";
 export function RiderApplicationBoundary() {
+  const lab = useLocalDemo();
+  const [demoInbox, setDemoInbox] = useState<{ id: string; subject: string; text: string }[]>([]);
   const email = useAppStore(s => s.user?.email);
   const userId = useAppStore(s => s.user?.id), logout = useAppStore(s => s.logout);
   const [app, setApp] = useState<Application | null>(null), [approvals, setApprovals] = useState<Approval[]>([]), [fields, setFields] = useState<Fields>({}), [vehicle, setVehicle] = useState("MOTORCYCLE"), [services, setServices] = useState(["DELIVERY"]);
   const [working, setWorking] = useState(false), [canWork, setCanWork] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [code, setCode] = useState("");
   const [extra, setExtra] = useState(false);
+  const [confirmReal, setConfirmReal] = useState(false);
   const [resendUntil, setResendUntil] = useState(0), [resendRemaining, setResendRemaining] = useState(0);
   useEffect(() => {
     if (!resendUntil) return;
@@ -47,12 +52,34 @@ export function RiderApplicationBoundary() {
       if (!res.ok) throw new Error(data.error || "Application unavailable.");
       hydrate(data.application); setApprovals(data.approvals); setCanWork(data.canWork);
       if (initial) { setWorking(data.canWork); setStep(resumeRegistration(data.application)); }
+      else if (data.application.status === 'NEEDS_CORRECTION') { setNotice(''); setStep(resumeRegistration(data.application)); }
       else if (!["DRAFT", "NEEDS_CORRECTION"].includes(data.application.status)) setStep(4);
     } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Application unavailable."); } finally { if (!signal?.aborted) setLoading(false); }
   }, [hydrate]);
   useEffect(() => { const controller = new AbortController(); // Initial fetch updates state only after the response; abort prevents stale account data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (userId) void load(true, controller.signal); return () => controller.abort(); }, [userId, load]);
+  useVisiblePoll((lab.enabled || app?.isDemo) && app && !editable && !working && !busy ? userId || '' : '', signal => load(false, signal));
+  async function fillDemoStep() {
+    if (!app || busy) return;
+    if (!lab.enabled && step === 0) {
+      if (!app.emailVerifiedAt) await perform('send-code');
+      else setNotice('Your own email is verified. Continue to try the demo steps.');
+      return;
+    }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      let version = app.version;
+      if (dirty) { const saved = await request({ action: 'save', fields, vehicleClass: vehicle, services }); version = saved.application.version; }
+      const response = await fetch(lab.enabled ? '/api/local-demo' : `${endpoint}/demo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: ['verify', 'vehicle', 'details', 'documents', 'review'][step], version }) });
+      const data = await response.json(); if (!response.ok) throw Error(data.error || 'Demo step failed.');
+      hydrate(data.application); setNotice('Demo data saved. Review it, then continue normally.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Demo step failed.'); } finally { setBusy(false); }
+  }
+  async function showLocalInbox() {
+    try { const response = await fetch('/api/local-demo?inbox=1', { cache: 'no-store' }); const data = await response.json(); if (!response.ok) throw Error('Local inbox unavailable.'); setDemoInbox(data.messages); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Local inbox unavailable.'); }
+  }
 
   async function request(body: Record<string, unknown>) {
     const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: app?.version, ...body }) });
@@ -73,6 +100,7 @@ export function RiderApplicationBoundary() {
       setNotice(action === "submit" ? "Application submitted. We will notify you about the review." : action === "send-code" ? "Code sent. Check your inbox and spam folder." : action === "verify-code" ? "Email verified." : "Draft saved.");
       if (action === "verify-code") { setCode(""); setStep(1); }
       if (action === "submit") setStep(4);
+      if (action === 'demo-enable' || action === 'demo-reset') { setStep(1); setConfirmReal(false); setNotice(action === 'demo-enable' ? 'Demo started. Your verified email will receive real demo review messages.' : 'Real application started. Upload your actual documents for a fresh review.'); }
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save your application."); } finally { setBusy(false); }
   }
   async function upload(kind: string, file?: File) {
@@ -109,6 +137,9 @@ export function RiderApplicationBoundary() {
   const vehicleName = vehicle === "SEDAN" ? "Car" : label(vehicle);
   return <main className="ra"><header className="ra-header"><a href="/" aria-label="Fetch-It home"><img src="/rider-logo.png" alt="" width="44" height="44"/><strong>Fetch-It <span>Rider registration</span></strong></a><button disabled={busy} onClick={() => { if (editable) void goTo(step, false, true); else void logout(); }}>{editable ? "Save & exit" : "Sign out"}</button></header>
     <div className="ra-intro"><p className="ra-eyebrow">YOUR NEXT CHAPTER STARTS HERE</p><h1>{editable ? <>Your road.<br/>One step at a time.</> : <>Your application,<br/>at a glance.</>}</h1><p>{editable ? "One application. A clear checklist. Pick up where you left off." : "Follow your review, orientation and service approvals here."}</p><div className="ra-status">{label(app?.status || "DRAFT")}</div></div>
+    {lab.enabled && <aside className="ra-card" style={{ borderColor: '#c87338' }}><strong>LOCAL DEMO LAB · Lingayen–Dagupan</strong><p>Isolated test data. Sample documents are not valid credentials. Emails are captured here and never sent.</p><div className="ra-inline">{editable && <button disabled={busy || step === 1 && app?.status !== 'DRAFT'} onClick={() => void fillDemoStep()}>{busy ? 'Preparing demo…' : `Use demo · ${REGISTRATION_STEPS[step]}`}</button>}<button onClick={() => void showLocalInbox()}>Local email inbox</button><a href={lab.adminUrl} target="_blank" rel="noreferrer">Open connected Admin ↗</a></div>{demoInbox.map(mail => <details key={mail.id}><summary>{mail.subject}</summary><p style={{ whiteSpace: 'pre-wrap' }}>{mail.text}</p></details>)}</aside>}
+    {!lab.enabled && app?.isDemo && <aside className="ra-card" style={{ borderColor: '#c87338' }}><strong>FOR DEMO · Lingayen–Dagupan</strong><p>Try each application step with sample data. Your application is connected to the live reviewing team. Verification, correction and orientation messages are sent to <strong>{email}</strong>; review emails are labeled DEMO.</p><p>Sample documents cannot activate real rider services.</p>{editable && <button disabled={busy || step === 0 && !app.emailVerifiedAt && resendRemaining > 0 || step === 1 && app.status !== 'DRAFT'} onClick={() => void fillDemoStep()}>{busy ? 'Preparing demo…' : `Use demo · ${REGISTRATION_STEPS[step]}`}</button>}<details><summary>Ready to apply for real?</summary><p>Keep this account and verified email. Demo uploads and reviews will be archived; a real application needs fresh details and documents.</p><label className="ra-inline"><input type="checkbox" checked={confirmReal} onChange={e => setConfirmReal(e.target.checked)}/>I want to start a real application with fresh documents.</label><button disabled={busy || !confirmReal} onClick={() => void perform('demo-reset')}>Start real application</button></details></aside>}
+    {!lab.enabled && app && !app.isDemo && app.status === 'DRAFT' && !canWork && !app.documents.some(d => d.current) && <aside className="ra-card"><strong>Want to try the application first?</strong><p>Use demo details and sample documents, with real review emails to your own verified address.</p><button disabled={busy || !app.emailVerifiedAt} onClick={() => void perform('demo-enable')}>Use demo · start application demo</button>{!app.emailVerifiedAt && <p>Verify your email to unlock the demo.</p>}</aside>}
     {error && <div role="alert" className="ra-error"><p>{error}</p><button disabled={busy} onClick={() => void load()}>Refresh saved application</button></div>}{notice && <p role="status" className="ra-notice">{notice}</p>}
     {!app && <button onClick={() => void load(true)}>Retry loading</button>}
     {canWork && <section className="ra-card"><h2>Your current service access</h2>{approvals.map((a, i) => <p key={i}><strong>{label(a.vehicleClass)} · {label(a.service)}</strong><br/><small>{a.source === "LEGACY_EXISTING" ? "Existing rider access preserved. This is not a document-verification badge." : `Approved${a.validUntil ? " until " + new Date(a.validUntil).toLocaleDateString("en-PH") : ""}`}</small></p>)}<button className="ra-primary" onClick={() => setWorking(true)}>Open rider dashboard</button></section>}
@@ -133,7 +164,7 @@ export function RiderApplicationBoundary() {
         <section className="ra-card"><div className="ra-section-heading"><h3>Documents</h3><button disabled={busy} onClick={() => void goTo(3)}>{editable ? "Edit documents" : "View documents"}</button></div><ul className="ra-doc-summary">{documents.map(kind => <li key={kind}><span>{DOCUMENT_LABELS[kind]}</span><span>{app.documents.some(d => d.current && d.kind === kind && d.status !== "NEEDS_CORRECTION") ? "✓ Uploaded" : "Needs attention"}</span></li>)}</ul></section>
       </>}
       {app.orientationAt && <section className="ra-card"><h2>Your orientation</h2><p><strong>{new Date(app.orientationAt).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "full", timeStyle: "short" })} — Philippine time</strong></p><p>{app.orientationVenue}</p><p>{app.orientationInstructions}</p><a className="ra-link-button" href={`${endpoint}?letter=1`}>Download invitation letter (PDF)</a><p className="ra-help">Document acceptance does not activate your account. Attend orientation and complete the required assessments.</p></section>}
-      {!editable && <section className="ra-card"><h2>Your next step</h2><p>{app.status === "ACTIVE" ? "Your approved services are listed above. Other requested services may still be awaiting activation." : app.status === "ORIENTATION_SCHEDULED" ? "Attend your scheduled orientation. Your reviewer will record attendance and assessment results." : "Your application is with the reviewing team. Check back here for updates and correction requests."}</p><button disabled={busy} onClick={() => void load()}>Check application status</button></section>}
+      {!editable && <section className="ra-card"><h2>Your next step</h2><p>{app.status === "DEMO_COMPLETED" ? "Your application demo is complete. No real rider services were activated. You can start a real application above when ready." : app.status === "ACTIVE" ? "Your approved services are listed above. Other requested services may still be awaiting activation." : app.status === "ORIENTATION_SCHEDULED" ? "Attend your scheduled orientation. Your reviewer will record attendance and assessment results." : "Your application is with the reviewing team. Check back here for updates and correction requests."}</p><button disabled={busy} onClick={() => void load()}>Check application status</button></section>}
       {editable && <footer className="ra-actions"><div className="ra-action-secondary">{step > 0 && <button disabled={busy} onClick={() => void goTo((step - 1) as RegistrationStep)}>Back</button>}<button disabled={busy} onClick={() => void goTo(step)}>Save draft</button></div>{step < 4 ? <button className="ra-primary" disabled={busy || step === 0 && !app.emailVerifiedAt} onClick={() => void goTo((step + 1) as RegistrationStep, true)}>Save & continue →</button> : <button className="ra-primary" disabled={busy || issues.length > 0} onClick={() => void perform("submit")}>{app.status === "NEEDS_CORRECTION" ? "Resubmit corrections" : "Submit application"}</button>}</footer>}
       <p className="ra-help">Your documents are private and available only to you and authorized reviewers. Continue or save a draft to keep changes; uploads are saved immediately.</p>
     </>}

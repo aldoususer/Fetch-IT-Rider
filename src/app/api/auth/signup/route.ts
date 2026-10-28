@@ -74,7 +74,7 @@ async function handlePOST(req: NextRequest) {
         authIdentities: { create: { provider: "PASSWORD", providerUserId: normalizedEmail, passwordHash: hashPassword(password) } },
         riderProfile: { create: { vehicleClass: initialVehicle, vehiclePlate: vehiclePlate ?? null } },
         riderPresence: { create: {} },
-        riderApplication: { create: { vehicleClass: initialVehicle, services: ["DELIVERY"], fields: { legalName: name.trim(), mobile: phone ?? "", plateNumber: vehiclePlate ?? "", registrationStep: "vehicle" } } },
+        riderApplication: { create: { isDemo: body.forDemo === true, vehicleClass: initialVehicle, services: ["DELIVERY"], fields: { legalName: name.trim(), mobile: phone ?? "", plateNumber: vehiclePlate ?? "", registrationStep: "vehicle" } } },
       },
       include: { riderProfile: true, riderPresence: true },
     });

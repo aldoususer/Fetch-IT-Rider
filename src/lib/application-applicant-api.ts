@@ -9,6 +9,7 @@ import { applicationErrorResponse, pdfResponse, readApplicationBody } from "./ap
 import { applicationTransport, orientationLetter } from "./application-mail";
 import { limitRequests, RateLimitError, safeErrorCode } from "./request-guard";
 import { sessionSecret } from "./session-secret";
+import { changeApplicationDemoMode } from './application-demo-mode';
 
 const codeHash = (id: string, code: string) => createHmac("sha256", sessionSecret()).update(JSON.stringify(["rider-verify", id, code])).digest("hex");
 export async function applicantRequest(req: NextRequest, userId: string) {
@@ -18,7 +19,7 @@ export async function applicantRequest(req: NextRequest, userId: string) {
       const docId = req.nextUrl.searchParams.get("document");
       if (docId) { const doc = app.documents.find(d => d.id === docId); if (!doc) throw new ApplicationError("Document not found.", 404); return readApplicationDocument(app.id, doc); }
       if (req.nextUrl.searchParams.has("letter")) {
-        if (!app.orientationAt || !["ORIENTATION_SCHEDULED", "ASSESSED", "ACTIVE"].includes(app.status)) throw new ApplicationError("There is no current orientation invitation.", 404);
+        if (!app.orientationAt || !["ORIENTATION_SCHEDULED", "ASSESSED", "ACTIVE", "DEMO_COMPLETED"].includes(app.status)) throw new ApplicationError("There is no current orientation invitation.", 404);
         const email = await db.riderApplicationEmail.findFirst({ where: { applicationId: app.id, kind: "ORIENTATION" }, orderBy: { createdAt: "desc" } }); if (!email) throw new ApplicationError("Your orientation is not scheduled yet.", 404);
         return pdfResponse(await orientationLetter(email.payload as never));
       }
@@ -98,7 +99,8 @@ export async function applicantRequest(req: NextRequest, userId: string) {
           return valid;
         });
         if (!correct) throw new ApplicationError("Code is incorrect, expired, or already used. Request another code when needed.");
-      } else if (body.action === "save" || body.action === "submit") await saveApplication(userId, { ...body, submit: body.action === "submit" });
+      } else if (body.action === 'demo-enable' || body.action === 'demo-reset') await changeApplicationDemoMode(userId, body.version, body.action === 'demo-enable');
+      else if (body.action === "save" || body.action === "submit") await saveApplication(userId, { ...body, submit: body.action === "submit" });
       else throw new ApplicationError("Choose a valid application action.");
     }
     app = await db.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: applicationDetail });
