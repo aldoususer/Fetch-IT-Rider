@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID, randomInt, createHmac, timingSafeEqual } from "node:crypto";
 import { db } from "./db";
-import { ensureApplication, publicApplication, applicationDetail, saveApplication, riderApprovals, lockApplication, requireEditable, applicationEvent } from "./rider-application";
+import { ensureApplication, publicApplication, applicationDetail, saveApplication, removeApplicationDocument, riderApprovals, lockApplication, requireEditable, applicationEvent } from "./rider-application";
 import { ApplicationError, DOCUMENT_LABELS, requiredDocuments, type Fields } from "./rider-application-policy";
 import { readApplicationDocument } from "./application-storage";
 import { storeApplicationDocument, removeUnusedApplicationDocument } from "./application-upload";
@@ -99,6 +99,9 @@ export async function applicantRequest(req: NextRequest, userId: string) {
           return valid;
         });
         if (!correct) throw new ApplicationError("Code is incorrect, expired, or already used. Request another code when needed.");
+      } else if (body.action === 'remove-document') {
+        const saved = await removeApplicationDocument(userId, body.version, body.documentId);
+        return NextResponse.json({ application: publicApplication(saved) });
       } else if (body.action === 'demo-enable' || body.action === 'demo-reset') await changeApplicationDemoMode(userId, body.version, body.action === 'demo-enable');
       else if (body.action === "save" || body.action === "submit") await saveApplication(userId, { ...body, submit: body.action === "submit" });
       else throw new ApplicationError("Choose a valid application action.");

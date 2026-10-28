@@ -133,6 +133,16 @@ export function RiderApplicationBoundary() {
       if (!res.ok) throw new Error(result.error || "Upload failed."); hydrate(result.application); setNotice(`${DOCUMENT_LABELS[kind]} uploaded for review.`);
     } catch (e) { setError(e instanceof Error ? e.message : "Upload failed."); } finally { setBusy(false); }
   }
+  async function removeDocument(doc: Doc) {
+    if (!app || busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const version = dirty ? (await request({ action: "save", fields, vehicleClass: vehicle, services })).application.version : app.version;
+      const result = await request({ action: "remove-document", documentId: doc.id, version });
+      const restored = result.application.documents.some((d: Doc) => d.current && d.kind === doc.kind);
+      setNotice(`${DOCUMENT_LABELS[doc.kind]} upload removed.${restored ? " The previous correction and feedback are restored." : " You can choose another file."}`);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not remove this upload."); } finally { setBusy(false); }
+  }
   async function goTo(next: RegistrationStep, validate = false, exit = false) {
     if (!app || busy) return;
     if (next > 0 && !app.emailVerifiedAt) { setError("Verify your email to continue."); return; }
@@ -173,7 +183,7 @@ export function RiderApplicationBoundary() {
       {step === 3 && <section className="ra-card"><h3>Your {vehicleName.toLowerCase()} checklist</h3><p className="ra-help">Readable JPEG, PNG, WebP or unencrypted PDF, up to 3 MB. Profile photos must be images. Each upload is saved immediately. During corrections, replace only flagged items.</p><p className="ra-document-count">{documents.filter(kind => app.documents.some(d => d.current && d.kind === kind && d.status !== "NEEDS_CORRECTION")).length} of {documents.length} required documents uploaded</p>
         {[...documents, ...app.documents.filter(d => d.current && !documents.includes(d.kind)).map(d => d.kind), ...(extra ? ["MEDICAL", "DRUG_TEST"].filter(k => !app.documents.some(d => d.current && d.kind === k)) : [])].filter((k,i,a) => a.indexOf(k) === i).map(kind => {
           const doc = app.documents.find(d => d.current && d.kind === kind), locked = !editable || app.status === "NEEDS_CORRECTION" && (doc ? doc.status !== "NEEDS_CORRECTION" : !documents.includes(kind));
-          return <div className="ra-document" key={kind}><div><strong>{DOCUMENT_LABELS[kind]}</strong><span className="ra-status">{doc ? label(doc.status) : "Not uploaded"}</span></div>{doc?.reason && <p className="ra-error">{doc.reason}</p>}{doc && <a href={`${endpoint}?document=${doc.id}`} target="_blank" rel="noreferrer">View current document ↗</a>}{!locked && <label>{doc ? "Replace document" : "Upload document"}<input type="file" accept={kind === "PROFILE" ? "image/jpeg,image/png,image/webp" : "image/jpeg,image/png,image/webp,application/pdf"} disabled={busy} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; void upload(kind, file); }}/></label>}</div>;
+          return <div className="ra-document" key={kind}><div><strong>{DOCUMENT_LABELS[kind]}</strong><span className="ra-status">{doc ? label(doc.status) : "Not uploaded"}</span></div>{doc?.reason && <p className="ra-error">{doc.reason}</p>}{doc && <div className="ra-document-file"><a href={`${endpoint}?document=${doc.id}`} target="_blank" rel="noreferrer">View current document ↗</a>{editable && doc.status === "PENDING" && <button type="button" className="ra-remove-document" disabled={busy} aria-label={`Remove ${DOCUMENT_LABELS[kind]} upload`} title="Remove uploaded file" onClick={() => void removeDocument(doc)}><span aria-hidden="true">×</span></button>}</div>}{!locked && <label>{doc ? "Replace document" : "Upload document"}<input type="file" accept={kind === "PROFILE" ? "image/jpeg,image/png,image/webp" : "image/jpeg,image/png,image/webp,application/pdf"} disabled={busy} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; void upload(kind, file); }}/></label>}</div>;
         })}{editable && <button onClick={() => setExtra(!extra)}>{extra ? "Hide additional slots" : "Additional medical / drug-test documents, if requested"}</button>}</section>}
       {step === 4 && <>
         {editable && <section className="ra-card"><h3>{issues.length ? "A few things to finish" : "Ready for your review"}</h3><p>{issues.length ? "Complete these requirements before submitting. Select an item to return to its step." : "Check your details below. Submitting sends your application to the reviewing team."}</p>{issues.length > 0 && <ul className="ra-missing">{issues.map((issue, index) => <li key={index}><button disabled={busy} onClick={() => void goTo(issue.step)}>{issue.message} <span aria-hidden="true">↗</span></button></li>)}</ul>}</section>}

@@ -32,6 +32,25 @@ export async function applicationEvent(tx: Prisma.TransactionClient, id: string,
 export function requireEditable(app: RiderApplication) {
   if (!["DRAFT", "NEEDS_CORRECTION"].includes(app.status)) throw new ApplicationError("This application is locked while it is being reviewed.", 409);
 }
+export async function removeApplicationDocument(userId: string, version: unknown, documentId: unknown) {
+  const initial = await ensureApplication(userId);
+  return db.$transaction(async tx => {
+    const app = await lockApplication(tx, initial.id, version);
+    requireEditable(app);
+    const doc = app.documents.find(d => d.id === documentId && d.current);
+    if (!doc) throw new ApplicationError("Current document not found.", 404);
+    if (doc.status !== "PENDING") throw new ApplicationError("Only unreviewed uploads can be removed. Replace documents marked Needs correction.", 409);
+    // Archive the accidental upload; keep private history and any required correction.
+    const flagged = app.status === "NEEDS_CORRECTION"
+      ? app.documents.filter(d => !d.current && d.kind === doc.kind && d.status === "NEEDS_CORRECTION").sort((a, b) => b.version - a.version)[0]
+      : undefined;
+    await tx.riderApplicationDocument.update({ where: { id: doc.id }, data: { current: false } });
+    if (flagged) await tx.riderApplicationDocument.update({ where: { id: flagged.id }, data: { current: true } });
+    await tx.riderApplication.update({ where: { id: app.id }, data: { version: { increment: 1 } } });
+    await applicationEvent(tx, app.id, { id: userId, name: app.user.name, role: "RIDER" }, "DOCUMENT_REMOVED", { documentId: doc.id, kind: doc.kind, ...(flagged ? { restoredDocumentId: flagged.id } : {}) });
+    return tx.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: detail });
+  }, { maxWait: 10000, timeout: 20000 });
+}
 export async function saveApplication(userId: string, body: Record<string, unknown>) {
   const initial = await ensureApplication(userId);
   return db.$transaction(async tx => {
