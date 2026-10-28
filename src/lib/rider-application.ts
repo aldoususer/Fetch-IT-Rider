@@ -14,6 +14,8 @@ export function publicApplication(app: ApplicationDetail, staff = false) {
   return { ...app, documents: app.documents.map(({ pathname: _path, ...doc }) => doc), emails: app.emails.map(({ payload: _payload, recipient: _recipient, ...email }) => email), events: staff ? app.events : app.events.map(({ details: _details, ...event }) => event) };
 }
 export async function ensureApplication(userId: string) {
+  const existing = await db.riderApplication.findUnique({ where: { userId, user: { is: { role: "RIDER", isBanned: false } } }, include: detail });
+  if (existing) return existing;
   const user = await db.user.findUnique({ where: { id: userId }, include: { riderProfile: true } });
   if (!user || user.role !== "RIDER" || user.isBanned) throw new ApplicationError("Rider account unavailable.", 403);
   return db.riderApplication.upsert({ where: { userId }, update: {}, create: { userId, vehicleClass: ["MOTORCYCLE", "TRICYCLE", "SEDAN"].includes(user.riderProfile?.vehicleClass ?? "") ? user.riderProfile!.vehicleClass : "MOTORCYCLE", services: ["DELIVERY"], fields: { legalName: user.name, mobile: user.phone ?? "", plateNumber: user.riderProfile?.vehiclePlate ?? "" } }, include: detail });
@@ -32,10 +34,11 @@ export async function applicationEvent(tx: Prisma.TransactionClient, id: string,
 export function requireEditable(app: RiderApplication) {
   if (!["DRAFT", "NEEDS_CORRECTION"].includes(app.status)) throw new ApplicationError("This application is locked while it is being reviewed.", 409);
 }
-export async function removeApplicationDocument(userId: string, version: unknown, documentId: unknown) {
-  const initial = await ensureApplication(userId);
+export async function removeApplicationDocument(userId: string, version: unknown, documentId: unknown, initial?: ApplicationDetail) {
+  const starting = initial ?? await ensureApplication(userId);
+  if (starting.userId !== userId) throw new ApplicationError("Application unavailable.", 403);
   return db.$transaction(async tx => {
-    const app = await lockApplication(tx, initial.id, version);
+    const app = await lockApplication(tx, starting.id, version);
     requireEditable(app);
     const doc = app.documents.find(d => d.id === documentId && d.current);
     if (!doc) throw new ApplicationError("Current document not found.", 404);
@@ -51,10 +54,11 @@ export async function removeApplicationDocument(userId: string, version: unknown
     return tx.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: detail });
   }, { maxWait: 10000, timeout: 20000 });
 }
-export async function saveApplication(userId: string, body: Record<string, unknown>) {
-  const initial = await ensureApplication(userId);
+export async function saveApplication(userId: string, body: Record<string, unknown>, initial?: ApplicationDetail) {
+  const starting = initial ?? await ensureApplication(userId);
+  if (starting.userId !== userId) throw new ApplicationError("Application unavailable.", 403);
   return db.$transaction(async tx => {
-    const app = await lockApplication(tx, initial.id, body.version); requireEditable(app);
+    const app = await lockApplication(tx, starting.id, body.version); requireEditable(app);
     const fields = normalizeFields(body.fields);
     validateSelection(body.vehicleClass, body.services);
     const vehicleClass = body.vehicleClass as "MOTORCYCLE" | "TRICYCLE" | "SEDAN", services = body.services as ("DELIVERY" | "RIDE")[];
@@ -74,10 +78,10 @@ export async function saveApplication(userId: string, body: Record<string, unkno
       }
       if (Object.values(reviews).some(review => review.status === "NEEDS_CORRECTION")) throw new ApplicationError("Correct each flagged section before resubmitting.");
     }
-    const saved = await tx.riderApplication.update({ where: { id: app.id }, data: { fields, fieldReviews: reviews as Prisma.InputJsonValue, vehicleClass, services, version: { increment: 1 }, ...(body.submit ? { status: "SUBMITTED", submittedAt: new Date(), recommendedAt: null, recommendedById: null } : {}) }, include: detail });
+    await tx.riderApplication.update({ where: { id: app.id }, data: { fields, fieldReviews: reviews as Prisma.InputJsonValue, vehicleClass, services, version: { increment: 1 }, ...(body.submit ? { status: "SUBMITTED", submittedAt: new Date(), recommendedAt: null, recommendedById: null } : {}) } });
     await applicationEvent(tx, app.id, { id: userId, name: app.user.name, role: "RIDER" }, body.submit ? "SUBMITTED" : "DRAFT_SAVED");
-    return saved;
-  });
+    return tx.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: detail });
+  }, { maxWait: 10000, timeout: 20000 });
 }
 export function applicationReady(app: ApplicationDetail) {
   const f = app.fields as Fields; validateApplication(app.vehicleClass, app.services, f);

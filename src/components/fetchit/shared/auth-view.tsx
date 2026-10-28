@@ -28,6 +28,7 @@ import {
 import { FetchItLogo } from "./logo";
 import { useAppStore } from "@/lib/store";
 import { RegistrationProgress } from "../rider/registration-progress";
+import { ApplicationPopup } from "../rider/application-popup";
 import "../rider/rider-application.css";
 import { useLocalDemo } from '@/hooks/use-local-demo';
 
@@ -140,7 +141,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
           <Card className="border-2 shadow-sm">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="grid place-items-center h-10 w-10 rounded-lg bg-primary/10 text-primary">
+                <div className="grid place-items-center h-10 w-10 shrink-0 rounded-lg bg-primary/10 text-primary">
                   {mode === "login" ? <LogIn className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
                 </div>
                 <div>
@@ -160,12 +161,12 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 value={mode}
                 onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); setExistingAccount(false); }}
               >
-                {!lab.enabled && mode === 'signup' && <aside className="rounded-xl border border-orange-200 bg-orange-50 p-4 mb-4 space-y-3">
-                  <strong>Try the rider application — for demo</strong>
+                {!lab.enabled && mode === 'signup' && <details className="ra-demo-options">
+                  <summary>Try the application with demo details</summary>
                   <p className="text-sm">Explore every step with random Lingayen–Dagupan details and sample documents. Enter your own email and password below; verification and review emails go to your inbox.</p>
                   <Button type="button" variant="outline" disabled={loading} onClick={() => { setForDemo(true); setName(`Demo ${['Mateo Dizon', 'Liza Cruz', 'Carlo Reyes', 'Ana Ramos', 'Paolo Soriano'][Math.floor(Math.random() * 5)]}`); }}>Use demo · Account</Button>
-                  <label className="flex gap-2 items-start text-sm"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Register for demo. Sample documents cannot activate real rider services.</label>
-                </aside>}
+                  <label className="ra-demo-option"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Register for demo. Sample documents cannot activate real rider services.</label>
+                </details>}
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Login</TabsTrigger>
                   <TabsTrigger value="signup">Sign up</TabsTrigger>
@@ -198,9 +199,6 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                           placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                       />
                     </div>
-                    {error && (
-                      <p role="alert" className="text-sm text-destructive">{error}</p>
-                    )}
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
                       Sign in as rider
@@ -268,20 +266,14 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                         onChange={e => setPassword(e.target.value)} aria-describedby="signup-password-help"/>
                       <p id="signup-password-help" className="text-xs text-muted-foreground">{PASSWORD_REQUIREMENT}</p>
                     </div>
-                    <p className="ra-help">Already started? Sign in to continue your saved application. Vehicle information and documents come in the next steps.</p>
-
-                    {error && (
-                      <p role="alert" className="text-sm text-destructive">{error}</p>
-                    )}
-                    {existingAccount && <div className="rounded-lg border p-3 text-sm"><p>Your account may already be created. Sign in with the same email and password to continue.</p><Button type="button" variant="outline" className="mt-2 w-full" onClick={() => { setMode("login"); setError(null); setExistingAccount(false); }}>Sign in & continue application</Button></div>}
-                    <Button type="submit" className="w-full" disabled={loading}>
+                    <div className="ra-auth-actions"><Button type="submit" className="ra-auth-submit w-full" disabled={loading}>
                       {loading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <UserPlus className="h-4 w-4" />
                       )}
                       Create account & continue
-                    </Button>
+                    </Button></div>
                   </form>
                 </TabsContent>
               </Tabs>
@@ -292,6 +284,9 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
           </Card>
         </div>
       </main>
+      <ApplicationPopup open={!!error} onClose={() => { setError(null); setExistingAccount(false); }} title={existingAccount ? 'Continue your existing application' : 'Please check this'} description={existingAccount ? 'An account already uses this email.' : 'Check your details and try again.'}>
+        {existingAccount ? <><p>Sign in with the same email and password to continue your saved application.</p><Button onClick={() => { setMode('login'); setError(null); setExistingAccount(false); }}>Sign in & continue application</Button></> : <p role="alert">{error}</p>}
+      </ApplicationPopup>
     </div>
   );
 }

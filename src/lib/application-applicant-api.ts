@@ -23,8 +23,7 @@ export async function applicantRequest(req: NextRequest, userId: string) {
         const email = await db.riderApplicationEmail.findFirst({ where: { applicationId: app.id, kind: "ORIENTATION" }, orderBy: { createdAt: "desc" } }); if (!email) throw new ApplicationError("Your orientation is not scheduled yet.", 404);
         return pdfResponse(await orientationLetter(email.payload as never));
       }
-      const approvals = await riderApprovals(userId);
-      const activeJobs = await db.booking.count({ where: { riderId: userId, status: { in: ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } } });
+      const [approvals, activeJobs] = await Promise.all([riderApprovals(userId), db.booking.count({ where: { riderId: userId, status: { in: ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } } })]);
       return NextResponse.json({ application: publicApplication(app), approvals, canWork: approvals.length > 0 || activeJobs > 0 });
     }
     await limitRequests("rider:application-write", userId, 60, 60 * 60_000);
@@ -47,21 +46,23 @@ export async function applicantRequest(req: NextRequest, userId: string) {
       await limitRequests("rider:application-upload", userId, 35, 60 * 60_000);
       const saved = await storeApplicationDocument(app.id, kind, Buffer.from(await file.arrayBuffer()));
       try {
-        await db.$transaction(async tx => {
+        app = await db.$transaction(async tx => {
           const locked = await lockApplication(tx, app.id, version); requireEditable(locked);
           const old = locked.documents.find(d => d.kind === kind && d.current);
           if (locked.status === "NEEDS_CORRECTION" && (old ? old.status !== "NEEDS_CORRECTION" : !requiredDocuments(locked.vehicleClass, locked.services, locked.fields as Fields).includes(kind))) throw new ApplicationError("Only flagged or newly required documents can be uploaded.");
           if (locked.documents.filter(d => d.kind === kind).length >= 12) throw new ApplicationError("Too many replacements. Ask the reviewing team for help.");
           await tx.riderApplicationDocument.updateMany({ where: { applicationId: app.id, kind, current: true }, data: { current: false } });
           await tx.riderApplicationDocument.create({ data: { applicationId: app.id, kind, version: Math.max(0, ...locked.documents.filter(d => d.kind === kind).map(d => d.version)) + 1, ...saved, issuedAt, expiresAt } });
-          await tx.riderApplication.update({ where: { id: app.id }, data: { version: { increment: 1 } } });
+          await tx.riderApplication.update({ where: { id: app.id }, data: { version: { increment: 1 }, fields: { ...locked.fields as Fields, registrationStep: 'documents' } } });
           await applicationEvent(tx, app.id, { id: userId, name: app.user.name, role: "RIDER" }, "DOCUMENT_UPLOADED", { kind });
-        });
+          return tx.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: applicationDetail });
+        }, { maxWait: 10000, timeout: 20000 });
       } catch (error) {
         // Preserve possible committed uploads after an uncertain transaction result.
         try { if (!await db.riderApplicationDocument.findFirst({ where: { pathname: saved.pathname } })) await removeUnusedApplicationDocument(saved.pathname); } catch { /* Reconcile conservatively. */ }
         throw error;
       }
+      return NextResponse.json({ application: publicApplication(app) });
     } else {
       const body = await readApplicationBody(req, 16000);
       if (body.action === "send-code") {
@@ -100,10 +101,13 @@ export async function applicantRequest(req: NextRequest, userId: string) {
         });
         if (!correct) throw new ApplicationError("Code is incorrect, expired, or already used. Request another code when needed.");
       } else if (body.action === 'remove-document') {
-        const saved = await removeApplicationDocument(userId, body.version, body.documentId);
+        const saved = await removeApplicationDocument(userId, body.version, body.documentId, app);
         return NextResponse.json({ application: publicApplication(saved) });
       } else if (body.action === 'demo-enable' || body.action === 'demo-reset') await changeApplicationDemoMode(userId, body.version, body.action === 'demo-enable');
-      else if (body.action === "save" || body.action === "submit") await saveApplication(userId, { ...body, submit: body.action === "submit" });
+      else if (body.action === "save" || body.action === "submit") {
+        const saved = await saveApplication(userId, { ...body, submit: body.action === "submit" }, app);
+        return NextResponse.json({ application: publicApplication(saved) });
+      }
       else throw new ApplicationError("Choose a valid application action.");
     }
     app = await db.riderApplication.findUniqueOrThrow({ where: { id: app.id }, include: applicationDetail });
