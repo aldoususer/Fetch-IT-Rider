@@ -1,6 +1,7 @@
 "use client";
 import { BrowserLocation } from "./browser-location";
-import { RiderProfileDetails, type RiderProfileData } from "../shared/rider-profile";
+import type { RiderProfileData } from "../shared/rider-profile";
+import { RiderAccountProfile } from "./rider-account-profile";
 import { prepareDeliveryPhoto } from "@/lib/epod-photo-client";
 import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
 
@@ -145,6 +146,7 @@ export function RiderDashboard() {
   const { toast } = useToast();
 
   const [profile, setProfile] = useState<RiderProfileData | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [statusPending, setStatusPending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<RiderStats | null>(null);
@@ -297,6 +299,7 @@ export function RiderDashboard() {
               name={user?.name}
               email={user?.email}
               roleLabel="Rider"
+              onViewProfile={() => setProfileOpen(true)}
               onLogout={() => void logout()}
             />
           </div>
@@ -342,7 +345,6 @@ export function RiderDashboard() {
           <div><p>Test payments and payouts — no money transferred.</p><dl><div><dt>Earned</dt><dd>₱{stats.demoEarnings.toFixed(2)}</dd></div><div><dt>Awaiting review</dt><dd>₱{stats.demoAwaitingPayout.toFixed(2)}</dd></div><div><dt>Payouts</dt><dd>₱{stats.demoPaidOut.toFixed(2)}</dd></div></dl></div>
         </details>}
         {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs ?? 0) > 0} />}
-        {profile && <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Your rider profile · {profile.ratingCount && profile.rating != null ? `★ ${profile.rating.toFixed(1)} (${profile.ratingCount} ratings)` : "No ratings yet"}</summary><div className="pt-4"><RiderProfileDetails profile={profile} /></div></details>}
         <div className="rd-board-heading"><div><p className="rd-eyebrow">YOUR WORKSPACE</p><h2>Jobs board</h2></div><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={16} className={refreshing ? "animate-spin" : ""}/>Refresh</Button></div>
         {/* Tabs */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -407,6 +409,8 @@ export function RiderDashboard() {
           </div>
         )}
       </main>
+
+      <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
 
       {/* Active job modal */}
       <Dialog open={!!activeJob} onOpenChange={(o) => !o && setActiveJob(null)}>

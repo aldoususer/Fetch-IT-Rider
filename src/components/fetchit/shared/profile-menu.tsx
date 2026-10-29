@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Settings, Download, LogOut } from "lucide-react";
+import { Settings, Download, LogOut, UserRound } from "lucide-react";
 import { useInstallPrompt } from "./install-pwa-button";
 
 export function ProfileMenu({
@@ -29,11 +29,13 @@ export function ProfileMenu({
   email,
   roleLabel,
   onLogout,
+  onViewProfile,
 }: {
   name?: string | null;
   email?: string | null;
   roleLabel?: string;
   onLogout: () => void;
+  onViewProfile?: () => void;
 }) {
   const { canInstall, install } = useInstallPrompt();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -65,6 +67,7 @@ export function ProfileMenu({
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          {onViewProfile && <DropdownMenuItem onSelect={onViewProfile}><UserRound className="h-4 w-4"/> Rider profile</DropdownMenuItem>}
           <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
             <Settings className="h-4 w-4" /> Settings
           </DropdownMenuItem>
