@@ -1,4 +1,4 @@
-import { approvedServices, liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
+import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { expireRiderOffers, dispatchPaymentWhere } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import type { Prisma } from "@prisma/client";
@@ -33,15 +33,17 @@ export async function GET(req: NextRequest) {
     );
   }
   if (rider.isBanned) return NextResponse.json({ error: "Account restricted." }, { status: 403 });
-  if (!rider.riderPresence?.isOnline) return NextResponse.json({ jobs: [] });
+  if (!rider.riderPresence?.isOnline) return NextResponse.json({ jobs: [], upcomingJobs: [] }, { headers: { "Cache-Control": "private, no-store" } });
 
   await db.riderPresence.updateMany({ where: { userId: session.uid, isOnline: true }, data: { updatedAt: new Date() } });
   await expireRiderOffers(db);
 
   // PENDING jobs are open to any rider of the matching vehicle class.
   // MATCHED jobs are pre-assigned to *this* rider and waiting for acceptance.
-  const services = await approvedServices(db, session.uid, rider.riderProfile.vehicleClass);
-  const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] };
+  const now = new Date();
+  const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere(now) } });
+  const services = [...new Set(approvals.map(a => a.service))];
+  const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }] };
   const where: Prisma.BookingWhereInput = includeMatched
     ? {
         vehicleClass: rider.riderProfile?.vehicleClass,
@@ -57,19 +59,18 @@ export async function GET(req: NextRequest) {
         status: "PENDING" as const, riderId: null, NOT: { excludedRiderIds: { has: session.uid } },
       };
 
-  const jobs = await db.booking.findMany({
-    where: { ...where, type: { in: services } },
-    orderBy: { createdAt: "asc" },
-    take: 50,
-    include: {
+  const include = {
       customer: { select: { id: true, name: true, phone: true } },
       rider: { select: riderSelect },
-    },
-  });
+  } as const;
+  // Show scheduled requests now without making them claimable before pickup.
+  // Separate queries keep future bookings from displacing jobs available now.
+  const [jobs, upcoming] = await Promise.all([
+    db.booking.findMany({ where: { ...where, type: { in: services } }, orderBy: { createdAt: "asc" }, take: 50, include }),
+    db.booking.findMany({ where: { ...where, type: { in: services }, AND: [{ scheduledAt: { gt: now } }, dispatchPaymentWhere] }, orderBy: { scheduledAt: "asc" }, take: 50, include }),
+  ]);
 
-  const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere() } });
-  const eligibleJobs = jobs.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job)));
-  const withTickets = eligibleJobs.map((job) => riderJobView(bookingView(job)));
+  const visible = (rows: typeof jobs) => rows.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).map(job => riderJobView(bookingView(job)));
 
-  return NextResponse.json({ jobs: withTickets }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ jobs: visible(jobs), upcomingJobs: visible(upcoming), checkedAt: now.toISOString() }, { headers: { "Cache-Control": "private, no-store" } });
 }

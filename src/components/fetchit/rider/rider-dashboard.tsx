@@ -152,6 +152,8 @@ export function RiderDashboard() {
   const [stats, setStats] = useState<RiderStats | null>(null);
   const [tab, setTab] = useState<JobTab>("available");
   const [jobLists, setJobLists] = useState<Partial<Record<JobTab, Job[]>>>({});
+  const [upcomingJobs, setUpcomingJobs] = useState<Job[]>([]);
+  const [jobsCheckedAt, setJobsCheckedAt] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [jobErrors, setJobErrors] = useState<Partial<Record<JobTab, string>>>({});
   const jobsRequest = useRef(0);
@@ -182,6 +184,8 @@ export function RiderDashboard() {
       const latest = tab === "available" ? data.jobs : data.bookings;
       if (!Array.isArray(latest)) throw new Error("Jobs unavailable");
       setJobLists(previous => ({ ...previous, [tab]: latest as Job[] }));
+      if (tab === "available") setUpcomingJobs(Array.isArray(data.upcomingJobs) ? data.upcomingJobs : []);
+      setJobsCheckedAt(new Date().toISOString());
       setJobErrors(previous => ({ ...previous, [tab]: undefined }));
       if (tab === "active") setActiveJob(previous => previous ? latest.find(job => job.id === previous.id) ?? null : null);
     } catch (error) {
@@ -190,11 +194,7 @@ export function RiderDashboard() {
     }
   }, [tab]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    queueMicrotask(() => { if (!controller.signal.aborted) void loadStats(controller.signal); });
-    return () => controller.abort();
-  }, [loadStats]);
+  useVisiblePoll(user ? `${user.id}:stats` : "", loadStats, 10000);
 
   useEffect(() => {
     if (tab !== "history") return;
@@ -205,8 +205,8 @@ export function RiderDashboard() {
 
   // Pause hidden/offline pages, prevent overlaps, and back off after failures.
   useVisiblePoll(tab !== "history" && user ? `${user.id}:${tab}` : "", async signal => {
-    await Promise.all([loadJobs(signal), loadStats(signal)]);
-  }, 10000);
+    await loadJobs(signal);
+  }, 3000);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -346,14 +346,15 @@ export function RiderDashboard() {
         </details>}
         {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs ?? 0) > 0} />}
         <div className="rd-board-heading"><div><p className="rd-eyebrow">YOUR WORKSPACE</p><h2>Jobs board</h2></div><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={16} className={refreshing ? "animate-spin" : ""}/>Refresh</Button></div>
+        {jobsCheckedAt && <p className="text-xs text-muted-foreground">Updated {new Date(jobsCheckedAt).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila" })} · Philippine time</p>}
         {/* Tabs */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList className="rd-tabs">
             <TabsTrigger value="available" className="gap-1.5">
               <Package className="h-4 w-4" /> Available
-              {stats?.availableJobs != null && stats.availableJobs > 0 && (
+              {(jobLists.available?.length ?? stats?.availableJobs ?? 0) > 0 && (
                 <span className="ml-1 rounded-full bg-primary/15 text-primary text-xs px-1.5">
-                  {stats.availableJobs}
+                  {jobLists.available?.length ?? stats?.availableJobs}
                 </span>
               )}
             </TabsTrigger>
@@ -408,6 +409,10 @@ export function RiderDashboard() {
             ))}
           </div>
         )}
+        {tab === "available" && upcomingJobs.length > 0 && <section className="mt-6 space-y-3" aria-labelledby="upcoming-jobs-heading">
+          <div><h2 id="upcoming-jobs-heading" className="font-semibold text-lg">Upcoming · {upcomingJobs.length}</h2><p className="text-sm text-muted-foreground">Scheduled requests matching your vehicle and approved services. You can accept them when pickup is due.</p></div>
+          <div className="rd-jobs-grid">{upcomingJobs.map(job => <JobCard key={job.id} job={job} isAvailable upcoming onAccept={() => accept(job)} onReleased={() => void refreshBoard()} onOpen={() => setActiveJob(job)}/>)}</div>
+        </section>}
       </main>
 
       <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
@@ -585,12 +590,14 @@ function TrackingTicketCard({ job }: { job: Job }) {
 function JobCard({
   job,
   isAvailable,
+  upcoming = false,
   onAccept,
   onReleased,
   onOpen,
 }: {
   job: Job;
   isAvailable: boolean;
+  upcoming?: boolean;
   onAccept: () => Promise<void>;
   onReleased: () => void;
   onOpen: () => void;
@@ -602,7 +609,7 @@ function JobCard({
   const v = VEHICLES[job.vehicleClass];
 
   async function handleAccept() {
-    if (acceptPending.current) return;
+    if (upcoming || acceptPending.current) return;
     acceptPending.current = true;
     setAccepting(true);
     setAcceptError("");
@@ -629,7 +636,7 @@ function JobCard({
                 </Badge>
               )}
               <JobTypeBadge type={job.type} />
-              <StatusBadge status={job.status} type={job.type === "RIDE" ? "RIDE" : "DELIVERY"} />
+              {upcoming ? <Badge variant="outline">Scheduled</Badge> : <StatusBadge status={job.status} type={job.type === "RIDE" ? "RIDE" : "DELIVERY"} />}
             </div>
             <CardTitle className="text-base mt-1.5 break-words">{job.dropoffLabel}</CardTitle>
             <CardDescription className="flex items-start gap-1 mt-0.5 break-words [&_svg]:shrink-0">
@@ -642,6 +649,7 @@ function JobCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3 flex-1">
+        {job.scheduledAt && <p className="rounded-lg bg-muted p-3 text-sm"><Clock className="mr-1 inline h-4 w-4" aria-hidden="true"/>Pickup {new Date(job.scheduledAt).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" })} · PH time</p>}
         <div className="grid grid-cols-2 gap-3 text-sm">
           <Stat label={job.type === "RIDE" ? "Passenger" : "Customer"} value={job.customer?.name ?? "—"} icon={<Package className="h-4 w-4" />} />
           <Stat label="Distance" value={`${job.distanceKm} km`} icon={<Navigation className="h-4 w-4" />} />
@@ -663,9 +671,9 @@ function JobCard({
         {job.status === "MATCHED" && <ReleaseBooking id={job.id} onReleased={onReleased} />}
         <div className="flex gap-2 pt-1">
           {isAvailable ? (
-            <Button size="sm" className="flex-1" onClick={handleAccept} disabled={accepting}>
+            <Button size="sm" className="flex-1" onClick={handleAccept} disabled={upcoming || accepting}>
               {accepting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              {job.type === "RIDE" ? "Accept ride" : "Accept job"}
+              {upcoming ? "Available at pickup time" : job.type === "RIDE" ? "Accept ride" : "Accept job"}
             </Button>
           ) : (
             <Button size="sm" className="flex-1" onClick={onOpen}>
