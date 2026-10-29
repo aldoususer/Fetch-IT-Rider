@@ -113,6 +113,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   logout: async () => {
+    if (typeof window !== "undefined" && !window.confirm("Are you sure you want to log out of Fetch-It?")) return;
     const epoch = ++sessionEpoch;
     setPendingLogout(true);
     set({ user: null, view: "landing", pendingRole: null });
