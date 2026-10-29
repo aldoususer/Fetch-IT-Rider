@@ -1,3 +1,4 @@
+import { applicationQueueStatuses } from "./application-queue";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "./db";
 import { applicationDetail, publicApplication, reviewApplication, canReviewApplications, canActivateApplications, type ApplicationActor } from "./rider-application";
@@ -11,7 +12,9 @@ export async function staffApplicationRequest(req: NextRequest, actor: Applicati
     if (!canReviewApplications(actor.role)) throw new ApplicationError("Application review access required.", 403);
     if (!id) {
       const q = req.nextUrl.searchParams.get("q")?.trim().slice(0, 100), status = req.nextUrl.searchParams.get("status"), cursor = req.nextUrl.searchParams.get("cursor"), mode = req.nextUrl.searchParams.get('mode');
-      const records = await db.riderApplication.findMany({ where: { ...(['demo', 'real'].includes(mode || '') ? { isDemo: mode === 'demo' } : {}), ...(q ? { user: { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } } : {}), ...(status ? { status } : {}) }, select: { id: true, isDemo: true, status: true, vehicleClass: true, services: true, updatedAt: true, assignedToId: true, user: { select: { name: true, email: true } } }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 26, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+      const statuses = applicationQueueStatuses(status);
+      if (status && !statuses) throw new ApplicationError("Choose a valid application status.", 400);
+      const records = await db.riderApplication.findMany({ where: { ...(['demo', 'real'].includes(mode || '') ? { isDemo: mode === 'demo' } : {}), ...(q ? { user: { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } } : {}), ...(statuses ? { status: { in: statuses } } : {}) }, select: { id: true, isDemo: true, status: true, vehicleClass: true, services: true, updatedAt: true, assignedToId: true, user: { select: { name: true, email: true } } }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 26, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
       return NextResponse.json({ applications: records.slice(0, 25), nextCursor: records.length > 25 ? records[24].id : null });
     }
     const body = req.method === "GET" ? null : await readApplicationBody(req, 32000);
