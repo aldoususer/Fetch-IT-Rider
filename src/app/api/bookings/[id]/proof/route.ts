@@ -6,6 +6,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access";
 import { settleDemoEarnings } from "@/lib/demo-payments";
 import { isDemoPayment } from "@/lib/payment-policy";
+import { deliveryPaymentError } from "@/lib/payments";
 import { randomUUID } from "node:crypto";
 import { EPOD_MAX_DATA_URL_LENGTH } from "@/lib/epod-photo";
 import { uploadDeliveryPhoto, removeUncommittedPhoto } from "@/lib/epod-upload";
@@ -56,7 +57,12 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       throw new RiderError("Provide a valid recipient signature or small delivery photo.", 400);
     if (!body.signatureSvg && !body.photoDataUrl) throw new RiderError("No proof artifacts provided.", 400);
     // Check access before decoding an image or spending a Blob upload operation.
-    checkBooking(await db.booking.findUnique({ where: { id } }), session.uid);
+    const currentBooking = await db.booking.findUnique({ where: { id } });
+    checkBooking(currentBooking, session.uid);
+    if (body.signatureSvg && currentBooking) {
+      const paymentError = await deliveryPaymentError(db, currentBooking);
+      if (paymentError) throw new RiderError(paymentError, 409);
+    }
     if (body.photoDataUrl) {
       if (await db.deliveryProof.count({ where: { bookingId: id, proofType: "PHOTO" } }) >= 3) throw new RiderError("This delivery already has three supporting photos.", 409);
       photoProofId = randomUUID();
@@ -67,6 +73,10 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
       const booking = await tx.booking.findUnique({ where: { id } });
       checkBooking(booking, session.uid);
+      if (body.signatureSvg && booking) {
+        const paymentError = await deliveryPaymentError(tx, booking);
+        if (paymentError) throw new RiderError(paymentError, 409);
+      }
       if (uploadedPath && await tx.deliveryProof.count({ where: { bookingId: id, proofType: "PHOTO" } }) >= 3) throw new RiderError("This delivery already has three supporting photos.", 409);
       const now = new Date();
       const proofs: { type: string; verified: boolean }[] = [];

@@ -20,7 +20,8 @@ import {
 import { etaMinutes } from "@/lib/fare";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 import { riderJobView } from "@/lib/job-privacy";
-import { matchesChallenge } from "@/lib/delivery-challenge";
+import { isPortableChallenge, matchesChallenge } from "@/lib/delivery-challenge";
+import { deliveryPaymentError } from "@/lib/payments";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -100,6 +101,8 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         if (challenge.verifiedAt) return { error: "This pickup code has already been used.", status: 409 };
         if (challenge.attempts >= challenge.maxAttempts)
           return { error: "Too many incorrect attempts. Wait for expiry and ask for a new pickup code.", status: 429 };
+        if (!isPortableChallenge(challenge.codeHash) && !matchesChallenge(id, body.otp.trim(), challenge.codeHash))
+          return { error: "Ask the passenger to tap Refresh pickup code, then enter the code shown. This older code needs to be refreshed.", status: 409 };
         const ok = matchesChallenge(id, body.otp.trim(), challenge.codeHash);
         await tx.deliveryChallenge.update({ where: { bookingId: id }, data: {
           attempts: { increment: 1 }, ...(ok ? { verifiedAt: now } : {}),
@@ -108,6 +111,8 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         if (!ok) return { error: "Pickup code did not match. Confirm it with the passenger.", status: 400 };
       }
       if (status === "DELIVERED" && booking.type === "DELIVERY") {
+        const paymentError = await deliveryPaymentError(tx, booking);
+        if (paymentError) throw new DispatchError(paymentError);
         const proof = await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: "SIGNATURE", verifiedAt: { not: null } } });
         if (!proof) throw new DispatchError("Record a recipient signature before completing delivery.");
       }

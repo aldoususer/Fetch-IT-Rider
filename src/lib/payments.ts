@@ -1,11 +1,36 @@
 import { scheduleReceiptDelivery } from "./receipt-email";
 import type { PrismaClient, PaymentStatus } from "@prisma/client";
-import { amountInCents, confirmationsMatch, isDemoPayment } from "./payment-policy";
+import { amountInCents, cashConfirmationAvailable, confirmationsMatch, deliveryCashCompletionError, isDemoPayment } from "./payment-policy";
 
 export class PaymentError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
 type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" | "SUPERADMIN" };
+
+export async function dropoffReachedAt(db: Pick<PrismaClient, "paymentEvent">, id: string): Promise<Date | null> {
+  const event = await db.paymentEvent.findFirst({ where: { bookingId: id, action: "DROPOFF_REACHED" }, orderBy: { createdAt: "asc" }, select: { createdAt: true } });
+  return event?.createdAt ?? null;
+}
+
+export async function confirmDropoffArrival(db: PrismaClient, id: string, actor: Actor) {
+  return db.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
+    const booking = await tx.booking.findUnique({ where: { id } });
+    if (!booking) throw new PaymentError("Booking not found.", 404);
+    if (actor.role !== "RIDER" || booking.riderId !== actor.uid) throw new PaymentError("Only the assigned rider can confirm arrival.", 403);
+    if (booking.type !== "DELIVERY" || booking.status !== "IN_TRANSIT") throw new PaymentError("Confirm arrival when this delivery reaches drop-off.", 409);
+    const previous = await dropoffReachedAt(tx, id);
+    if (previous) return { booking, dropoffReachedAt: previous };
+    const event = await tx.paymentEvent.create({ data: { bookingId: id, actorId: actor.uid, actorName: actor.name, actorRole: "RIDER", action: "DROPOFF_REACHED", fromStatus: booking.paymentStatus, toStatus: booking.paymentStatus, reason: "Rider confirmed arrival at drop-off. Cash confirmation is now available." } });
+    const updated = await tx.booking.update({ where: { id }, data: { updatedAt: new Date() } });
+    return { booking: updated, dropoffReachedAt: event.createdAt };
+  }, { maxWait: 10000, timeout: 20000 });
+}
+
+export async function deliveryPaymentError(db: Pick<PrismaClient, "paymentEvent">, booking: Parameters<typeof deliveryCashCompletionError>[0] & { id: string }) {
+  if (booking.type === "DELIVERY" && booking.paymentMethod === "CASH" && !await dropoffReachedAt(db, booking.id)) return "Confirm arrival at drop-off before completing delivery.";
+  return deliveryCashCompletionError(booking);
+}
 
 // Lock the booking so concurrent confirmations cannot lose each other or race
 // a cancellation/reassignment. Store every change as an immutable event.
@@ -17,13 +42,16 @@ export async function confirmCashPayment(db: PrismaClient, id: string, actor: Ac
     const booking = await tx.booking.findUnique({ where: { id } });
     if (!booking) throw new PaymentError("Booking not found.", 404);
     if (actor.role === "CUSTOMER" ? booking.customerId !== actor.uid : actor.role !== "RIDER" || booking.riderId !== actor.uid) throw new PaymentError("You are not a participant in this booking.", 403);
-    if (booking.paymentMethod !== "CASH" || !booking.riderId || !["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(booking.status)) throw new PaymentError("Cash can be confirmed after a rider accepts this booking.", 409);
+    if (booking.paymentMethod !== "CASH" || !booking.riderId) throw new PaymentError("This booking does not accept cash confirmation.", 409);
+    const arrival = booking.type === "DELIVERY" && booking.status === "IN_TRANSIT" ? await dropoffReachedAt(tx, id) : null;
+    if (!cashConfirmationAvailable(booking.type, booking.status, arrival)) throw new PaymentError(booking.type === "DELIVERY" ? "Cash confirmation becomes available after the rider confirms arrival at drop-off." : "Cash can be confirmed after a rider accepts this booking.", 409);
     const customer = actor.role === "CUSTOMER";
     const previous = customer ? booking.customerPaidAmount : booking.riderReceivedAmount;
-    if (booking.paymentStatus === "PAID" || booking.paymentStatus === "REFUNDED") {
+    if (booking.paymentStatus === "REFUNDED" || (booking.paymentStatus === "PAID" && previous !== null)) {
       if (previous !== null && amountInCents(previous.toString()) === cents) return booking;
       throw new PaymentError("This payment record is final. Contact support for a correction.", 409);
     }
+    if (booking.paymentStatus === "PAID" && cents !== amountInCents(booking.totalFare.toString())) throw new PaymentError("This payment record is final. Confirm the recorded fare or contact support.", 409);
     if (previous !== null) {
       if (amountInCents(previous.toString()) === cents) return booking;
       throw new PaymentError("Your confirmation is already recorded. Contact support to correct it.", 409);
@@ -32,7 +60,7 @@ export async function confirmCashPayment(db: PrismaClient, id: string, actor: Ac
     const riderAmount = customer ? booking.riderReceivedAmount?.toString() : String(amount);
     const matched = confirmationsMatch(customerAmount, riderAmount, booking.totalFare.toString());
     const now = new Date();
-    const status = matched ? "PAID" : "PENDING";
+    const status = matched || booking.paymentStatus === "PAID" ? "PAID" : "PENDING";
     const reference = matched ? `CASH-${booking.refCode}` : booking.paymentReference;
     const updated = await tx.booking.update({ where: { id }, data: {
       ...(customer ? { customerPaidAmount: cents / 100, customerPaidAt: now } : { riderReceivedAmount: cents / 100, riderReceivedAt: now }),

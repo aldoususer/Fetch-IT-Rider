@@ -21,3 +21,16 @@ export function confirmationsMatch(customer: unknown, rider: unknown, fare: unkn
   const total = amountInCents(fare);
   return total !== null && amountInCents(customer) === total && amountInCents(rider) === total;
 }
+
+export function cashConfirmationAvailable(type: string, status: string, dropoffReachedAt?: unknown): boolean {
+  if (type === "DELIVERY") return status === "DELIVERED" || (status === "IN_TRANSIT" && !!dropoffReachedAt);
+  return ["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(status);
+}
+
+export function deliveryCashCompletionError(booking: { type: string; paymentMethod: string; paymentStatus: string; totalFare: unknown; customerPaidAmount: unknown; riderReceivedAmount: unknown; customerPaidAt: unknown; riderReceivedAt: unknown }): string | null {
+  if (booking.type !== "DELIVERY" || booking.paymentMethod !== "CASH") return null;
+  if (!booking.riderReceivedAt) return "Confirm that you received the cash payment at drop-off before completing delivery.";
+  if (!booking.customerPaidAt) return "Wait for the customer to confirm their cash payment before completing delivery.";
+  if (booking.paymentStatus !== "PAID" || !confirmationsMatch(String(booking.customerPaidAmount), String(booking.riderReceivedAmount), String(booking.totalFare))) return "The cash confirmations must match the fare before delivery can be completed. Contact support to correct a payment.";
+  return null;
+}

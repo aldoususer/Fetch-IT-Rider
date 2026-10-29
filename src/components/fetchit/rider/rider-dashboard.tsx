@@ -739,6 +739,7 @@ function ActiveJobFlow({
   const [showProof, setShowProof] = useState(false);
   const [pickupOtp, setPickupOtp] = useState("");
   const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
+  const [paymentReady, setPaymentReady] = useState(false);
 
   async function advance(to: BookingStatus) {
     setUpdating(true);
@@ -872,7 +873,7 @@ function ActiveJobFlow({
         )}
       </div>
 
-      <PaymentCard key={job.id} bookingId={job.id} role="RIDER" />
+      <PaymentCard key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" onPaymentReady={setPaymentReady} />
       {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} onReleased={() => { onClose(); onUpdated({}); }} />}
 
       {/* Native-app tracking ticket */}
@@ -925,7 +926,7 @@ function ActiveJobFlow({
               variant="outline"
               size="lg"
               onClick={() => setShowProof((s) => !s)}
-              disabled={updating}
+              disabled={updating || (job.paymentMethod === "CASH" && !paymentReady)}
             >
               <ShieldCheck className="h-4 w-4" /> Capture e-POD
             </Button>
@@ -945,7 +946,7 @@ function ActiveJobFlow({
         </Card>
       )}
 
-      {showProof && (
+      {showProof && (job.paymentMethod !== "CASH" || paymentReady) && (
         <ProofCapture
           bookingId={job.id}
           onDone={(completed) => {
