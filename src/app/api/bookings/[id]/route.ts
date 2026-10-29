@@ -101,7 +101,7 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         if (challenge.verifiedAt) return { error: "This pickup code has already been used.", status: 409 };
         if (challenge.attempts >= challenge.maxAttempts)
           return { error: "Too many incorrect attempts. Wait for expiry and ask for a new pickup code.", status: 429 };
-        if (!isPortableChallenge(challenge.codeHash) && !matchesChallenge(id, body.otp.trim(), challenge.codeHash))
+        if (!isPortableChallenge(challenge.codeHash))
           return { error: "Ask the passenger to tap Refresh pickup code, then enter the code shown. This older code needs to be refreshed.", status: 409 };
         const ok = matchesChallenge(id, body.otp.trim(), challenge.codeHash);
         await tx.deliveryChallenge.update({ where: { bookingId: id }, data: {
