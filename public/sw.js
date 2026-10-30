@@ -3,7 +3,7 @@
 // assets, so the user always gets fresh content when online but can still
 // load the app shell offline.
 
-const CACHE_VERSION = "fetchit-rider-workspace-v3";
+const CACHE_VERSION = "fetchit-rider-reliability-v4";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -75,4 +75,16 @@ self.addEventListener("fetch", (event) => {
 // Allow page to trigger skipWaiting via postMessage.
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") self.skipWaiting();
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const id = event.notification.data?.bookingId;
+  const url = new URL('/', self.location.origin);
+  if (typeof id === 'string' && id.length <= 100) url.searchParams.set('job', id);
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async windows => {
+    const current = windows.find(client => new URL(client.url).origin === self.location.origin);
+    if (current) { current.postMessage({ type: 'RIDER_NOTIFICATION', bookingId: id }); return current.focus(); }
+    return self.clients.openWindow(url.href);
+  }));
 });

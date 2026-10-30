@@ -1,3 +1,5 @@
+import { requestHasExpired, staleRequestWhere, REQUEST_EXPIRED_REASON } from "./job-expiry";
+import { cancelDemoPayment } from "./demo-payments";
 import { riderCanTakeBooking } from "./rider-eligibility";
 import type { Booking, Prisma, PrismaClient } from "@prisma/client";
 import { isDemoPayment } from "./payment-policy";
@@ -23,12 +25,14 @@ async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: 
 }
 
 export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date) {
+  if (requestHasExpired(booking, now)) throw new DispatchError("This request has expired. Refresh jobs for current requests.");
   if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("Complete online payment before assigning or accepting this booking.");
   if (!await eligible(tx, riderId, booking, now)) throw new DispatchError("Choose an online rider with a matching vehicle and no active booking.");
 }
 
 async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" }, reason: string, requested?: string) {
   const now = new Date();
+  if (requestHasExpired(booking, now)) throw new DispatchError("This request has expired. Ask the customer to book again.");
   const config=await tx.platformConfig.findUnique({where:{id:"platform"}});
   const settings=config?validatePlatformSettings(config.settings):defaultPlatformSettings();
   if (!["PENDING", "MATCHED", "ACCEPTED"].includes(booking.status) || booking.pickedUpAt) throw new DispatchError("Reassignment is available only before pickup.");
@@ -74,7 +78,8 @@ export async function assignRider(db: PrismaClient, id: string, actor: Actor, re
 // checked again under the lock, so simultaneous polls cannot reassign twice.
 export async function expireRiderOffers(db: PrismaClient) {
   const now = new Date();
-  const rows = await db.booking.findMany({ where: { status: "MATCHED", assignmentExpiresAt: { lte: now } }, select: { id: true }, orderBy: { assignmentExpiresAt: "asc" }, take: 5 });
+  const requestsExpired = await expireUnansweredRequests(db, now);
+  const rows = await db.booking.findMany({ where: { status: "MATCHED", assignmentExpiresAt: { lte: now }, NOT: staleRequestWhere(now) }, select: { id: true }, orderBy: { assignmentExpiresAt: "asc" }, take: 5 });
   let expired = 0;
   for (const row of rows) {
     const changed = await db.$transaction(async tx => {
@@ -87,6 +92,29 @@ export async function expireRiderOffers(db: PrismaClient) {
     }, { maxWait: 10000, timeout: 20000 });
     if (changed) expired++;
   }
-  if (expired) schedulePushDelivery();
+  if (expired || requestsExpired) schedulePushDelivery();
+  return expired + requestsExpired;
+}
+
+// Every consumer uses the same deadline. Locks serialize expiry against an
+// acceptance/payment write; rechecking under that lock prevents false expiry.
+export async function expireUnansweredRequests(db: PrismaClient, now = new Date()) {
+  const candidates = await db.booking.findMany({ where: staleRequestWhere(now), select: { id: true }, orderBy: { createdAt: 'asc' }, take: 20 });
+  let expired = 0;
+  for (const { id } of candidates) {
+    const changed = await db.$transaction(async tx => {
+      const locked = await tx.$queryRaw<{id: string}[]>`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE SKIP LOCKED`;
+      if (!locked.length) return false;
+      const booking = await tx.booking.findUnique({ where: { id } });
+      if (!booking || !requestHasExpired(booking, now)) return false;
+      await tx.booking.update({ where: { id }, data: { status: 'CANCELLED', cancelledAt: now, cancellationReason: REQUEST_EXPIRED_REASON, assignmentExpiresAt: null } });
+      await cancelDemoPayment(tx, booking, { uid: 'system:request-expiry', name: 'Request expiry', role: 'ADMIN' });
+      await tx.bookingLocation.deleteMany({ where: { bookingId: id } });
+      await tx.deliveryChallenge.deleteMany({ where: { bookingId: id } });
+      await recordBookingEvent(tx, id, { name: 'Request expiry', role: 'ADMIN' }, { action: 'CANCELLED', fromStatus: booking.status, toStatus: 'CANCELLED', riderId: booking.riderId, reason: REQUEST_EXPIRED_REASON });
+      return true;
+    }, { maxWait: 5000, timeout: 15000 });
+    if (changed) expired++;
+  }
   return expired;
 }

@@ -10,14 +10,14 @@ const deliveryTitles: Record<BookingStatus, string> = {
 };
 
 export async function enqueueBookingNotification(tx: Prisma.TransactionClient, event: {
-  id: string; bookingId: string; fromStatus: BookingStatus | null; toStatus: BookingStatus; actorRole: string;
+  reason?: string | null; id: string; bookingId: string; fromStatus: BookingStatus | null; toStatus: BookingStatus; actorRole: string;
 }) {
   if (event.fromStatus === event.toStatus) return;
   const booking = await tx.booking.findUniqueOrThrow({ where: { id: event.bookingId }, select: { customerId: true, type: true, refCode: true } });
   return tx.customerNotification.create({ data: {
     sourceId: `booking:${event.id}`, customerId: booking.customerId, category: booking.type,
     bookingId: event.bookingId, status: event.toStatus,
-    title: (booking.type === "RIDE" ? rideTitles : deliveryTitles)[event.toStatus], body: booking.refCode,
+    title: event.reason?.startsWith("Request expired:") ? "Your request expired" : (booking.type === "RIDE" ? rideTitles : deliveryTitles)[event.toStatus], body: booking.refCode,
     url: `/?booking=${encodeURIComponent(event.bookingId)}&type=${booking.type}`,
     // Keep the event in the inbox without sending the customer's own action
     // back to their phone (for example, their own cancellation).

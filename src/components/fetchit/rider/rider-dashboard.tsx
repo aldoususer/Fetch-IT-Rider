@@ -1,4 +1,7 @@
 "use client";
+import { useRiderAlerts } from "@/hooks/use-rider-alerts";
+import { RiderNotifications } from "./rider-notifications";
+import type { RiderAlert } from "@/lib/rider-alerts";
 import { PickupProgress } from "./pickup-progress";
 import { BrowserLocation } from "./browser-location";
 import type { RiderProfileData } from "../shared/rider-profile";
@@ -77,7 +80,7 @@ import { SignaturePad } from "../shared/signature-pad";
 import { ProfileMenu } from "../shared/profile-menu";
 import { JobHistoryRow, JobHistorySummary } from './job-history';
 import { JobPreview } from './job-preview';
-import { availabilityLabel, filterHistoryJobs, isHistoryJob, jobTiming, nextJobStop, pickupCodeFeedback, type RiderJob } from '@/lib/rider-workspace';
+import { availabilityLabel, filterHistoryJobs, isHistoryJob, jobTiming, nextJobStop, pickupCodeFeedback, mergeRiderJob, type RiderJob } from '@/lib/rider-workspace';
 import { ArrowLeft, SlidersHorizontal, Search } from 'lucide-react';
 import "./rider-workspace.css";
 
@@ -110,6 +113,8 @@ export function RiderDashboard() {
   const refreshUser = useAppStore((s) => s.refreshUser);
   const { toast } = useToast();
 
+  const alerts = useRiderAlerts(user?.id ?? "");
+  const statusLock = useRef(false);
   const [profile, setProfile] = useState<RiderProfileData | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [statsError, setStatsError] = useState('');
@@ -163,7 +168,11 @@ export function RiderDashboard() {
       if (tab === "available") setUpcomingJobs(Array.isArray(data.upcomingJobs) ? data.upcomingJobs : []);
       setJobsCheckedAt(new Date().toISOString());
       setJobErrors(previous => ({ ...previous, [tab]: undefined }));
-      if (tab === "active") setActiveJob(previous => previous && !isHistoryJob(previous) ? latest.find(job => job.id === previous.id) ?? null : previous);
+      if (tab === "active") setActiveJob(previous => {
+        if (!previous || isHistoryJob(previous)) return previous;
+        const incoming = latest.find(job => job.id === previous.id);
+        return incoming ? mergeRiderJob(previous, incoming) : null;
+      });
     } catch (error) {
       if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [tab]: error instanceof TypeError ? 'Couldn’t connect. Reconnect and refresh your jobs.' : error instanceof Error ? error.message : 'Couldn’t update jobs. Please try again.' }));
       throw error;
@@ -180,7 +189,7 @@ export function RiderDashboard() {
   }, [loadJobs, tab]);
 
   // Pause hidden/offline pages, prevent overlaps, and back off after failures.
-  useVisiblePoll(tab !== "history" && user ? `${user.id}:${tab}` : "", async signal => {
+  const boardConnection = useVisiblePoll(tab !== "history" && user ? `${user.id}:${tab}` : "", async signal => {
     await loadJobs(signal);
   }, 3000);
 
@@ -191,8 +200,8 @@ export function RiderDashboard() {
   }, [user?.id, stats?.rating, stats?.completedJobs]);
 
   async function toggleOnline(next: boolean) {
-    if (statusPending || !stats || statsError || !connected) return;
-    setStatusPending(true);
+    if (statusLock.current || statusPending || !stats || statsError || !connected) return;
+    statusLock.current = true; setStatusPending(true);
     try {
       const res = await fetch("/api/rider/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ online: next }) });
       const data = await res.json();
@@ -202,7 +211,7 @@ export function RiderDashboard() {
       toast({ title: data.isOnline ? "You're online" : "You're offline", description: data.isOnline ? "Jobs matching your vehicle will appear on the board." : "Go online again when you're ready for jobs." });
       if (data.isOnline) void loadJobs().catch(() => {});
     } catch (error) { toast({ title: "Availability not updated", description: error instanceof Error ? error.message : "Check your connection and try again.", variant: "destructive" }); }
-    finally { setStatusPending(false); }
+    finally { statusLock.current = false; setStatusPending(false); }
   }
   async function refreshBoard() {
     if (refreshing) return;
@@ -219,14 +228,9 @@ export function RiderDashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "ACCEPTED" }),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      toast({
-        title: "Accept failed",
-        description: data.error || "Could not accept this job.",
-        variant: "destructive",
-      });
-      throw new Error(data.error || "Couldn’t accept this request. Refresh jobs to check its availability.");
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.booking) {
+      throw new Error(data?.error || "Couldn’t accept this request. Refresh jobs to check its availability.");
     }
     jobsRequest.current++;
     toast({ title: "Job accepted", description: job.refCode });
@@ -245,6 +249,31 @@ export function RiderDashboard() {
     setTab("available");
   }
 
+  async function openNotification(item: Pick<RiderAlert, 'bookingId'>) {
+    if (detailDirty.current && !window.confirm('Open this notification? Your unsaved code or signature will be discarded.')) throw new Error('Your current job is still open.');
+    const response = await fetch('/api/bookings/' + encodeURIComponent(item.bookingId), { cache: 'no-store' });
+    let booking: Job | undefined;
+    if (response.ok) booking = (await response.json()).booking;
+    else if (response.status === 403) {
+      const feed = await fetch('/api/rider/available?includeMatched=true', { cache: 'no-store' });
+      if (feed.ok) { const data = await feed.json(); booking = [...(data.jobs ?? []), ...(data.upcomingJobs ?? [])].find(job => job.id === item.bookingId); }
+    }
+    if (!booking) throw new Error('This request is no longer available. Refresh jobs for current requests.');
+    detailDirty.current = false; setTab(isHistoryJob(booking) ? 'history' : ['PENDING', 'MATCHED'].includes(booking.status) ? 'available' : 'active'); openJob(booking);
+  }
+  const notificationOpen = useRef(openNotification);
+  useEffect(() => { notificationOpen.current = openNotification; });
+  useEffect(() => {
+    const open = (id: unknown) => {
+      if (typeof id === 'string' && id.length <= 100) void notificationOpen.current({ bookingId: id }).catch(error => toast({ title: 'Booking unavailable', description: error instanceof Error ? error.message : 'Refresh jobs for current requests.' }));
+    };
+    const message = (event: MessageEvent) => { if (event.data?.type === 'RIDER_NOTIFICATION') open(event.data.bookingId); };
+    navigator.serviceWorker?.addEventListener('message', message);
+    const url = new URL(window.location.href), id = url.searchParams.get('job');
+    if (id) { url.searchParams.delete('job'); window.history.replaceState(null, '', url); open(id); }
+    return () => navigator.serviceWorker?.removeEventListener('message', message);
+  }, [user?.id, toast]);
+  const reconnecting = boardConnection.status === 'reconnecting' || alerts.connection.status === 'reconnecting';
   const visibleHistory = filterHistoryJobs(jobs, historyQuery, historyFilter);
   const serviceText = profile?.services.map(service => service === 'RIDE' ? 'Passenger rides' : 'Delivery').join(' + ');
   const vehicleText = stats?.vehicleClass ? VEHICLES[stats.vehicleClass as keyof typeof VEHICLES]?.label ?? stats.vehicleClass : 'Your rider workspace';
@@ -258,12 +287,14 @@ export function RiderDashboard() {
       <button type="button" onClick={goHome} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Go to dashboard"><FetchItLogo/></button>
       <div className="rd-account">
         <OnlineToggle pending={statusPending} isOnline={stats ? stats.isOnline : null} disabled={!connected || !!statsError} onToggle={v=>void toggleOnline(v)}/>
+        <RiderNotifications alerts={alerts} onOpen={openNotification}/>
         <ProfileMenu name={user?.name} email={user?.email} roleLabel="Rider" onViewProfile={()=>setProfileOpen(true)} onLogout={()=>void logout()}/>
       </div>
     </div></header>
     <main className="rd-main">
       <section className="rd-board-heading"><div><h1 ref={workspaceHeading} tabIndex={-1}>Your jobs</h1><p>{vehicleText}{serviceText ? ' · '+serviceText : ''}</p></div><Button variant="outline" size="sm" disabled={refreshing || !connected} onClick={()=>void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={18} className={refreshing?'animate-spin':''}/><span>Refresh</span></Button></section>
       {!connected && <div className="rd-notice" role="status">You’re offline. Saved jobs remain visible; reconnect to check availability or update a booking.</div>}
+      {connected && reconnecting && <div className="rd-notice" role="status">Reconnecting… Your saved jobs and entered details are kept. Availability will be checked again before any update.</div>}
       {statsError && <div className="rd-notice" role="status"><p>{statsError}</p><Button variant="outline" size="sm" onClick={()=>void loadStats()}>Retry availability</Button></div>}
       {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs??0)>0} availabilityKnown={!!stats}/>}
       {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>setTab('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
@@ -509,6 +540,7 @@ function ActiveJobFlow({
   const { toast } = useToast();
   const status = job.status;
   const [updating, setUpdating] = useState(false);
+  const advancePending = useRef(false);
   const [showProof, setShowProof] = useState(false);
   const [pickupOtp, setPickupOtp] = useState("");
   const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
@@ -521,6 +553,7 @@ function ActiveJobFlow({
   useEffect(()=>{if(showProof)proofSection.current?.scrollIntoView({block:'start',behavior:'smooth'});},[showProof]);
 
   async function advance(to: BookingStatus) {
+    if (advancePending.current) return; advancePending.current = true;
     setUpdating(true);
     setPickupOtpError(null);
     try {
@@ -532,7 +565,7 @@ function ActiveJobFlow({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Update failed");
       setPickupOtp("");
-      onUpdated({ status: data.booking.status, etaMinutes: data.booking.etaMinutes });
+      onUpdated(data.booking);
       // Broadcast status change so the customer UI updates (no-op when no
       // tracking service is configured)
       try {
@@ -559,7 +592,7 @@ function ActiveJobFlow({
         variant: "destructive",
       });
     } finally {
-      setUpdating(false);
+      advancePending.current = false; setUpdating(false);
     }
   }
 

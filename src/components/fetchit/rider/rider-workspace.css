@@ -30,3 +30,12 @@
 }
 @media(prefers-reduced-motion:reduce){.rd *, .rd-job-screen *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 @media(max-width:360px){.rd .rd-tabs [data-slot=tabs-trigger]>svg{display:none}}
+
+.rd-notification-bell{position:relative;flex-shrink:0;width:42px!important;height:42px!important;border-radius:50%!important}
+.rd-notification-bell>span{position:absolute;right:-4px;top:-5px;background:var(--primary,#c14a18);color:white;min-width:18px;height:18px;line-height:18px;border-radius:20px;font-size:10px;padding:0 3px}
+.rd-alert-dialog{display:flex;flex-direction:column;max-height:85dvh;max-width:540px;min-width:0}
+.rd-alert-list{overflow-y:auto;min-height:0;overscroll-behavior:contain}
+.rd-alert-item{display:flex;flex-direction:column;gap:8px;width:100%;padding:16px;text-align:left;border-bottom:1px solid var(--border,#dde4da);border-radius:12px;overflow-wrap:anywhere}
+.rd-alert-item.is-unread{background:#f4f0e7}.rd-alert-item>span{font-size:14px}.rd-alert-item>small{font-size:12px;color:#65746d}
+.rd-alert-item:focus-visible{outline:2px solid #c14a18;outline-offset:-2px}
+@media(max-width:359px){.rd-header-inner{padding-left:12px!important;padding-right:12px!important}.rd-account{gap:7px!important}.rd-notification-bell{width:36px!important;height:36px!important}}

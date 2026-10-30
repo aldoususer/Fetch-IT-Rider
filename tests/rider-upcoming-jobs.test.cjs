@@ -30,7 +30,7 @@ function harness({online=true,services=['DELIVERY','RIDE'],rows=[],authorized=tr
   const db={user:{findUnique:async()=>({isBanned:banned,riderProfile:{vehicleClass:'TRICYCLE'},riderPresence:{isOnline:online}})},riderPresence:{updateMany:async()=>{writes++;}},riderServiceApproval:{findMany:async()=>approvals},booking:{findMany:async query=>{queries.push(query);return rows.filter(row=>matches(row,query.where));}}};
   class Clock extends Date {constructor(...args){super(...(args.length?args:[clock]));}}
   const route=load('src/app/api/rider/available/route.ts',{
-    '@/lib/rider-eligibility':eligibility,'@/lib/dispatch':{expireRiderOffers:async()=>{},dispatchPaymentWhere:{OR:[{paymentMethod:'CASH'},{paymentMethod:{in:['DEMO_GCASH','DEMO_MAYA','DEMO_BANK']},paymentStatus:'PAID'}]}},
+    '@/lib/job-expiry':load('src/lib/job-expiry.ts',{}),'@/lib/rider-eligibility':eligibility,'@/lib/dispatch':{expireRiderOffers:async()=>{},dispatchPaymentWhere:{OR:[{paymentMethod:'CASH'},{paymentMethod:{in:['DEMO_GCASH','DEMO_MAYA','DEMO_BANK']},paymentStatus:'PAID'}]}},
     '@/lib/db-data':views,'next/server':{NextResponse:{json:(data,init={})=>({data,status:init.status??200,headers:init.headers})}},'@/lib/db':{db},'@/lib/rider-access':{getRiderSession:async()=>authorized?{uid:'persona',role:'RIDER'}:null},'@/lib/job-privacy':privacy,
   },{Date:Clock});
   return {run:()=>route.GET({url:'https://rider.test/api/rider/available?includeMatched=true'}),queries,get writes(){return writes;}};

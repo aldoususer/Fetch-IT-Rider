@@ -1,3 +1,4 @@
+import { staleRequestWhere } from "@/lib/job-expiry";
 import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { dispatchPaymentWhere } from "@/lib/dispatch";
 // GET /api/rider/stats
@@ -30,7 +31,7 @@ export async function GET() {
   if (rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass) {
     const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere() } });
     const candidates = await db.booking.findMany({
-      where: { AND: [dispatchPaymentWhere], status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, vehicleClass: rider.riderProfile.vehicleClass, type: { in: [...new Set(approvals.map(a => a.service))] }, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
+      where: { AND: [dispatchPaymentWhere, { NOT: staleRequestWhere() }], status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, vehicleClass: rider.riderProfile.vehicleClass, type: { in: [...new Set(approvals.map(a => a.service))] }, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
       select: { type: true, vehicleClass: true, pickupLat: true, pickupLng: true, dropoffLat: true, dropoffLng: true },
     });
     available = candidates.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).length;

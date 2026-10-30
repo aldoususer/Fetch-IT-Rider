@@ -1,3 +1,4 @@
+import { staleRequestWhere } from "@/lib/job-expiry";
 import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { expireRiderOffers, dispatchPaymentWhere } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
   const where: Prisma.BookingWhereInput = includeMatched
     ? {
         vehicleClass: rider.riderProfile?.vehicleClass,
-        AND: [due, dispatchPaymentWhere],
+        AND: [due, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }],
         OR: [
           { status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } } },
           { status: "MATCHED", riderId: session.uid },
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
   // Separate queries keep future bookings from displacing jobs available now.
   const [jobs, upcoming] = await Promise.all([
     db.booking.findMany({ where: { ...where, type: { in: services } }, orderBy: { createdAt: "asc" }, take: 50, include }),
-    db.booking.findMany({ where: { ...where, type: { in: services }, AND: [{ scheduledAt: { gt: now } }, dispatchPaymentWhere] }, orderBy: { scheduledAt: "asc" }, take: 50, include }),
+    db.booking.findMany({ where: { ...where, type: { in: services }, AND: [{ scheduledAt: { gt: now } }, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }] }, orderBy: { scheduledAt: "asc" }, take: 50, include }),
   ]);
 
   const visible = (rows: typeof jobs) => rows.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).map(job => riderJobView(bookingView(job)));

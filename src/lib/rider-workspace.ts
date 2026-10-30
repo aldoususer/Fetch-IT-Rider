@@ -7,8 +7,12 @@ export interface RiderJob {
   cargoWeightKg: number; passengers: number; cargoNotes: string | null; scheduledAt: string | null;
   distanceKm: number; baseFare: number; surgeMultiplier: number; totalFare: number; paymentMethod: string;
   paymentStatus: string; demoCommissionBps: number | null; demoRiderEarnings: number | null; currency: string;
-  status: BookingStatus; assignmentExpiresAt?: string | null; etaMinutes: number | null; createdAt: string;
+  status: BookingStatus; assignmentExpiresAt?: string | null; etaMinutes: number | null; createdAt: string; updatedAt?: string;
   customer: { id: string; name: string; phone: string | null };
+}
+
+export function mergeRiderJob<T extends {updatedAt?: string}>(current: T, incoming: T) {
+  return Date.parse(current.updatedAt ?? '') > Date.parse(incoming.updatedAt ?? '') ? current : incoming;
 }
 
 export const isHistoryJob = (job: Pick<RiderJob, 'status'>) => ['DELIVERED', 'CANCELLED'].includes(job.status);

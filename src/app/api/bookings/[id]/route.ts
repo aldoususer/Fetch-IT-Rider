@@ -79,7 +79,7 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
       if (!booking) throw new DispatchError("Booking not found.", 404);
       if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("This demo booking needs a successful demo payment before it can progress.");
       const now = new Date();
-      if (status === "ACCEPTED" && booking.status === "ACCEPTED" && booking.riderId === session.uid) {
+      if (status === booking.status && booking.riderId === session.uid) {
         return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
       }
       if (status === "ACCEPTED") {
