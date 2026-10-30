@@ -69,7 +69,7 @@ export function ProfileMenu({
           <DropdownMenuSeparator />
           {onViewProfile && <DropdownMenuItem onSelect={onViewProfile}><UserRound className="h-4 w-4"/> Rider profile</DropdownMenuItem>}
           <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-            <Settings className="h-4 w-4" /> Settings
+            <Settings className="h-4 w-4" /> Account details
           </DropdownMenuItem>
           {canInstall && (
             <DropdownMenuItem onClick={install}>
@@ -88,9 +88,9 @@ export function ProfileMenu({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5 text-primary" /> Settings
+              <Settings className="h-5 w-5 text-primary" /> Account details
             </DialogTitle>
-            <DialogDescription>Your account details.</DialogDescription>
+            <DialogDescription>Your registered account information.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="min-w-0 rounded-md border p-3 space-y-1 text-sm">

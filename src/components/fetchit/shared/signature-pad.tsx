@@ -18,6 +18,8 @@ export function SignaturePad({
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const drawing = useRef(false);
+  const savedStrokes = useRef<Point[][]>([]);
+  const activeStroke = useRef<Point[]>([]);
   // Rendered strokes (committed) + the in-progress stroke.
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const [current, setCurrent] = useState<Point[]>([]);
@@ -34,24 +36,26 @@ export function SignaturePad({
     e.preventDefault();
     (e.target as Element).setPointerCapture(e.pointerId);
     drawing.current = true;
-    setCurrent([getPoint(e)]);
+    activeStroke.current = [getPoint(e)];
+    setCurrent(activeStroke.current);
   }
 
   function move(e: React.PointerEvent<SVGSVGElement>) {
     if (!drawing.current) return;
     e.preventDefault();
-    setCurrent((prev) => [...prev, getPoint(e)]);
+    activeStroke.current = [...activeStroke.current, getPoint(e)];
+    setCurrent(activeStroke.current);
   }
 
   function end(e: React.PointerEvent<SVGSVGElement>) {
     if (!drawing.current) return;
     e.preventDefault();
     drawing.current = false;
-    setStrokes((prev) => {
-      const next = current.length > 1 ? [...prev, current] : prev;
-      commitChange(next);
-      return next;
-    });
+    const next = activeStroke.current.length > 1 ? [...savedStrokes.current, activeStroke.current] : savedStrokes.current;
+    savedStrokes.current = next;
+    setStrokes(next);
+    commitChange(next);
+    activeStroke.current = [];
     setCurrent([]);
   }
 
@@ -73,6 +77,8 @@ export function SignaturePad({
   }
 
   function clear() {
+    savedStrokes.current = [];
+    activeStroke.current = [];
     setStrokes([]);
     setCurrent([]);
     onChange(null);

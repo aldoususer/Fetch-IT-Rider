@@ -24,21 +24,21 @@ export function resumeRegistration(app: ProgressApplication): RegistrationStep {
   if (saved > 0) return saved as RegistrationStep;
   return Object.values(SECTION_FIELDS).flat().some(key => !['legalName', 'mobile', 'plateNumber'].includes(key) && app.fields[key]) ? 2 : 1;
 }
-export type RegistrationIssue = { step: RegistrationStep; message: string };
+export type RegistrationIssue = { step: RegistrationStep; message: string; field?: string; documentKind?: string; section?: string };
 export function registrationIssues(app: ProgressApplication, vehicle: string, services: string[], fields: Fields, now = new Date()): RegistrationIssue[] {
   const issues: RegistrationIssue[] = [];
   if (!app.emailVerifiedAt) issues.push({ step: 0, message: 'Verify your email.' });
   try { validateSelection(vehicle, services); } catch { issues.push({ step: 1, message: 'Choose your vehicle and at least one service.' }); }
   const missing = Object.values(SECTION_FIELDS).flat().filter(key => visibleFields([key], vehicle, services).length && !fields[key]?.trim());
-  for (const key of missing) issues.push({ step: 2, message: `Complete ${FIELD_LABELS[key]}.` });
+  for (const key of missing) issues.push({ step: 2, field: key, message: `Complete ${FIELD_LABELS[key]}.` });
   if (!missing.length) {
     try { validateApplication(vehicle, services, fields, now); } catch (error) { issues.push({ step: 2, message: error instanceof Error ? error.message : 'Check your details.' }); }
   }
-  for (const [section, review] of Object.entries(app.fieldReviews)) if (review.status === 'NEEDS_CORRECTION' && !SECTION_FIELDS[section as keyof typeof SECTION_FIELDS]?.some(key => fields[key] !== (app.fields[key] ?? ''))) issues.push({ step: 2, message: `Correct the ${section} details${review.reason ? ': ' + review.reason : '.'}` });
+  for (const [section, review] of Object.entries(app.fieldReviews)) if (review.status === 'NEEDS_CORRECTION' && !SECTION_FIELDS[section as keyof typeof SECTION_FIELDS]?.some(key => fields[key] !== (app.fields[key] ?? ''))) issues.push({ step: 2, section, message: `Correct the ${section} details${review.reason ? ': ' + review.reason : '.'}` });
   for (const kind of requiredDocuments(vehicle, services, fields)) {
     const doc = app.documents.find(d => d.current && d.kind === kind);
-    if (!doc || doc.status === 'NEEDS_CORRECTION') issues.push({ step: 3, message: `${doc ? 'Replace' : 'Upload'} ${DOCUMENT_LABELS[kind]}.` });
+    if (!doc || doc.status === 'NEEDS_CORRECTION') issues.push({ step: 3, documentKind: kind, message: `${doc ? 'Replace' : 'Upload'} ${DOCUMENT_LABELS[kind]}.` });
   }
-  for (const doc of app.documents) if (doc.current && doc.status === 'NEEDS_CORRECTION' && !requiredDocuments(vehicle, services, fields).includes(doc.kind)) issues.push({ step: 3, message: `Replace ${DOCUMENT_LABELS[doc.kind] || doc.kind}.` });
+  for (const doc of app.documents) if (doc.current && doc.status === 'NEEDS_CORRECTION' && !requiredDocuments(vehicle, services, fields).includes(doc.kind)) issues.push({ step: 3, documentKind: doc.kind, message: `Replace ${DOCUMENT_LABELS[doc.kind] || doc.kind}.` });
   return issues;
 }

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 
 type Fix = { lat: number; lng: number; accuracy: number; at: number; speedKph?: number; heading?: number };
 
-export function BrowserLocation({ userId, needed }: { userId: string; needed: boolean }) {
+export function BrowserLocation({ userId, needed, availabilityKnown = true }: { userId: string; needed: boolean; availabilityKnown?: boolean }) {
   const [enabled, setEnabled] = useState(false);
   const [fix, setFix] = useState<Fix | null>(null);
   const [sentAt, setSentAt] = useState<number | null>(null);
@@ -59,14 +59,17 @@ export function BrowserLocation({ userId, needed }: { userId: string; needed: bo
       document.removeEventListener("visibilitychange", resume); window.removeEventListener("online", resume); };
   }, [enabled, needed, retry, userId]);
   const fresh = needed && enabled && fix && Math.max(now, Date.now()) - fix.at <= 30_000;
-  return <section className="rounded-xl border bg-card p-4 space-y-3" aria-label="Browser location sharing">
+  return <details className="rd-location" aria-label="Browser location sharing">
+    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location status…' : error ? 'GPS needs attention' : !needed ? 'GPS inactive' : !enabled ? 'GPS off · location not shared' : fresh && sentAt ? 'GPS shared with your customer' : 'Finding your location…'}</strong><span className="rd-location-expand">Details</span></summary>
+    <div className="rd-location-body space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Your live location</h2><p className="text-xs text-muted-foreground">Shared with your assigned customer during an active booking.</p></div><Button size="sm" variant={enabled ? "outline" : "default"} disabled={!needed} onClick={() => {
       if (!window.isSecureContext || !navigator.geolocation) { setError("Location sharing needs HTTPS and a browser that supports location."); return; }
       setEnabled(value => !value); setError(""); setFix(null); setSentAt(null);
     }}>{enabled ? "Stop sharing" : "Share location"}</Button></div>
-    <p className="text-sm" role="status">{!needed ? "Go online to share your location." : error || (!enabled ? "Location sharing is off. Allow browser location to show your current position." : (!fix ? "Finding your location…" : !fresh ? "Location is stale. Waiting for a fresh device location…" : sentAt ? "Location shared" : "Sharing location…"))}</p>
+    <p className="text-sm" role="status">{!availabilityKnown ? 'Checking your availability before enabling location sharing.' : !needed ? "Go online to share your location." : error || (!enabled ? "Receiving jobs and sharing GPS are separate. Enable location so your assigned customer can follow your progress." : (!fix ? "Finding your location…" : !fresh ? "Location is stale. Waiting for a fresh device location…" : sentAt ? "Location shared" : "Sharing location…"))}</p>
     {fresh && <div className="text-sm space-y-1"><a className="underline underline-offset-4" target="_blank" rel="noopener noreferrer" href={`https://www.openstreetmap.org/?mlat=${fix.lat}&mlon=${fix.lng}#map=17/${fix.lat}/${fix.lng}`}>{fix.lat.toFixed(6)}, {fix.lng.toFixed(6)} · View on map</a><p className="text-xs text-muted-foreground">Device accuracy: ±{Math.round(fix.accuracy)} m{fix.accuracy > 100 ? " · Approximate location; move outdoors for better accuracy." : ""}</p>{sentAt && <p className="text-xs text-muted-foreground">Last shared {new Date(sentAt).toLocaleTimeString()}</p>}</div>}
     {enabled && error && <Button size="sm" variant="outline" onClick={() => { setError(""); setFix(null); setSentAt(null); setRetry(value => value + 1); }}>Retry location</Button>}
     <p className="text-xs text-muted-foreground">Keep this page open and your device awake while sharing. Your browser may pause GPS when it is in the background.</p>
-  </section>;
+    </div>
+  </details>;
 }

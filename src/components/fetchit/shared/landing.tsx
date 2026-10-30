@@ -36,18 +36,18 @@ import { useAppStore, type Role } from "@/lib/store";
 const FEATURES = [
   {
     icon: Cpu,
-    title: "Automatic Job Matching",
-    desc: "New bookings that fit your vehicle class appear on your jobs board the moment customers book — claim them with one tap.",
+    title: "Jobs for your vehicle",
+    desc: "See available and scheduled requests matching your vehicle and approved services. Review the route before accepting.",
   },
   {
     icon: Navigation,
-    title: "Turn-by-Turn Routing",
-    desc: "Optimized pickup and drop-off paths with live GPS so you spend less time in traffic and more time earning.",
+    title: "Clear pickup and drop-off directions",
+    desc: "Review the street map, then open directions to the stop you need next.",
   },
   {
     icon: PenTool,
-    title: "Fast e-POD Capture",
-    desc: "Collect recipient signatures and drop-off photos to record proof of delivery.",
+    title: "Recipient confirmation",
+    desc: "Collect the recipient’s signature to complete a delivery after the required payment confirmations.",
   },
   {
     icon: Wallet,
@@ -140,7 +140,7 @@ export function LandingView() {
               <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
                 <span className="inline-flex items-center gap-1.5">
                   <Smartphone className="h-3.5 w-3.5" />
-                  Installable PWA · Standalone rider app
+                  Delivery and passenger jobs, in one place
                 </span>
               </Badge>
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.05]">
@@ -149,10 +149,9 @@ export function LandingView() {
                 <span className="text-primary">Get paid.</span>
               </h1>
               <p className="text-lg text-muted-foreground max-w-xl">
-                Fetch-It Rider is the driver side of the Fetch-It logistics
-                platform. Go online, get matched with nearby delivery jobs that
-                fit your vehicle, and earn on every completed delivery — from
-                motorcycle parcels to full flatbed hauls.
+                Choose jobs for your approved vehicle and services. Review
+                pickup and drop-off locations, navigate to your next stop,
+                and complete each trip with clear payment updates.
               </p>
               <div className="flex flex-wrap gap-3">
                 <Button size="lg" onClick={() => pickRole("RIDER", "signup")}>
@@ -165,15 +164,15 @@ export function LandingView() {
               <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground pt-2">
                 <div className="flex items-center gap-1.5">
                   <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
-                  <span>4.9 average rider rating</span>
+                  <span>Review routes before accepting</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Clock className="h-4 w-4 text-primary" />
-                  <span>&lt; 3 min average match time</span>
+                  <span>Jobs for your approved services</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                  <span>Parcels insured up to ₱5,000</span>
+                  <span>Clear cash payment confirmations</span>
                 </div>
               </div>
             </div>
@@ -210,9 +209,9 @@ export function LandingView() {
             <CardContent className="space-y-4">
               <ul className="space-y-2 text-sm">
                 {[
-                  "Auto-matched jobs near you",
-                  "Optimized turn-by-turn routing",
-                  "Capture e-POD in seconds",
+                  "Review jobs for your vehicle",
+                  "Navigate to pickup and drop-off",
+                  "Confirm delivery with a signature",
                 ].map((b) => (
                   <li key={b} className="flex items-start gap-2">
                     <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
@@ -300,14 +299,13 @@ export function LandingView() {
           <div className="space-y-2">
             <FetchItLogo />
             <p className="text-sm text-muted-foreground max-w-md">
-              Fetch-It Rider — the driver app for the Fetch-It logistics
-              network. Built as a standalone PWA on Next.js 16, deployable
-              anywhere.
+              Fetch-It Rider — your workspace for delivery and passenger jobs.
+              Find your next job, follow the route, and keep track of completed trips.
             </p>
           </div>
           <div className="text-sm text-muted-foreground space-y-1">
             <p>© {new Date().getFullYear()} Fetch-It. All rights reserved.</p>
-            <p>Deployed on Vercel · Made for riders.</p>
+            <p>Delivery and passenger services · Made for riders.</p>
           </div>
         </div>
       </footer>

@@ -11,11 +11,7 @@ import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Bike,
-  Car,
-  Truck,
   Package,
-  MapPin,
   Navigation,
   Clock,
   Star,
@@ -53,7 +49,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -70,7 +65,6 @@ import { useAppStore, type AuthUser } from "@/lib/store";
 import {
   VEHICLES,
   statusLabel,
-  type VehicleClass,
   type BookingStatus,
 } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -81,7 +75,11 @@ import { StatusBadge } from "../shared/status-badge";
 import { JobRouteMap } from "./job-route-map";
 import { SignaturePad } from "../shared/signature-pad";
 import { ProfileMenu } from "../shared/profile-menu";
-import "./rider-dashboard.css";
+import { JobHistoryRow, JobHistorySummary } from './job-history';
+import { JobPreview } from './job-preview';
+import { availabilityLabel, filterHistoryJobs, isHistoryJob, jobTiming, nextJobStop, pickupCodeFeedback, type RiderJob } from '@/lib/rider-workspace';
+import { ArrowLeft, SlidersHorizontal, Search } from 'lucide-react';
+import "./rider-workspace.css";
 
 interface RiderStats {
   activeJobs: number;
@@ -98,41 +96,7 @@ interface RiderStats {
   vehiclePlate: string | null;
 }
 
-interface Job {
-  id: string;
-  refCode: string;
-  // Rider-only tracking ticket (R0001 / D0001) + its encoded native-app
-  // payload — see src/lib/ticket.ts. Never present in the customer app.
-  ticketId: string | null;
-  ticket: string | null;
-  type: string;
-  customerId: string;
-  riderId: string | null;
-  pickupLabel: string;
-  pickupLat: number;
-  pickupLng: number;
-  dropoffLabel: string;
-  dropoffLat: number;
-  dropoffLng: number;
-  vehicleClass: VehicleClass;
-  cargoWeightKg: number;
-  passengers: number;
-  cargoNotes: string | null;
-  scheduledAt: string | null;
-  distanceKm: number;
-  baseFare: number;
-  surgeMultiplier: number;
-  totalFare: number;
-  paymentMethod: string;
-  demoCommissionBps: number | null;
-  demoRiderEarnings: number | null;
-  currency: string;
-  status: BookingStatus;
-  assignmentExpiresAt?: string | null;
-  etaMinutes: number | null;
-  createdAt: string;
-  customer: { id: string; name: string; phone: string | null };
-}
+type Job = RiderJob;
 
 type JobTab = "available" | "active" | "history";
 
@@ -148,6 +112,19 @@ export function RiderDashboard() {
 
   const [profile, setProfile] = useState<RiderProfileData | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [statsError, setStatsError] = useState('');
+  const [connected, setConnected] = useState(true);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [historyFilter, setHistoryFilter] = useState('ALL');
+  const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
+  const detailDirty = useRef(false);
+  const lastJobTrigger = useRef<HTMLElement | null>(null);
+  const workspaceHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    const update = () => setConnected(navigator.onLine);
+    update(); window.addEventListener('online', update); window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
   const [statusPending, setStatusPending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<RiderStats | null>(null);
@@ -166,12 +143,10 @@ export function RiderDashboard() {
   const loadStats = useCallback(async (signal?: AbortSignal) => {
     try {
       const res = await fetch("/api/rider/stats", { cache: "no-store", signal });
-      if (!res.ok) throw new Error("Stats unavailable");
       const data = await res.json();
-      if (!signal?.aborted) setStats(data);
-    } catch {
-      /* ignore */
-    }
+      if (!res.ok || typeof data.isOnline !== 'boolean') throw new Error("Stats unavailable");
+      if (!signal?.aborted) { setStats(data); setStatsError(''); }
+    } catch { if (!signal?.aborted) setStatsError('Couldn’t check availability. Retry before changing your status.'); }
   }, []);
 
   const loadJobs = useCallback(async (signal?: AbortSignal) => {
@@ -179,18 +154,18 @@ export function RiderDashboard() {
     try {
       const path = tab === "available" ? "/api/rider/available?includeMatched=true" : `/api/bookings?filter=${tab}`;
       const res = await fetch(path, { cache: "no-store", signal });
-      if (!res.ok) throw new Error("Jobs unavailable");
-      const data = await res.json();
+      const data = await res.json().catch(()=>null);
+      if (!res.ok) throw new Error(res.status===401?'Your session expired. Sign in again to refresh jobs.':res.status===403?data?.error||'Your rider account cannot access these jobs. Contact support.':'Jobs are temporarily unavailable. Please try again.');
       if (signal?.aborted || request !== jobsRequest.current) return;
-      const latest = tab === "available" ? data.jobs : data.bookings;
-      if (!Array.isArray(latest)) throw new Error("Jobs unavailable");
+      const latest = tab === "available" ? data?.jobs : data?.bookings;
+      if (!Array.isArray(latest)) throw new Error("Jobs are temporarily unavailable. Please try again.");
       setJobLists(previous => ({ ...previous, [tab]: latest as Job[] }));
       if (tab === "available") setUpcomingJobs(Array.isArray(data.upcomingJobs) ? data.upcomingJobs : []);
       setJobsCheckedAt(new Date().toISOString());
       setJobErrors(previous => ({ ...previous, [tab]: undefined }));
-      if (tab === "active") setActiveJob(previous => previous ? latest.find(job => job.id === previous.id) ?? null : null);
+      if (tab === "active") setActiveJob(previous => previous && !isHistoryJob(previous) ? latest.find(job => job.id === previous.id) ?? null : previous);
     } catch (error) {
-      if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [tab]: "Couldn’t update jobs. Please try again." }));
+      if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [tab]: error instanceof TypeError ? 'Couldn’t connect. Reconnect and refresh your jobs.' : error instanceof Error ? error.message : 'Couldn’t update jobs. Please try again.' }));
       throw error;
     }
   }, [tab]);
@@ -216,7 +191,7 @@ export function RiderDashboard() {
   }, [user?.id, stats?.rating, stats?.completedJobs]);
 
   async function toggleOnline(next: boolean) {
-    if (statusPending) return;
+    if (statusPending || !stats || statsError || !connected) return;
     setStatusPending(true);
     try {
       const res = await fetch("/api/rider/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ online: next }) });
@@ -251,7 +226,7 @@ export function RiderDashboard() {
         description: data.error || "Could not accept this job.",
         variant: "destructive",
       });
-      throw new Error(data.error || "Could not accept this job.");
+      throw new Error(data.error || "Couldn’t accept this request. Refresh jobs to check its availability.");
     }
     jobsRequest.current++;
     toast({ title: "Job accepted", description: job.refCode });
@@ -270,187 +245,57 @@ export function RiderDashboard() {
     setTab("available");
   }
 
-  return (
-    <div className="rd">
-      {/* Header */}
-      <header className="rd-header">
-        <div className="rd-header-inner">
-          <button
-            type="button"
-            onClick={goHome}
-            className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Go to dashboard"
-          >
-            <FetchItLogo />
-          </button>
-          <div className="rd-account">
-            <OnlineToggle
-              pending={statusPending}
-              isOnline={stats?.isOnline ?? false}
-              onToggle={(v) => toggleOnline(v)}
-            />
-            <div className="hidden sm:flex flex-col items-end text-sm leading-tight">
-              <span className="font-medium">{user?.name}</span>
-              <span className="text-xs text-muted-foreground">
-                {stats?.vehicleClass ? VEHICLES[stats.vehicleClass as VehicleClass]?.label : "—"}
-                {stats?.vehiclePlate ? ` · ${stats.vehiclePlate}` : ""}
-              </span>
-            </div>
-            <ProfileMenu
-              name={user?.name}
-              email={user?.email}
-              roleLabel="Rider"
-              onViewProfile={() => setProfileOpen(true)}
-              onLogout={() => void logout()}
-            />
-          </div>
-        </div>
-      </header>
-
-      <main className="rd-main">
-        <section className={cn("rd-welcome", stats?.isOnline && "is-online")}>
-          <div><p className="rd-eyebrow">YOUR DAY, ON THE MOVE</p><h1>Let’s get moving, {user?.name?.split(" ")[0] ?? "rider"}.</h1><p>{stats?.isOnline ? "You're online. Your next job could be just around the corner." : "Your jobs, routes and earnings. All in one place."}</p></div>
-          <div className="rd-vehicle"><span className="rd-availability-dot"/>{stats?.vehicleClass ? VEHICLES[stats.vehicleClass as VehicleClass]?.label ?? stats.vehicleClass : "Your rider workspace"}{stats?.vehiclePlate && <span>{stats.vehiclePlate}</span>}</div>
-        </section>
-
-        {/* Stats grid */}
-        <div className="rd-stats" aria-label="Rider activity">
-          <StatCard
-            icon={<Activity className="h-5 w-5 text-primary" />}
-            label="Active jobs"
-            value={stats?.activeJobs ?? 0}
-            loading={!stats}
-          />
-          <StatCard
-            icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />}
-            label="Completed"
-            value={stats?.completedJobs ?? 0}
-            loading={!stats}
-          />
-          <StatCard
-            icon={<Star className="h-5 w-5 text-amber-500 fill-amber-500" />}
-            label="Rating"
-            value={profile?.ratingCount ? (profile.rating ?? 0).toFixed(1) : "New"}
-            loading={!stats}
-          />
-          <StatCard
-            icon={<Wallet className="h-5 w-5 text-primary" />}
-            label="Completed cash fares"
-            value={`₱${(stats?.earnings ?? 0).toFixed(2)}`}
-            loading={!stats}
-          />
-        </div>
-
-        {!!stats && (stats.demoEarnings > 0 || stats.demoAwaitingPayout > 0 || stats.demoPaidOut > 0) && <details className="rd-earnings">
-          <summary><Wallet size={18} aria-hidden="true"/><span>Online earnings<small>Test transactions</small></span><strong>₱{stats.demoEarnings.toFixed(2)}</strong><ChevronDown size={16} aria-hidden="true"/></summary>
-          <div><p>Test payments and payouts — no money transferred.</p><dl><div><dt>Earned</dt><dd>₱{stats.demoEarnings.toFixed(2)}</dd></div><div><dt>Awaiting review</dt><dd>₱{stats.demoAwaitingPayout.toFixed(2)}</dd></div><div><dt>Payouts</dt><dd>₱{stats.demoPaidOut.toFixed(2)}</dd></div></dl></div>
-        </details>}
-        {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs ?? 0) > 0} />}
-        <div className="rd-board-heading"><div><p className="rd-eyebrow">YOUR WORKSPACE</p><h2>Jobs board</h2></div><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={16} className={refreshing ? "animate-spin" : ""}/>Refresh</Button></div>
-        {jobsCheckedAt && <p className="text-xs text-muted-foreground">Updated {new Date(jobsCheckedAt).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila" })} · Philippine time</p>}
-        {/* Tabs */}
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList className="rd-tabs">
-            <TabsTrigger value="available" className="gap-1.5">
-              <Package className="h-4 w-4" /> Available
-              {(jobLists.available?.length ?? stats?.availableJobs ?? 0) > 0 && (
-                <span className="ml-1 rounded-full bg-primary/15 text-primary text-xs px-1.5">
-                  {jobLists.available?.length ?? stats?.availableJobs}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="active" className="gap-1.5">
-              <CircleDot className="h-4 w-4" /> Active
-              {stats?.activeJobs ? (
-                <span className="ml-1 rounded-full bg-primary/15 text-primary text-xs px-1.5">
-                  {stats.activeJobs}
-                </span>
-              ) : null}
-            </TabsTrigger>
-            <TabsTrigger value="history" className="gap-1.5">
-              <Clock className="h-4 w-4" /> History
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {/* Job list */}
-        {jobErrors[tab] && <div role="status" className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
-          <p>{jobLists[tab] ? "Couldn’t refresh. Your current jobs remain visible." : jobErrors[tab]}</p>
-          <Button variant="outline" size="sm" onClick={() => void loadJobs().catch(() => {})}>Try again</Button>
-        </div>}
-        {loading ? (
-          <div className="rd-jobs-grid">
-            {[0, 1, 2, 3].map((i) => (
-              <Card key={i} className="border">
-                <CardHeader><Skeleton className="h-6 w-40" /></CardHeader>
-                <CardContent className="space-y-3">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-2/3" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : jobLists[tab] === undefined ? null : jobs.length === 0 ? (
-          <EmptyJobs
-            tab={tab}
-            isOnline={stats?.isOnline ?? false}
-            onGoOnline={() => toggleOnline(true)}
-          />
-        ) : (
-          <div className="rd-jobs-grid">
-            {jobs.map((job) => (
-              <JobCard
-                key={job.id}
-                job={job}
-                isAvailable={tab === "available"}
-                onAccept={() => accept(job)}
-                onReleased={() => { setActiveJob(null); void loadJobs(); void loadStats(); }}
-                onOpen={() => setActiveJob(job)}
-              />
-            ))}
-          </div>
-        )}
-        {tab === "available" && upcomingJobs.length > 0 && <section className="mt-6 space-y-3" aria-labelledby="upcoming-jobs-heading">
-          <div><h2 id="upcoming-jobs-heading" className="font-semibold text-lg">Upcoming · {upcomingJobs.length}</h2><p className="text-sm text-muted-foreground">Scheduled requests matching your vehicle and approved services. You can accept them when pickup is due.</p></div>
-          <div className="rd-jobs-grid">{upcomingJobs.map(job => <JobCard key={job.id} job={job} isAvailable upcoming onAccept={() => accept(job)} onReleased={() => void refreshBoard()} onOpen={() => setActiveJob(job)}/>)}</div>
-        </section>}
-      </main>
-
-      <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
-
-      {/* Active job modal */}
-      <Dialog open={!!activeJob} onOpenChange={(o) => !o && setActiveJob(null)}>
-        <DialogContent className="rd-job-dialog sm:max-w-2xl max-h-[92vh] overflow-y-auto">
-          {activeJob && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Navigation className="h-5 w-5 text-primary" />
-                  {activeJob.type === "RIDE" ? "Ride" : "Job"} · {activeJob.refCode}
-                </DialogTitle>
-                <DialogDescription>
-                  {statusLabel(activeJob.status, activeJob.type === "RIDE" ? "RIDE" : "DELIVERY")}
-                </DialogDescription>
-              </DialogHeader>
-              <ActiveJobFlow
-                job={activeJob}
-                onUpdated={(updated) => {
-                  setActiveJob((prev) => (prev ? { ...prev, ...updated } : prev));
-                  void loadJobs().catch(() => {});
-                  void loadStats();
-                }}
-                onClose={() => setActiveJob(null)}
-              />
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <footer className="rd-footer">
-        Fetch-It Rider · Your next move starts here.
-      </footer>
-    </div>
-  );
+  const visibleHistory = filterHistoryJobs(jobs, historyQuery, historyFilter);
+  const serviceText = profile?.services.map(service => service === 'RIDE' ? 'Passenger rides' : 'Delivery').join(' + ');
+  const vehicleText = stats?.vehicleClass ? VEHICLES[stats.vehicleClass as keyof typeof VEHICLES]?.label ?? stats.vehicleClass : 'Your rider workspace';
+  function openJob(job: Job) { lastJobTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; detailDirty.current = false; setActiveJob(job); }
+  function closeJob() {
+    if (detailDirty.current && !window.confirm('Leave this job screen? Unsaved pickup code or recipient signature will be discarded. Your booking is kept.')) return;
+    detailDirty.current = false; setActiveJob(null);
+  }
+  return <div className="rd">
+    <header className="rd-header"><div className="rd-header-inner">
+      <button type="button" onClick={goHome} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Go to dashboard"><FetchItLogo/></button>
+      <div className="rd-account">
+        <OnlineToggle pending={statusPending} isOnline={stats ? stats.isOnline : null} disabled={!connected || !!statsError} onToggle={v=>void toggleOnline(v)}/>
+        <ProfileMenu name={user?.name} email={user?.email} roleLabel="Rider" onViewProfile={()=>setProfileOpen(true)} onLogout={()=>void logout()}/>
+      </div>
+    </div></header>
+    <main className="rd-main">
+      <section className="rd-board-heading"><div><h1 ref={workspaceHeading} tabIndex={-1}>Your jobs</h1><p>{vehicleText}{serviceText ? ' · '+serviceText : ''}</p></div><Button variant="outline" size="sm" disabled={refreshing || !connected} onClick={()=>void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={18} className={refreshing?'animate-spin':''}/><span>Refresh</span></Button></section>
+      {!connected && <div className="rd-notice" role="status">You’re offline. Saved jobs remain visible; reconnect to check availability or update a booking.</div>}
+      {statsError && <div className="rd-notice" role="status"><p>{statsError}</p><Button variant="outline" size="sm" onClick={()=>void loadStats()}>Retry availability</Button></div>}
+      {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs??0)>0} availabilityKnown={!!stats}/>}
+      {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>setTab('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
+      <Tabs value={tab} onValueChange={v=>setTab(v as JobTab)}><TabsList className="rd-tabs">
+        <TabsTrigger value="available"><Package size={16}/>Available <span>{jobLists.available?.length??stats?.availableJobs??'—'}</span></TabsTrigger>
+        <TabsTrigger value="active"><CircleDot size={16}/>Active <span>{stats?.activeJobs??'—'}</span></TabsTrigger>
+        <TabsTrigger value="history"><Clock size={16}/>History</TabsTrigger>
+      </TabsList></Tabs>
+      {jobsCheckedAt && <p className="rd-sync">{connected?'Last checked':'Last connected'} {new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time</p>}
+      {tab==='history' && <div className="rd-history-tools"><div className="rd-search"><Search size={18} aria-hidden="true"/><label className="sr-only" htmlFor="rider-history-search">Search booking history</label><input id="rider-history-search" type="search" placeholder="Search reference or address" value={historyQuery} onChange={event=>setHistoryQuery(event.target.value)}/></div><Button variant="outline" aria-label="Filter booking history" aria-expanded={historyFiltersOpen} aria-controls="rider-history-filters" onClick={()=>setHistoryFiltersOpen(value=>!value)}><SlidersHorizontal size={18}/>Filters{historyFilter!=='ALL'?' · 1':''}</Button>{historyFiltersOpen && <div id="rider-history-filters" className="rd-history-filters"><label>Status<select value={historyFilter} onChange={event=>setHistoryFilter(event.target.value)}><option value="ALL">All bookings</option><option value="DELIVERED">Completed</option><option value="CANCELLED">Cancelled</option></select></label><Button variant="ghost" onClick={()=>{setHistoryFilter('ALL');setHistoryQuery('');}}>Clear filters</Button></div>}</div>}
+      {jobErrors[tab] && <div role="status" className="rd-notice"><p>{jobErrors[tab]}{jobLists[tab]?' Your current jobs remain visible.':''}</p><Button variant="outline" size="sm" onClick={()=>void loadJobs().catch(()=>{})}>Try again</Button></div>}
+      {loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
+        : jobLists[tab]===undefined ? null
+        : jobs.length===0 ? <EmptyJobs tab={tab} isOnline={stats?stats.isOnline:null} onGoOnline={()=>void toggleOnline(true)}/>
+        : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice">No bookings match this search. Try another address or clear your filters.</div>}{jobs.length===100 && <p className="rd-help">Searching your 100 most recent bookings.</p>}</section>
+        : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={tab==='available'} onOpen={()=>openJob(job)}/>)}</div>}
+      {tab==='available' && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
+      <details className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">
+        <StatCard icon={<Activity size={20}/>} label="Active jobs" value={stats?.activeJobs??0} loading={!stats}/>
+        <StatCard icon={<CheckCircle2 size={20}/>} label="Completed" value={stats?.completedJobs??0} loading={!stats}/>
+        <StatCard icon={<Star size={20}/>} label="Customer rating" value={profile?.ratingCount?(profile.rating??0).toFixed(1):'No ratings yet'} loading={!stats}/>
+        <StatCard icon={<Wallet size={20}/>} label="Completed cash fares" value={'₱'+(stats?.earnings??0).toFixed(2)} loading={!stats}/>
+      </div>{!!stats && (stats.demoEarnings>0||stats.demoAwaitingPayout>0||stats.demoPaidOut>0) && <div className="rd-notice"><p>Online test transactions · no money transferred</p><p>Earned ₱{stats.demoEarnings.toFixed(2)} · Awaiting review ₱{stats.demoAwaitingPayout.toFixed(2)} · Payouts ₱{stats.demoPaidOut.toFixed(2)}</p></div>}</details>
+    </main>
+    <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
+    <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
+      {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
+        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{setActiveJob(null);void refreshBoard();}}/>
+          : <ActiveJobFlow key={activeJob.id} job={activeJob} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?{...previous,...updated}:previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
+    </DialogContent></Dialog>
+    <footer className="rd-footer">Fetch-It Rider · Your next move starts here.</footer>
+  </div>;
 }
 
 function StatCard({
@@ -470,10 +315,12 @@ function StatCard({
 function OnlineToggle({
   pending,
   isOnline,
+  disabled = false,
   onToggle,
 }: {
   pending: boolean;
-  isOnline: boolean;
+  isOnline: boolean | null;
+  disabled?: boolean;
   onToggle: (next: boolean) => void;
 }) {
   return (
@@ -481,11 +328,12 @@ function OnlineToggle({
       variant={isOnline ? "default" : "outline"}
       size="sm"
       onClick={() => onToggle(!isOnline)}
-      disabled={pending}
+      disabled={pending || disabled || isOnline === null}
+      aria-label={availabilityLabel(isOnline, pending)}
       className={cn("rd-online-toggle", isOnline && "is-online")}
     >
       <PowerCircle className={cn("h-4 w-4", isOnline ? "text-emerald-500" : "text-muted-foreground")} />
-      {pending ? "Updating…" : isOnline ? "Online" : "Offline"}
+      {isOnline === null ? 'Checking…' : availabilityLabel(isOnline, pending)}
     </Button>
   );
 }
@@ -496,7 +344,7 @@ function EmptyJobs({
   onGoOnline,
 }: {
   tab: "available" | "active" | "history";
-  isOnline: boolean;
+  isOnline: boolean | null;
   onGoOnline: () => void;
 }) {
   if (tab === "history") {
@@ -506,7 +354,7 @@ function EmptyJobs({
           <div className="mx-auto h-14 w-14 rounded-full bg-muted grid place-items-center mb-4">
             <Clock className="h-7 w-7 text-muted-foreground" />
           </div>
-          <h3 className="font-semibold text-lg">No completed deliveries yet</h3>
+          <h3 className="font-semibold text-lg">No booking history yet</h3>
           <p className="text-muted-foreground mt-1">
             Accept your first job to start earning.
           </p>
@@ -521,16 +369,16 @@ function EmptyJobs({
           <Package className="h-7 w-7 text-primary" />
         </div>
         <h3 className="font-semibold text-lg">
-          {tab === "available" ? "No jobs available right now" : "No active jobs"}
+          {tab === "available" ? isOnline===null?'Checking your workspace…':"No jobs available right now" : "No active jobs"}
         </h3>
         <p className="text-muted-foreground mt-1 max-w-sm mx-auto">
           {tab === "available"
-            ? isOnline
-              ? "New jobs matching your vehicle will appear here automatically."
+            ? isOnline === null ? "Checking your availability. Please wait…" : isOnline
+              ? "No matching requests right now. New jobs for your vehicle and approved services appear automatically."
               : "You're offline — go online to start receiving job matches."
             : "Accept a job from the Available tab to start driving."}
         </p>
-        {tab === "available" && !isOnline && (
+        {tab === "available" && isOnline === false && (
           <Button className="mt-5" onClick={onGoOnline}>
             <PowerCircle className="h-4 w-4" /> Go online
           </Button>
@@ -588,103 +436,17 @@ function TrackingTicketCard({ job }: { job: Job }) {
   );
 }
 
-function JobCard({
-  job,
-  isAvailable,
-  upcoming = false,
-  onAccept,
-  onReleased,
-  onOpen,
-}: {
-  job: Job;
-  isAvailable: boolean;
-  upcoming?: boolean;
-  onAccept: () => Promise<void>;
-  onReleased: () => void;
-  onOpen: () => void;
-}) {
-  const [accepting, setAccepting] = useState(false);
-  const acceptPending = useRef(false);
-  const [acceptError, setAcceptError] = useState("");
-  const vIcon = useVehicleIcon(job.vehicleClass);
-  const v = VEHICLES[job.vehicleClass];
-
-  async function handleAccept() {
-    if (upcoming || acceptPending.current) return;
-    acceptPending.current = true;
-    setAccepting(true);
-    setAcceptError("");
-    try {
-      await onAccept();
-    } catch {
-      setAcceptError("Couldn’t accept this booking. Check your connection and retry.");
-    } finally {
-      acceptPending.current = false;
-      setAccepting(false);
-    }
-  }
-
-  return (
-    <Card className="rd-job-card border hover:shadow-md transition flex flex-col min-w-0 overflow-hidden">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-mono text-sm text-muted-foreground">{job.refCode}</span>
-              {job.ticketId && (
-                <Badge variant="outline" className="rounded-md px-2 py-0.5 font-mono text-xs border-primary/40 text-primary">
-                  {job.ticketId}
-                </Badge>
-              )}
-              <JobTypeBadge type={job.type} />
-              {upcoming ? <Badge variant="outline">Scheduled</Badge> : <StatusBadge status={job.status} type={job.type === "RIDE" ? "RIDE" : "DELIVERY"} />}
-            </div>
-            <CardTitle className="text-base mt-1.5 break-words">{job.dropoffLabel}</CardTitle>
-            <CardDescription className="flex items-start gap-1 mt-0.5 break-words [&_svg]:shrink-0">
-              <MapPin className="h-3.5 w-3.5" /> from {job.pickupLabel}
-            </CardDescription>
-          </div>
-          <div className="grid place-items-center h-10 w-10 rounded-lg bg-primary/10 text-primary shrink-0">
-            {vIcon}
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3 flex-1">
-        {job.scheduledAt && <p className="rounded-lg bg-muted p-3 text-sm"><Clock className="mr-1 inline h-4 w-4" aria-hidden="true"/>Pickup {new Date(job.scheduledAt).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" })} · PH time</p>}
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <Stat label={job.type === "RIDE" ? "Passenger" : "Customer"} value={job.customer?.name ?? "—"} icon={<Package className="h-4 w-4" />} />
-          <Stat label="Distance" value={`${job.distanceKm} km`} icon={<Navigation className="h-4 w-4" />} />
-          <Stat label={job.paymentMethod === "CASH" ? "Cash fare" : "Rider share"} value={`₱${riderShare(job).toFixed(2)}`} icon={<Wallet className="h-4 w-4" />} />
-          {job.type === "RIDE" ? (
-            <Stat label="Passengers" value={String(job.passengers ?? 1)} icon={<Users className="h-4 w-4" />} />
-          ) : (
-            <Stat label="Cargo" value={`${job.cargoWeightKg} kg`} icon={<Package className="h-4 w-4" />} />
-          )}
-        </div>
-        {job.type !== "RIDE" && job.cargoNotes && (
-          <p className="text-xs text-muted-foreground border-l-2 border-primary/40 pl-2 italic">
-            {job.cargoNotes}
-          </p>
-        )}
-
-        {job.assignmentExpiresAt && <p className="text-xs text-amber-700">Assigned offer — accept by {new Date(job.assignmentExpiresAt).toLocaleTimeString()}</p>}
-        {acceptError && <p role="alert" className="text-xs text-destructive">{acceptError}</p>}
-        {job.status === "MATCHED" && <ReleaseBooking id={job.id} onReleased={onReleased} />}
-        <div className="flex gap-2 pt-1">
-          {isAvailable ? (
-            <Button size="sm" className="flex-1" onClick={handleAccept} disabled={upcoming || accepting}>
-              {accepting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              {upcoming ? "Available at pickup time" : job.type === "RIDE" ? "Accept ride" : "Accept job"}
-            </Button>
-          ) : (
-            <Button size="sm" className="flex-1" onClick={onOpen}>
-              <Navigation className="h-3.5 w-3.5" /> Open
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
+function JobCard({ job, isAvailable, upcoming = false, onOpen }: { job: Job; isAvailable: boolean; upcoming?: boolean; onOpen: () => void }) {
+  const timing=jobTiming(job), stop=nextJobStop(job);
+  return <Card className="rd-job-card">
+    <CardHeader><div className="rd-card-meta"><JobTypeBadge type={job.type}/><span>{job.refCode}</span>{upcoming?<Badge variant="outline">Scheduled</Badge>:<StatusBadge status={job.status} type={job.type==='RIDE'?'RIDE':'DELIVERY'}/>}</div></CardHeader>
+    <CardContent><dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
+      <div className="rd-card-facts"><strong>₱{riderShare(job).toFixed(2)}<small>{job.paymentMethod==='CASH'?'Cash fare':'Rider share'}</small></strong><span>{job.distanceKm} km</span><span>{job.type==='RIDE'?(job.passengers??1)+' passenger(s)':job.cargoWeightKg+' kg'}</span></div>
+      {isAvailable && <p className={'rd-timing is-'+timing.kind}><Clock size={15} aria-hidden="true"/>{timing.label}</p>}
+      {!isAvailable && <p className="rd-help">Next: {stop.label.toLowerCase()}</p>}
+      <Button variant={upcoming?'outline':'default'} className="w-full" onClick={onOpen}><Navigation size={17} aria-hidden="true"/>{isAvailable?'View route & details':'Continue job'}</Button>
+    </CardContent>
+  </Card>;
 }
 
 function JobTypeBadge({ type }: { type: string }) {
@@ -737,10 +499,12 @@ function ActiveJobFlow({
   job,
   onUpdated,
   onClose,
+  onDraftChange,
 }: {
   job: Job;
   onUpdated: (u: Partial<Job>) => void;
   onClose: () => void;
+  onDraftChange: (dirty: boolean) => void;
 }) {
   const { toast } = useToast();
   const status = job.status;
@@ -749,6 +513,12 @@ function ActiveJobFlow({
   const [pickupOtp, setPickupOtp] = useState("");
   const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
+  const [proofState, setProofState] = useState({ busy: false, hasSignature: false });
+  const paymentSection=useRef<HTMLDivElement>(null), proofSection=useRef<HTMLDivElement>(null), pickupInput=useRef<HTMLInputElement>(null);
+  const draftCallback=useRef(onDraftChange);
+  useEffect(()=>{draftCallback.current=onDraftChange;},[onDraftChange]);
+  useEffect(()=>{draftCallback.current(!!pickupOtp || showProof);return()=>draftCallback.current(false);},[pickupOtp,showProof]);
+  useEffect(()=>{if(showProof)proofSection.current?.scrollIntoView({block:'start',behavior:'smooth'});},[showProof]);
 
   async function advance(to: BookingStatus) {
     setUpdating(true);
@@ -782,7 +552,7 @@ function ActiveJobFlow({
         setShowProof(false);
       }
     } catch (e) {
-      if (isRide && to === "PICKED_UP") setPickupOtpError(e instanceof Error ? e.message : "Could not verify the pickup code.");
+      if (isRide && to === "PICKED_UP") { setPickupOtpError(pickupCodeFeedback(e instanceof Error ? e.message : "Could not verify the pickup code.")); return; }
       toast({
         title: "Update failed",
         description: e instanceof Error ? e.message : "Unknown error",
@@ -800,7 +570,7 @@ function ActiveJobFlow({
     ? isRide
       ? {
           ACCEPTED: "I'm on my way",
-          PICKED_UP: "Verify OTP & board",
+          PICKED_UP: "Verify pickup code",
           IN_TRANSIT: "Start trip",
           DELIVERED: "Complete ride",
         }[nextStatus]
@@ -815,7 +585,7 @@ function ActiveJobFlow({
   const isDelivered = status === "DELIVERED";
 
   return (
-    <div className="space-y-4 min-w-0 [&>*]:min-w-0">
+    <div className="rd-flow"><div className="rd-flow-body space-y-4">
       {/* Stepper */}
       <div className="flex items-center justify-between gap-2">
         {STATUS_STEPS.map((s) => {
@@ -842,7 +612,9 @@ function ActiveJobFlow({
         })}
       </div>
 
-      <JobRouteMap pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} />
+      <div className="rd-current-stop"><p>Next stop · {nextJobStop(job).label}</p><strong>{nextJobStop(job).address}</strong></div>
+      {isRide && status === "ACCEPTED" && <PickupProgress key={job.id} bookingId={job.id} />}
+      <JobRouteMap pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
         <div className="flex items-start gap-2">
@@ -882,11 +654,11 @@ function ActiveJobFlow({
         )}
       </div>
 
-      <PaymentCard key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" onPaymentReady={setPaymentReady} />
+      <div ref={paymentSection} tabIndex={-1}><details className="rd-details" open={status === 'IN_TRANSIT'}><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" onPaymentReady={setPaymentReady} /></details></div>
       {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} onReleased={() => { onClose(); onUpdated({}); }} />}
 
       {/* Native-app tracking ticket */}
-      {job.ticketId && <TrackingTicketCard job={job} />}
+      {job.ticketId && <details className="rd-details"><summary>Optional tracking ticket<ChevronDown size={16} aria-hidden="true"/></summary><TrackingTicketCard job={job}/></details>}
 
       {/* Customer contact */}
       <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
@@ -898,28 +670,38 @@ function ActiveJobFlow({
           <p className="text-xs text-muted-foreground">Customer</p>
         </div>
         {job.customer?.phone && (
-          <a href={`tel:${job.customer.phone}`}>
-            <Button size="icon" variant="outline" className="h-9 w-9">
-              <Phone className="h-4 w-4" />
-            </Button>
-          </a>
+          <a className="rd-call" href={`tel:${job.customer.phone}`} aria-label="Call customer"><Phone size={18} aria-hidden="true"/>Call customer</a>
         )}
       </div>
 
       {/* Action buttons */}
-      {isRide && status === "ACCEPTED" && <PickupProgress key={job.id} bookingId={job.id} />}
       {isRide && status === "ACCEPTED" && (
         <Card className="border-primary/30 bg-primary/5 py-0">
           <CardContent className="space-y-3 p-4">
-            <Label htmlFor={`pickup-otp-${job.id}`} className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Passenger pickup OTP</Label>
-            <p className="text-sm text-muted-foreground">At pickup, ask the passenger to reveal their ride OTP. Verify it before marking them on board.</p>
-            <Input id={`pickup-otp-${job.id}`} inputMode="numeric" autoComplete="off" maxLength={6} placeholder="6-digit code" value={pickupOtp} disabled={updating} onChange={event => { setPickupOtp(event.target.value.replace(/\D/g, "").slice(0, 6)); setPickupOtpError(null); }} aria-invalid={!!pickupOtpError} className="font-mono text-lg tracking-widest" />
+            <Label htmlFor={`pickup-otp-${job.id}`} className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Passenger pickup code</Label>
+            <p className="text-sm text-muted-foreground">At pickup, ask the passenger for their six-digit code. Verification confirms the passenger is on board.</p>
+            <Input ref={pickupInput} id={`pickup-otp-${job.id}`} inputMode="numeric" autoComplete="off" maxLength={6} placeholder="6-digit code" value={pickupOtp} disabled={updating} onChange={event => { setPickupOtp(event.target.value.replace(/\D/g, "").slice(0, 6)); setPickupOtpError(null); }} aria-invalid={!!pickupOtpError} className="font-mono text-lg tracking-widest" />
             {pickupOtpError && <p role="alert" className="text-sm text-destructive">{pickupOtpError}</p>}
           </CardContent>
         </Card>
       )}
-      {!isDelivered ? (
-        <div className="flex flex-col gap-2">
+
+      {showProof && (job.paymentMethod !== "CASH" || paymentReady) && (
+        <div ref={proofSection}><ProofCapture
+          bookingId={job.id}
+          onProofState={setProofState}
+          onDone={(completed) => {
+            setShowProof(false);
+            if (completed) onUpdated({ status: "DELIVERED" });
+            void loadStatsThroughReload(onUpdated, job.id);
+          }}
+        /></div>
+      )}
+
+      </div>
+            {!isDelivered ? (
+        <div className="rd-flow-actions">
+          {isRide && status === 'ACCEPTED' && !pickupOtp && <Button variant="outline" onClick={()=>{pickupInput.current?.scrollIntoView({block:'center'});pickupInput.current?.focus({preventScroll:true});}}>Enter passenger pickup code</Button>}
           {canAdvance && (
             <Button
               size="lg"
@@ -931,16 +713,17 @@ function ActiveJobFlow({
               {nextLabel}
             </Button>
           )}
-          {status === "IN_TRANSIT" && !isRide && (
+          {status === 'IN_TRANSIT' && !isRide && job.paymentMethod === 'CASH' && !paymentReady && <><p className="rd-help">Confirm arrival and cash payment before collecting the recipient signature.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment steps</Button></>}
+          {status === "IN_TRANSIT" && !isRide && !showProof && (
             <Button
-              variant="outline"
               size="lg"
-              onClick={() => setShowProof((s) => !s)}
+              onClick={() => { if (!showProof || window.confirm('Discard the unsaved recipient signature? Your booking is kept.')) setShowProof(value => !value); }}
               disabled={updating || (job.paymentMethod === "CASH" && !paymentReady)}
             >
-              <ShieldCheck className="h-4 w-4" /> Capture e-POD
+              <ShieldCheck className="h-4 w-4" /> Get recipient signature
             </Button>
           )}
+          {showProof && <><Button type="submit" form={`delivery-proof-${job.id}`} disabled={proofState.busy || updating}>{proofState.busy ? 'Saving…' : proofState.hasSignature ? 'Complete delivery' : 'Save supporting proof'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel signature</Button></>}
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">
@@ -956,20 +739,7 @@ function ActiveJobFlow({
         </Card>
       )}
 
-      {showProof && (job.paymentMethod !== "CASH" || paymentReady) && (
-        <ProofCapture
-          bookingId={job.id}
-          onDone={(completed) => {
-            setShowProof(false);
-            if (completed) onUpdated({ status: "DELIVERED" });
-            void loadStatsThroughReload(onUpdated, job.id);
-          }}
-        />
-      )}
-
-      <div className="flex justify-end">
-        <Button variant="outline" onClick={onClose}>Close</Button>
-      </div>
+      {isDelivered && <div className="rd-flow-actions"><Button onClick={onClose}>Back to jobs</Button></div>}
     </div>
   );
 }
@@ -983,9 +753,11 @@ async function loadStatsThroughReload(_onUpdated: (u: Partial<Job>) => void, _jo
 function ProofCapture({
   bookingId,
   onDone,
+  onProofState,
 }: {
   bookingId: string;
   onDone: (completed: boolean) => void;
+  onProofState: (state: { busy: boolean; hasSignature: boolean }) => void;
 }) {
   const { toast } = useToast();
   const [signatureSvg, setSignatureSvg] = useState<string | null>(null);
@@ -995,6 +767,8 @@ function ProofCapture({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const proofPending = useRef(false);
+  useEffect(()=>{onProofState({busy:submitting || processingPhoto,hasSignature:!!signatureSvg});},[submitting,processingPhoto,signatureSvg,onProofState]);
 
   async function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1007,12 +781,13 @@ function ProofCapture({
   }
 
   async function submit() {
-    if (submitting || processingPhoto) return;
+    if (proofPending.current || submitting || processingPhoto) return;
     setError(null);
     if (!signatureSvg && !photoDataUrl) {
       setError("Provide a recipient signature or a drop-off photo.");
       return;
     }
+    proofPending.current = true;
     setSubmitting(true);
     try {
       const res = await fetch(`/api/bookings/${bookingId}/proof`, {
@@ -1028,14 +803,12 @@ function ProofCapture({
       if (!res.ok) {
         throw new Error(data.error || "Proof submission failed");
       }
-      toast({
-        title: "Proof of delivery captured",
-        description: `${data.proofs?.length ?? 0} artifact(s) submitted.`,
-      });
+      toast({title:data.proofs?.some((proof:{verified:boolean})=>proof.verified)?'Delivery completed':'Supporting proof saved',description:'Your booking has been updated.'});
       onDone(Boolean(data.proofs?.some((proof: { verified: boolean }) => proof.verified)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submission failed");
     } finally {
+      proofPending.current = false;
       setSubmitting(false);
     }
   }
@@ -1044,13 +817,14 @@ function ProofCapture({
     <Card className="border-2 border-primary/30 bg-primary/5">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-primary" /> Capture e-POD
+          <ShieldCheck className="h-5 w-5 text-primary" /> Recipient confirmation
         </CardTitle>
         <CardDescription>
           Collect the recipient's signature to complete delivery. You can also save a drop-off photo as supporting proof.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 min-w-0 [&>*]:min-w-0">
+        <form id={`delivery-proof-${bookingId}`} className="space-y-4" onSubmit={event=>{event.preventDefault();void submit();}}>
         {/* Signature */}
         <div className="space-y-2">
           <Label className="text-sm font-medium flex items-center gap-1.5">
@@ -1095,6 +869,7 @@ function ProofCapture({
                 className="rounded-lg border w-full h-32 object-cover"
               />
               <Button
+                type="button"
                 size="icon"
                 variant="outline"
                 className="absolute top-1 right-1 h-7 w-7 bg-card"
@@ -1124,29 +899,9 @@ function ProofCapture({
           </div>
         )}
 
-        <Button className="w-full" onClick={submit} disabled={submitting || processingPhoto}>
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-          {signatureSvg ? "Submit proof & complete delivery" : "Save photo proof"}
-        </Button>
+        <p className="rd-help">Your recipient signature completes the delivery. Use the action below when ready.</p>
+        </form>
       </CardContent>
     </Card>
   );
-}
-
-// ------------------------------ Vehicle icon helper ------------------------------
-function useVehicleIcon(vc: VehicleClass) {
-  switch (vc) {
-    case "MOTORCYCLE":
-      return <Bike className="h-5 w-5" />;
-    case "TRICYCLE":
-      return <CircleDot className="h-5 w-5" />;
-    case "SEDAN":
-      return <Car className="h-5 w-5" />;
-    case "CLOSED_VAN":
-      return <Truck className="h-5 w-5" />;
-    case "FLATBED":
-      return <Truck className="h-5 w-5" />;
-    case "REFRIGERATED":
-      return <Truck className="h-5 w-5" />;
-  }
 }
