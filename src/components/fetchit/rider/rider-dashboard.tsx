@@ -140,18 +140,21 @@ export function RiderDashboard() {
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [jobErrors, setJobErrors] = useState<Partial<Record<JobTab, string>>>({});
   const jobsRequest = useRef(0);
+  const statsRequest = useRef(0);
+  const statsActiveCount = useRef<number | null>(null);
   const jobs = jobLists[tab] ?? [];
   // Only a tab's first load uses skeletons. Refreshes preserve its existing
   // cards and their mounted state, including any open job actions.
   const loading = jobLists[tab] === undefined && !jobErrors[tab];
 
   const loadStats = useCallback(async (signal?: AbortSignal) => {
+    const request = ++statsRequest.current;
     try {
       const res = await fetch("/api/rider/stats", { cache: "no-store", signal });
       const data = await res.json();
       if (!res.ok || typeof data.isOnline !== 'boolean') throw new Error("Stats unavailable");
-      if (!signal?.aborted) { setStats(data); setStatsError(''); }
-    } catch { if (!signal?.aborted) setStatsError('Couldn’t check availability. Retry before changing your status.'); }
+      if (!signal?.aborted && request === statsRequest.current) { statsActiveCount.current = data.activeJobs; setStats(data); setStatsError(''); }
+    } catch { if (!signal?.aborted && request === statsRequest.current) setStatsError('Couldn’t check availability. Retry before changing your status.'); }
   }, []);
 
   const loadJobs = useCallback(async (signal?: AbortSignal) => {
@@ -168,6 +171,15 @@ export function RiderDashboard() {
       if (tab === "available") setUpcomingJobs(Array.isArray(data.upcomingJobs) ? data.upcomingJobs : []);
       setJobsCheckedAt(new Date().toISOString());
       setJobErrors(previous => ({ ...previous, [tab]: undefined }));
+      if (tab === "active") {
+        // The active feed is fresher than a slower stats request. Update the
+        // count with the cards and discard any older stats response in flight.
+        const count = latest.filter(job => ['MATCHED', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(job.status)).length;
+        if (statsActiveCount.current !== null && statsActiveCount.current !== count) {
+          statsRequest.current++; statsActiveCount.current = count;
+          setStats(previous => previous ? { ...previous, activeJobs: count } : previous);
+        }
+      }
       if (tab === "active") setActiveJob(previous => {
         if (!previous || isHistoryJob(previous)) return previous;
         const incoming = latest.find(job => job.id === previous.id);
