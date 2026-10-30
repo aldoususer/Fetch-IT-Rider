@@ -1,4 +1,5 @@
 "use client";
+import { PickupProgress } from "./pickup-progress";
 import { BrowserLocation } from "./browser-location";
 import type { RiderProfileData } from "../shared/rider-profile";
 import { RiderAccountProfile } from "./rider-account-profile";
@@ -906,6 +907,7 @@ function ActiveJobFlow({
       </div>
 
       {/* Action buttons */}
+      {isRide && status === "ACCEPTED" && <PickupProgress key={job.id} bookingId={job.id} />}
       {isRide && status === "ACCEPTED" && (
         <Card className="border-primary/30 bg-primary/5 py-0">
           <CardContent className="space-y-3 p-4">
