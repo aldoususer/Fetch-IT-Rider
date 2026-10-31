@@ -60,7 +60,7 @@ export function BrowserLocation({ userId, needed, availabilityKnown = true }: { 
   }, [enabled, needed, retry, userId]);
   const fresh = needed && enabled && fix && Math.max(now, Date.now()) - fix.at <= 30_000;
   return <details className="rd-location" aria-label="Browser location sharing">
-    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location status…' : error ? 'GPS needs attention' : !needed ? 'GPS inactive' : !enabled ? 'GPS off · location not shared' : fresh && sentAt ? 'GPS shared with your customer' : 'Finding your location…'}</strong><span className="rd-location-expand">Details</span></summary>
+    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location…' : error ? 'Location needs attention' : !needed ? 'Location inactive' : !enabled ? 'Location sharing off' : fresh && sentAt ? 'Location shared' : 'Finding your location…'}</strong><span className="rd-location-expand">Details</span></summary>
     <div className="rd-location-body space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Your live location</h2><p className="text-xs text-muted-foreground">Shared with your assigned customer during an active booking.</p></div><Button size="sm" variant={enabled ? "outline" : "default"} disabled={!needed} onClick={() => {
       if (!window.isSecureContext || !navigator.geolocation) { setError("Location sharing needs HTTPS and a browser that supports location."); return; }

@@ -1,4 +1,5 @@
 "use client";
+import { useRiderNavigation } from "@/hooks/use-rider-navigation";
 import { useBookingRecovery } from "@/hooks/use-booking-recovery";
 import { useRiderAlerts } from "@/hooks/use-rider-alerts";
 import { RiderNotifications } from "./rider-notifications";
@@ -124,6 +125,9 @@ export function RiderDashboard() {
   const [historyFilter, setHistoryFilter] = useState('ALL');
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
   const detailDirty = useRef(false);
+  const navigationRequest = useRef(0);
+  const knownJobs = useRef(new Map<string, Job>());
+  const restoreScroll = useRef<number | null>(null);
   const lastJobTrigger = useRef<HTMLElement | null>(null);
   const workspaceHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -251,19 +255,20 @@ export function RiderDashboard() {
       available: previous.available?.filter(item => item.id !== job.id),
       active: [data.booking, ...(previous.active ?? []).filter(item => item.id !== job.id)],
     }));
+    knownJobs.current.set(job.id, data.booking);
     setActiveJob(data.booking);
-    setTab("active");
+    navigation.navigate("active", job.id, true);
     void loadStats();
   }
 
   // Clicking the logo always brings you back to the main dashboard view.
   function goHome() {
-    setActiveJob(null);
-    setTab("available");
+    navigation.navigate("available");
   }
 
-  async function openNotification(item: Pick<RiderAlert, 'bookingId'>) {
-    if (detailDirty.current && !window.confirm('Open this notification? Your unsaved code or signature will be discarded.')) throw new Error('Your current job is still open.');
+  async function openNotification(item: Pick<RiderAlert, 'bookingId'>, restoring = false) {
+    if (!restoring && !canLeaveJob()) throw new Error('Your current job is still open.');
+    const request = ++navigationRequest.current;
     const response = await fetch('/api/bookings/' + encodeURIComponent(item.bookingId), { cache: 'no-store' });
     let booking: Job | undefined;
     if (response.ok) booking = (await response.json()).booking;
@@ -272,7 +277,10 @@ export function RiderDashboard() {
       if (feed.ok) { const data = await feed.json(); booking = [...(data.jobs ?? []), ...(data.upcomingJobs ?? [])].find(job => job.id === item.bookingId); }
     }
     if (!booking) throw new Error('This request is no longer available. Refresh jobs for current requests.');
-    detailDirty.current = false; setTab(isHistoryJob(booking) ? 'history' : ['PENDING', 'MATCHED'].includes(booking.status) ? 'available' : 'active'); openJob(booking);
+    if (request !== navigationRequest.current) return;
+    knownJobs.current.set(booking.id, booking);
+    if (restoring) { setActiveJob(booking); return; }
+    openJob(booking);
   }
   const notificationOpen = useRef(openNotification);
   useEffect(() => { notificationOpen.current = openNotification; });
@@ -282,19 +290,38 @@ export function RiderDashboard() {
     };
     const message = (event: MessageEvent) => { if (event.data?.type === 'RIDER_NOTIFICATION') open(event.data.bookingId); };
     navigator.serviceWorker?.addEventListener('message', message);
-    const url = new URL(window.location.href), id = url.searchParams.get('job');
-    if (id) { url.searchParams.delete('job'); window.history.replaceState(null, '', url); open(id); }
     return () => navigator.serviceWorker?.removeEventListener('message', message);
   }, [user?.id, toast]);
   const reconnecting = boardConnection.status === 'reconnecting' || alerts.connection.status === 'reconnecting';
+  const boardIssue = !connected ? 'You’re offline. Saved jobs and entered details are kept. Reconnect before updating a booking.' : jobErrors[tab] || statsError || (reconnecting ? 'Reconnecting… Your saved jobs and entered details are kept.' : '');
   const visibleHistory = filterHistoryJobs(jobs, historyQuery, historyFilter);
   const serviceText = profile?.services.map(service => service === 'RIDE' ? 'Passenger rides' : 'Delivery').join(' + ');
   const vehicleText = stats?.vehicleClass ? VEHICLES[stats.vehicleClass as keyof typeof VEHICLES]?.label ?? stats.vehicleClass : 'Your rider workspace';
-  function openJob(job: Job) { lastJobTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; detailDirty.current = false; setActiveJob(job); }
-  function closeJob() {
-    if (detailDirty.current && !window.confirm('Leave this job screen? Unsaved pickup code or recipient signature will be discarded. Your booking is kept.')) return;
-    detailDirty.current = false; setActiveJob(null);
+  function canLeaveJob() {
+    if (detailDirty.current && !window.confirm('Leave this job? Your unsaved code or signature will be discarded. Your booking is kept.')) return false;
+    detailDirty.current = false; return true;
   }
+  const navigation = useRiderNavigation(user?.id ?? '', state => {
+    navigationRequest.current++; setTab(state.tab); restoreScroll.current = state.scrollY;
+    if (!state.jobId) { setActiveJob(null); return; }
+    const cached = knownJobs.current.get(state.jobId) ?? Object.values(jobLists).flat().find(job => job?.id === state.jobId);
+    if (cached) setActiveJob(cached);
+    void notificationOpen.current({ bookingId: state.jobId }, true).catch(error => {
+      toast({ title: 'Booking unavailable', description: error.message }); navigation.close();
+    });
+  }, canLeaveJob);
+  useEffect(() => {
+    if (activeJob || jobLists[tab] === undefined || restoreScroll.current === null) return;
+    const top = restoreScroll.current; restoreScroll.current = null;
+    const frame = requestAnimationFrame(() => window.scrollTo({ top, behavior: 'instant' }));
+    return () => cancelAnimationFrame(frame);
+  }, [activeJob, jobLists, tab]);
+  function openJob(job: Job) {
+    lastJobTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    knownJobs.current.set(job.id, job);
+    navigation.navigate(isHistoryJob(job) ? 'history' : ['PENDING', 'MATCHED'].includes(job.status) ? 'available' : 'active', job.id);
+  }
+  function closeJob() { navigation.close(); }
   return <div className="rd">
     <header className="rd-header"><div className="rd-header-inner">
       <button type="button" onClick={goHome} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Go to dashboard"><FetchItLogo/></button>
@@ -306,19 +333,16 @@ export function RiderDashboard() {
     </div></header>
     <main className="rd-main">
       <section className="rd-board-heading"><div><h1 ref={workspaceHeading} tabIndex={-1}>Your jobs</h1><p>{vehicleText}{serviceText ? ' · '+serviceText : ''}</p></div><Button variant="outline" size="sm" disabled={refreshing || !connected} onClick={()=>void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={18} className={refreshing?'animate-spin':''}/><span>Refresh</span></Button></section>
-      {!connected && <div className="rd-notice" role="status">You’re offline. Saved jobs remain visible; reconnect to check availability or update a booking.</div>}
-      {connected && reconnecting && <div className="rd-notice" role="status">Reconnecting… Your saved jobs and entered details are kept. Availability will be checked again before any update.</div>}
-      {statsError && <div className="rd-notice" role="status"><p>{statsError}</p><Button variant="outline" size="sm" onClick={()=>void loadStats()}>Retry availability</Button></div>}
+      {boardIssue && <div className="rd-notice" role="status"><p>{boardIssue}</p><Button variant="outline" disabled={!connected || refreshing} onClick={()=>void refreshBoard()}>Retry connection</Button></div>}
       {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs??0)>0} availabilityKnown={!!stats}/>}
-      {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>setTab('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
-      <Tabs value={tab} onValueChange={v=>setTab(v as JobTab)}><TabsList className="rd-tabs">
-        <TabsTrigger value="available"><Package size={16}/>Available <span>{jobLists.available?.length??stats?.availableJobs??'—'}</span></TabsTrigger>
-        <TabsTrigger value="active"><CircleDot size={16}/>Active <span>{stats?.activeJobs??'—'}</span></TabsTrigger>
-        <TabsTrigger value="history"><Clock size={16}/>History</TabsTrigger>
+      {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>navigation.navigate('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
+      <Tabs value={tab} onValueChange={v=>navigation.navigate(v as JobTab)}><TabsList className="rd-tabs">
+        <TabsTrigger value="available"><Package size={20}/><span className="rd-tab-label">Available <span className="rd-tab-count">{jobLists.available?.length??stats?.availableJobs??'—'}</span></span></TabsTrigger>
+        <TabsTrigger value="active"><CircleDot size={20}/><span className="rd-tab-label">Active <span className="rd-tab-count">{stats?.activeJobs??'—'}</span></span></TabsTrigger>
+        <TabsTrigger value="history"><Clock size={20}/><span className="rd-tab-label">History</span></TabsTrigger>
       </TabsList></Tabs>
-      {jobsCheckedAt && <p className="rd-sync">{connected?'Last checked':'Last connected'} {new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time</p>}
+      {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected ? 'Updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Saved jobs'}</p>}
       {tab==='history' && <div className="rd-history-tools"><div className="rd-search"><Search size={18} aria-hidden="true"/><label className="sr-only" htmlFor="rider-history-search">Search booking history</label><input id="rider-history-search" type="search" placeholder="Search reference or address" value={historyQuery} onChange={event=>setHistoryQuery(event.target.value)}/></div><Button variant="outline" aria-label="Filter booking history" aria-expanded={historyFiltersOpen} aria-controls="rider-history-filters" onClick={()=>setHistoryFiltersOpen(value=>!value)}><SlidersHorizontal size={18}/>Filters{historyFilter!=='ALL'?' · 1':''}</Button>{historyFiltersOpen && <div id="rider-history-filters" className="rd-history-filters"><label>Status<select value={historyFilter} onChange={event=>setHistoryFilter(event.target.value)}><option value="ALL">All bookings</option><option value="DELIVERED">Completed</option><option value="CANCELLED">Cancelled</option></select></label><Button variant="ghost" onClick={()=>{setHistoryFilter('ALL');setHistoryQuery('');}}>Clear filters</Button></div>}</div>}
-      {jobErrors[tab] && <div role="status" className="rd-notice"><p>{jobErrors[tab]}{jobLists[tab]?' Your current jobs remain visible.':''}</p><Button variant="outline" size="sm" onClick={()=>void loadJobs().catch(()=>{})}>Try again</Button></div>}
       {loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
         : jobLists[tab]===undefined ? null
         : jobs.length===0 ? <EmptyJobs tab={tab} isOnline={stats?stats.isOnline:null} onGoOnline={()=>void toggleOnline(true)}/>
@@ -333,12 +357,11 @@ export function RiderDashboard() {
       </div>{!!stats && (stats.demoEarnings>0||stats.demoAwaitingPayout>0||stats.demoPaidOut>0) && <div className="rd-notice"><p>Online test transactions · no money transferred</p><p>Earned ₱{stats.demoEarnings.toFixed(2)} · Awaiting review ₱{stats.demoAwaitingPayout.toFixed(2)} · Payouts ₱{stats.demoPaidOut.toFixed(2)}</p></div>}</details>
     </main>
     <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
-    <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
-      {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
-        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{setActiveJob(null);void refreshBoard();}}/>
+    <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent fullScreenOnMobile className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
+      {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{activeJob.status === 'PENDING' ? 'New request' : statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
+        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
           : <ActiveJobFlow key={activeJob.id} job={activeJob} connectionReady={connected && boardConnection.status === "connected"} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?mergeRiderJob(previous,{...previous,...updated}):previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
     </DialogContent></Dialog>
-    <footer className="rd-footer">Fetch-It Rider · Your next move starts here.</footer>
   </div>;
 }
 
@@ -480,12 +503,13 @@ function TrackingTicketCard({ job }: { job: Job }) {
   );
 }
 
+function compactAddress(value: string) { return value.split(',').map(part=>part.trim()).filter(part=>part&&!/^(Philippines|Pangasinan|\d{4})$/i.test(part)).join(', '); }
 function JobCard({ job, isAvailable, upcoming = false, onOpen }: { job: Job; isAvailable: boolean; upcoming?: boolean; onOpen: () => void }) {
   const timing=jobTiming(job), stop=nextJobStop(job);
   return <Card className="rd-job-card">
-    <CardHeader><div className="rd-card-meta"><JobTypeBadge type={job.type}/><span>{job.refCode}</span>{upcoming?<Badge variant="outline">Scheduled</Badge>:<StatusBadge status={job.status} type={job.type==='RIDE'?'RIDE':'DELIVERY'}/>}</div></CardHeader>
-    <CardContent><dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
-      <div className="rd-card-facts"><strong>₱{riderShare(job).toFixed(2)}<small>{job.paymentMethod==='CASH'?'Cash fare':'Rider share'}</small></strong><span>{job.distanceKm} km</span><span>{job.type==='RIDE'?(job.passengers??1)+' passenger(s)':job.cargoWeightKg+' kg'}</span></div>
+    <CardHeader><div className="rd-card-meta"><JobTypeBadge type={job.type}/><span>{job.refCode}</span>{upcoming?<Badge variant="outline">Scheduled</Badge>:job.status==='PENDING'?<Badge variant="outline">New request</Badge>:<StatusBadge status={job.status} type={job.type==='RIDE'?'RIDE':'DELIVERY'}/>}</div></CardHeader>
+    <CardContent><dl className="rd-itinerary rd-card-route"><div><dt>Pickup</dt><dd>{compactAddress(job.pickupLabel)}</dd></div><div><dt>Drop-off</dt><dd>{compactAddress(job.dropoffLabel)}</dd></div></dl>
+      <div className="rd-card-facts rd-card-fare"><strong>₱{riderShare(job).toFixed(2)}<small>{job.paymentMethod==='CASH'?'Cash fare':'Rider share'}</small></strong><span>{job.distanceKm} km</span><span>{job.type==='RIDE'?(job.passengers??1)+((job.passengers??1)===1?' passenger':' passengers'):job.cargoWeightKg+' kg'}</span></div>
       {isAvailable && <p className={'rd-timing is-'+timing.kind}><Clock size={15} aria-hidden="true"/>{timing.label}</p>}
       {!isAvailable && <p className="rd-help">Next: {stop.label.toLowerCase()}</p>}
       <Button variant={upcoming?'outline':'default'} className="w-full" onClick={onOpen}><Navigation size={17} aria-hidden="true"/>{isAvailable?'View route & details':'Continue job'}</Button>

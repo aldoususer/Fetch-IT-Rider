@@ -48,7 +48,7 @@ export function ProfileMenu({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="size-12 flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Open profile menu"
           >
             <Avatar className="h-9 w-9">
@@ -67,17 +67,17 @@ export function ProfileMenu({
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {onViewProfile && <DropdownMenuItem onSelect={onViewProfile}><UserRound className="h-4 w-4"/> Rider profile</DropdownMenuItem>}
-          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+          {onViewProfile && <DropdownMenuItem className="min-h-12" onSelect={onViewProfile}><UserRound className="h-4 w-4"/> Rider profile</DropdownMenuItem>}
+          <DropdownMenuItem className="min-h-12" onClick={() => setSettingsOpen(true)}>
             <Settings className="h-4 w-4" /> Account details
           </DropdownMenuItem>
           {canInstall && (
-            <DropdownMenuItem onClick={install}>
+            <DropdownMenuItem className="min-h-12" onClick={install}>
               <Download className="h-4 w-4" /> Install app
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive">
+          <DropdownMenuItem onClick={onLogout} className="min-h-12 text-destructive focus:text-destructive">
             <LogOut className="h-4 w-4" /> Log out
           </DropdownMenuItem>
         </DropdownMenuContent>
