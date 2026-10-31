@@ -828,3 +828,18 @@ model RiderNotificationTask {
   @@index([processedAt, nextAttemptAt])
   @@index([bookingId])
 }
+
+// Shared ORS cache and request budget; never store API keys or user identities.
+model RoadRouteCache {
+  key String @id
+  result Json?
+  expiresAt DateTime
+  leaseUntil DateTime?
+  @@index([expiresAt])
+}
+model RoadRouteRequest {
+  id String @id
+  account String
+  createdAt DateTime @default(now())
+  @@index([account, createdAt])
+}

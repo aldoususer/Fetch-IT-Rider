@@ -690,7 +690,7 @@ function ActiveJobFlow({
 
       <div className="rd-current-stop"><p>Next stop · {nextJobStop(job).label}</p><strong>{nextJobStop(job).address}</strong></div>
       {isRide && status === "ACCEPTED" && <PickupProgress key={job.id} bookingId={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} />}
-      <JobRouteMap pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
+      <JobRouteMap key={job.id+job.status} bookingId={job.id} stage={job.status} pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
         <div className="flex items-start gap-2">

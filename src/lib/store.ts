@@ -30,6 +30,7 @@ function guestView(view: AppView): AppView {
 export type Role = "CUSTOMER" | "RIDER";
 
 export interface AuthUser {
+  roadRouting?: boolean;
   id: string;
   name: string;
   email: string;

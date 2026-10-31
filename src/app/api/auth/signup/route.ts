@@ -1,6 +1,7 @@
 import { validNewPassword, PASSWORD_REQUIREMENT } from "@/lib/password-policy";
 import { withRequestLog, RateLimitError, limitRequests, clientAddress, safeErrorCode } from "@/lib/request-guard";
 import { publicUser } from "@/lib/db-data";
+import { routingEnabled } from "@/lib/road-routing-service";
 // POST /api/auth/signup
 // Body: { name, email, password, role, phone?, vehicleClass?, vehiclePlate? }
 // Creates a new user and issues a session cookie.
@@ -88,7 +89,7 @@ async function handlePOST(req: NextRequest) {
     await setSessionCookie(token);
 
     return NextResponse.json({
-      user: publicUser(user),
+      user: { ...publicUser(user), roadRouting: routingEnabled() },
     });
   } catch (err) {
     if (err instanceof RateLimitError) throw err;

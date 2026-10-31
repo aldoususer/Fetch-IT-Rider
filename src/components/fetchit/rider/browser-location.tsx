@@ -29,7 +29,7 @@ export function BrowserLocation({ userId, needed, availabilityKnown = true }: { 
           headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...point, capturedAt: point.at }) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Couldn’t share location. Retrying…");
-        if (!controller.signal.aborted) { lastSentFix = point.at; setSentAt(Date.now()); setError(""); }
+        if (!controller.signal.aborted) { lastSentFix = point.at; setSentAt(Date.now()); setError(""); window.dispatchEvent(new CustomEvent("fetchit:rider-location", { detail: point })); }
       } catch (failure) { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "Couldn’t share location. Retrying…"); }
       finally { busy = false; }
     }

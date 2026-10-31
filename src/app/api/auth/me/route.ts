@@ -1,4 +1,5 @@
 import { publicUser } from "@/lib/db-data";
+import { routingEnabled } from "@/lib/road-routing-service";
 // GET /api/auth/me — returns the current logged-in user (or null).
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -10,6 +11,6 @@ export async function GET() {
   const user = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
   if (!user || user.role !== "RIDER" || user.isBanned) return NextResponse.json({ user: null });
   return NextResponse.json({
-    user: publicUser(user),
+    user: { ...publicUser(user), roadRouting: routingEnabled() },
   });
 }

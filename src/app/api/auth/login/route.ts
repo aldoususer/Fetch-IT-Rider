@@ -1,5 +1,6 @@
 import { withRequestLog, RateLimitError, limitLogin, safeErrorCode } from "@/lib/request-guard";
 import { publicUser } from "@/lib/db-data";
+import { routingEnabled } from "@/lib/road-routing-service";
 // POST /api/auth/login
 // Body: { email, password, role? } — role is optional but recommended; if provided,
 // we verify that the account's role matches to prevent customer-as-rider logins.
@@ -69,7 +70,7 @@ async function handlePOST(req: NextRequest) {
       // Only the native client receives a bearer token. The PWA keeps the
       // safer HttpOnly-cookie-only response.
       ...(req.headers.get("x-client") === "fetchit-android" ? { token } : {}),
-      user: publicUser(user),
+      user: { ...publicUser(user), roadRouting: routingEnabled() },
     });
   } catch (err) {
     if (err instanceof RateLimitError) throw err;

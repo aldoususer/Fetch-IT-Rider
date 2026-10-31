@@ -119,7 +119,7 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
       const result = await tx.booking.update({ where: { id }, data: {
         status, ...(status === "ACCEPTED" ? { riderId: session.uid, matchedAt: now, assignmentExpiresAt: null } : {}),
         ...(status === "PICKED_UP" ? { pickedUpAt: now } : {}), ...(status === "DELIVERED" ? { deliveredAt: now } : {}),
-        ...(["ACCEPTED", "IN_TRANSIT"].includes(status) ? { etaMinutes: etaMinutes(booking.distanceKm, VEHICLES[booking.vehicleClass].speedKph) } : {}),
+        ...(["ACCEPTED", "IN_TRANSIT"].includes(status) ? { etaMinutes: booking.etaMinutes ?? etaMinutes(booking.distanceKm, VEHICLES[booking.vehicleClass].speedKph) } : {}),
       }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
       if (status === "DELIVERED") await tx.riderProfile.update({ where: { userId: session.uid }, data: { totalDeliveries: { increment: 1 } } });
       if (status === "DELIVERED") await settleDemoEarnings(tx, result);

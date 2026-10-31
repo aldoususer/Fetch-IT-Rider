@@ -17,7 +17,7 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
       <p className={`rd-timing is-${timing.kind}`}><Clock size={16} aria-hidden="true"/>{timing.label}</p>
       {['older','overdue'].includes(timing.kind) && <p className="rd-help">This request has been waiting. Review its original pickup time before accepting; contact support if it is no longer valid.</p>}
       <dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
-      <JobRouteMap pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
+      <JobRouteMap key={job.id+job.status} bookingId={job.id} stage={job.status} pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
       <div className="rd-preview-fare"><span>{job.paymentMethod === 'CASH' ? 'Cash fare' : 'Rider share'}</span><strong>₱{fare.toFixed(2)}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p></div>
       <p className="rd-help">Requested {formatJobTime(job.createdAt)} · PH time. Customer contact details become available after acceptance.</p>
       {job.status === 'MATCHED' && <ReleaseBooking id={job.id} disabled={!!acceptanceBlock} onReleased={onReleased}/>}
