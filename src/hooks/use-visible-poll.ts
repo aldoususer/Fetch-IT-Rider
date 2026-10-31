@@ -40,12 +40,14 @@ export function useVisiblePoll(key: string, poll: (signal: AbortSignal) => Promi
     window.addEventListener("online", resume);
     window.addEventListener("offline", offline);
     window.addEventListener("focus", resume);
+    window.addEventListener("fetchit:rider-push", resume);
     document.addEventListener("visibilitychange", resume);
     return () => {
       stopped = true; controller?.abort(); clearInterval(timer);
       window.removeEventListener("online", resume);
       window.removeEventListener("offline", offline);
       window.removeEventListener("focus", resume);
+      window.removeEventListener("fetchit:rider-push", resume);
       document.removeEventListener("visibilitychange", resume);
     };
   }, [key, intervalMs, immediate]);

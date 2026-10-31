@@ -378,6 +378,7 @@ model Booking {
   supportTickets    SupportTicket[]
   paymentEvents     PaymentEvent[]
   demoCheckouts     DemoCheckout[]
+  riderNotificationTasks RiderNotificationTask[]
   checkoutDraft     CheckoutDraft?
   notifications     CustomerNotification[]
 
@@ -807,4 +808,23 @@ model CustomerNotification {
   @@index([customerId, category, readAt])
   @@index([customerId, createdAt, id])
   @@index([pushDeliveredAt, pushNextAttemptAt])
+}
+
+// Event outbox shared by Customer, Rider, Admin and Superadmin deployments.
+// Existing notification/subscription tables reference User, despite their legacy
+// Customer names; role-specific endpoints keep access separated.
+model RiderNotificationTask {
+  id String @id
+  bookingId String
+  riderId String?
+  kind String
+  createdAt DateTime @default(now())
+  processedAt DateTime?
+  leaseUntil DateTime?
+  nextAttemptAt DateTime @default(now())
+  attempts Int @default(0)
+  cursor String?
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  @@index([processedAt, nextAttemptAt])
+  @@index([bookingId])
 }

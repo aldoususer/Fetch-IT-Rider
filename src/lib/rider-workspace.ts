@@ -11,7 +11,8 @@ export interface RiderJob {
   customer: { id: string; name: string; phone: string | null };
 }
 
-export function mergeRiderJob<T extends {updatedAt?: string}>(current: T, incoming: T) {
+export function mergeRiderJob<T extends {updatedAt?: string; status?: string}>(current: T, incoming: T) {
+  if (['DELIVERED', 'CANCELLED'].includes(current.status ?? '') && !['DELIVERED', 'CANCELLED'].includes(incoming.status ?? '')) return current;
   return Date.parse(current.updatedAt ?? '') > Date.parse(incoming.updatedAt ?? '') ? current : incoming;
 }
 

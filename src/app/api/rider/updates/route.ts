@@ -1,3 +1,5 @@
+import { riderInbox } from "@/lib/rider-inbox";
+import { schedulePushDelivery } from "@/lib/push-delivery";
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRiderSession } from '@/lib/rider-access';
@@ -31,5 +33,6 @@ export async function GET() {
   const available = candidates.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).map(job => ({
     id: job.id, refCode: job.refCode, type: job.type, status: job.status, createdAt: job.createdAt, updatedAt: job.updatedAt, scheduledAt: job.scheduledAt,
   }));
-  return NextResponse.json({ checkedAt: now.toISOString(), available, assigned }, { headers: { 'Cache-Control': 'private, no-store' } });
+  const notifications = await riderInbox(db, session.uid); schedulePushDelivery();
+  return NextResponse.json({ notifications, checkedAt: now.toISOString(), available, assigned }, { headers: { 'Cache-Control': 'private, no-store' } });
 }

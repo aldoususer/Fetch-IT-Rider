@@ -20,7 +20,7 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
       <JobRouteMap pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
       <div className="rd-preview-fare"><span>{job.paymentMethod === 'CASH' ? 'Cash fare' : 'Rider share'}</span><strong>₱{fare.toFixed(2)}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p></div>
       <p className="rd-help">Requested {formatJobTime(job.createdAt)} · PH time. Customer contact details become available after acceptance.</p>
-      {job.status === 'MATCHED' && <ReleaseBooking id={job.id} onReleased={onReleased}/>}
+      {job.status === 'MATCHED' && <ReleaseBooking id={job.id} disabled={!!acceptanceBlock} onReleased={onReleased}/>}
     </div>
     <div className="rd-flow-actions">
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

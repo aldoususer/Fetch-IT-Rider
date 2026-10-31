@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PAYMENT_STATUS_LABEL, PAYMENT_METHOD_LABEL, cashConfirmationAvailable, deliveryCashCompletionError, isDemoPayment, type PaymentMethod, type PaymentStatus } from "@/lib/payment-policy";
 type PaymentBooking = { type: string; dropoffReachedAt: string | null; paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; status: string; totalFare: number; customerPaidAmount: number | null; riderReceivedAmount: number | null; customerPaidAt: string | null; riderReceivedAt: string | null; paidAt: string | null; paymentReference: string | null; demoCommissionBps: number | null; demoCommission: number | null; demoRiderEarnings: number | null; demoPayoutAt: string | null; demoPayoutReference: string | null };
-export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = false, onPaymentReady }: { bookingId: string; role: "CUSTOMER" | "RIDER"; readOnly?: boolean; summaryOnly?: boolean; onPaymentReady?: (ready: boolean) => void }) {
+export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = false, actionsDisabled = false, onActionFailure, onPaymentReady }: { bookingId: string; role: "CUSTOMER" | "RIDER"; readOnly?: boolean; summaryOnly?: boolean; actionsDisabled?: boolean; onActionFailure?: () => void; onPaymentReady?: (ready: boolean) => void }) {
   const [booking, setBooking] = useState<PaymentBooking | null>(null);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,20 +49,20 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
     {demo && <p className="text-xs text-muted-foreground">Test payment — no money charged. {role === "RIDER" ? "Online payment: do not collect cash." : ""}</p>}
     {deliveryCash && !["IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(booking.status) && <p className="text-xs text-muted-foreground">Cash is collected at drop-off. Confirmation will appear after arrival.</p>}
     {!summaryOnly && deliveryCash && booking.status === "IN_TRANSIT" && <><p role="status" className="rounded-lg bg-muted/40 p-3">{!booking.dropoffReachedAt ? "At the destination, confirm arrival to open cash payment." : booking.riderReceivedAt && !booking.customerPaidAt ? "Your cash confirmation is saved. Waiting for the customer to confirm payment." : deliveryCashCompletionError(booking) ?? "Cash payment confirmed by both sides. Collect the recipient signature to complete delivery."}</p><ol className="rd-payment-progress" aria-label="Cash delivery checklist">{[['Arrived at drop-off', !!booking.dropoffReachedAt], ['Cash received by you', !!booking.riderReceivedAt], ['Customer confirmed payment', !!booking.customerPaidAt]].map(([label, done], index)=><li key={String(label)} className={done?'is-done':''}><span aria-hidden="true">{done?'✓':index+1}</span><span>{String(label)}<span className="sr-only">{done?' complete':' pending'}</span></span></li>)}</ol></>}
-    {canArrive && <Button type="button" size="sm" disabled={busy} onClick={async () => {
-      if (pending.current || summaryOnly) return;
+    {canArrive && <Button type="button" size="sm" disabled={busy || actionsDisabled} onClick={async () => {
+      if (pending.current || summaryOnly || actionsDisabled) return;
       pending.current = true; version.current++; setBusy(true); setError(""); setNotice("");
       try {
         const response = await fetch(`/api/bookings/${bookingId}/payment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ARRIVED_AT_DROPOFF" }) });
         const data = await response.json().catch(() => ({ error: 'Couldn’t verify the update. Reconnect to check its status before retrying.' }));
         if (!response.ok) throw new Error(data.error || "Couldn’t confirm arrival.");
         setBooking(data.booking);
-      } catch (error) { setError(error instanceof Error ? error.message : "Couldn’t confirm arrival."); }
+      } catch (error) { setError(error instanceof Error ? error.message : "Couldn’t confirm arrival."); onActionFailure?.(); }
       finally { pending.current = false; setBusy(false); }
     }}>{busy ? "Confirming arrival…" : "I’m at drop-off"}</Button>}
     {booking && <><p>Fare: ₱{Number(booking.totalFare).toFixed(2)}</p><div className="space-y-1">{!demo && <><div>Customer: {booking.customerPaidAt ? `Confirmed ₱${Number(booking.customerPaidAmount).toFixed(2)}` : "Not yet confirmed"}</div><div>Rider: {booking.riderReceivedAt ? `Received ₱${Number(booking.riderReceivedAmount).toFixed(2)}` : "Not yet confirmed"}</div></>}{booking.paidAt && <div>Paid: {new Date(booking.paidAt).toLocaleString()}</div>}{booking.paymentReference && <div className="break-all">Reference: {booking.paymentReference}</div>}{demo && <><div>Commission rate: {(booking.demoCommissionBps ?? 0) / 100}%</div>{booking.demoRiderEarnings !== null ? <><div>Fetch-It commission: ₱{Number(booking.demoCommission).toFixed(2)}</div><div>Rider earnings: ₱{Number(booking.demoRiderEarnings).toFixed(2)}</div><div>Payout: {booking.demoPayoutAt ? `Recorded ${new Date(booking.demoPayoutAt).toLocaleString()}` : "Awaiting admin review"}</div>{booking.demoPayoutReference && <div className="break-all">Payout reference: {booking.demoPayoutReference}</div>}</> : <p className="text-xs text-muted-foreground">Rider earnings are recorded after completion.</p>}</>}</div>{!demo && mismatch && <p className="text-amber-700">Amounts do not match the fare. Contact support for payment review.</p>}</>}
-    {canCheckout && <Button size="sm" disabled={busy} onClick={async () => {
-      if (pending.current || summaryOnly) return;
+    {canCheckout && <Button size="sm" disabled={busy || actionsDisabled} onClick={async () => {
+      if (pending.current || summaryOnly || actionsDisabled) return;
       pending.current = true; version.current++; setBusy(true); setError("");
       try {
         const response = await fetch(`/api/bookings/${bookingId}/demo-checkout`, { method: "POST" });
@@ -73,7 +73,7 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
       finally { pending.current = false; setBusy(false); }
     }}>{busy ? "Opening…" : booking.paymentStatus === "PENDING" ? "Resume payment" : "Continue to payment"}</Button>}
     {canConfirm && <form className="space-y-2" onSubmit={async event => {
-      event.preventDefault(); if (pending.current || summaryOnly) return;
+      event.preventDefault(); if (pending.current || summaryOnly || actionsDisabled) return;
       if (!navigator.onLine) { setError("Reconnect to confirm payment."); return; }
       if (booking && Math.round(Number(amount) * 100) !== Math.round(booking.totalFare * 100)) { setError(`The fare is ₱${Number(booking.totalFare).toFixed(2)}. Confirm that exact amount, or contact support about a payment difference.`); return; }
       pending.current = true; version.current++; setBusy(true); setError(""); setNotice("");
@@ -82,9 +82,9 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
         const data = await response.json().catch(() => ({ error: 'Couldn’t verify the confirmation. Reconnect to check its status before retrying.' }));
         if (!response.ok) throw new Error(data.error || "Couldn’t confirm payment.");
         setBooking(data.booking); setNotice("Your confirmation was recorded.");
-      } catch (error) { setError(error instanceof Error ? error.message : "Couldn’t confirm payment."); }
+      } catch (error) { setError(error instanceof Error ? error.message : "Couldn’t confirm payment."); onActionFailure?.(); }
       finally { pending.current = false; setBusy(false); }
-    }}><label className="block">{role === "CUSTOMER" ? "Amount you paid (₱)" : "Cash you received (₱)"}<input required type="number" min="0.01" step="0.01" max="9999999999.99" value={amount} disabled={busy} onChange={event => setAmount(event.target.value)} className="mt-1 w-full rounded-md border bg-background p-2" /></label><p className="text-xs text-muted-foreground">Confirm only after cash changes hands. Both confirmations must match the fare.</p><Button type="submit" size="sm" disabled={busy || !amount}>{busy ? "Confirming…" : role === "CUSTOMER" ? "Confirm cash paid" : "Confirm cash received"}</Button></form>}
+    }}><label className="block">{role === "CUSTOMER" ? "Amount you paid (₱)" : "Cash you received (₱)"}<input required type="number" min="0.01" step="0.01" max="9999999999.99" value={amount} disabled={busy || actionsDisabled} onChange={event => setAmount(event.target.value)} className="mt-1 w-full rounded-md border bg-background p-2" /></label><p className="text-xs text-muted-foreground">Confirm only after cash changes hands. Both confirmations must match the fare.</p><Button type="submit" size="sm" disabled={busy || actionsDisabled || !amount}>{busy ? "Confirming…" : role === "CUSTOMER" ? "Confirm cash paid" : "Confirm cash received"}</Button></form>}
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" className="text-destructive">{error}</p>}
   </section>;
 }

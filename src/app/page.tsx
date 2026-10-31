@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useAppStore } from "@/lib/store";
+import { setRiderPushAccount } from "@/lib/rider-push";
 import { LandingView } from "@/components/fetchit/shared/landing";
 import { AuthView } from "@/components/fetchit/shared/auth-view";
 import { RiderApplicationBoundary } from "@/components/fetchit/rider/rider-application";
@@ -12,6 +13,15 @@ export default function Home() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (bootstrapped) void setRiderPushAccount(user?.id ?? null).catch(() => {});
+    const message = (event: MessageEvent) => {
+      if (event.data?.type === 'FETCHIT_RIDER_PUSH' && event.data.riderId === useAppStore.getState().user?.id) window.dispatchEvent(new Event('fetchit:rider-push'));
+    };
+    navigator.serviceWorker?.addEventListener('message', message);
+    return () => navigator.serviceWorker?.removeEventListener('message', message);
+  }, [bootstrapped, user?.id]);
 
   useEffect(() => {
     const refresh = () => { void useAppStore.getState().refreshUser(); };

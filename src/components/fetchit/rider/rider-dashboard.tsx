@@ -1,4 +1,5 @@
 "use client";
+import { useBookingRecovery } from "@/hooks/use-booking-recovery";
 import { useRiderAlerts } from "@/hooks/use-rider-alerts";
 import { RiderNotifications } from "./rider-notifications";
 import type { RiderAlert } from "@/lib/rider-alerts";
@@ -334,8 +335,8 @@ export function RiderDashboard() {
     <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
     <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
       {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
-        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{setActiveJob(null);void refreshBoard();}}/>
-          : <ActiveJobFlow key={activeJob.id} job={activeJob} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?{...previous,...updated}:previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
+        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{setActiveJob(null);void refreshBoard();}}/>
+          : <ActiveJobFlow key={activeJob.id} job={activeJob} connectionReady={connected && boardConnection.status === "connected"} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?mergeRiderJob(previous,{...previous,...updated}):previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
     </DialogContent></Dialog>
     <footer className="rd-footer">Fetch-It Rider · Your next move starts here.</footer>
   </div>;
@@ -540,17 +541,21 @@ const NEXT_STATUS: Record<BookingStatus, BookingStatus | null> = {
 
 function ActiveJobFlow({
   job,
+  connectionReady,
   onUpdated,
   onClose,
   onDraftChange,
 }: {
   job: Job;
+  connectionReady: boolean;
   onUpdated: (u: Partial<Job>) => void;
   onClose: () => void;
   onDraftChange: (dirty: boolean) => void;
 }) {
   const { toast } = useToast();
   const status = job.status;
+  const recovery = useBookingRecovery(job.id, onUpdated, connectionReady);
+  const ready = recovery.ready;
   const [updating, setUpdating] = useState(false);
   const advancePending = useRef(false);
   const [showProof, setShowProof] = useState(false);
@@ -565,7 +570,7 @@ function ActiveJobFlow({
   useEffect(()=>{if(showProof)proofSection.current?.scrollIntoView({block:'start',behavior:'smooth'});},[showProof]);
 
   async function advance(to: BookingStatus) {
-    if (advancePending.current) return; advancePending.current = true;
+    if (advancePending.current || !ready) return; advancePending.current = true;
     setUpdating(true);
     setPickupOtpError(null);
     try {
@@ -597,6 +602,7 @@ function ActiveJobFlow({
         setShowProof(false);
       }
     } catch (e) {
+      void recovery.recheck();
       if (isRide && to === "PICKED_UP") { setPickupOtpError(pickupCodeFeedback(e instanceof Error ? e.message : "Could not verify the pickup code.")); return; }
       toast({
         title: "Update failed",
@@ -631,6 +637,7 @@ function ActiveJobFlow({
 
   return (
     <div className="rd-flow"><div className="rd-flow-body space-y-4">
+      {!ready && <section className="rd-notice" role="status"><p>{recovery.error || "Checking the latest booking before enabling updates. Your entered details are kept."}</p>{recovery.error && <Button variant="outline" disabled={!connectionReady} onClick={()=>void recovery.recheck()}>Retry booking check</Button>}</section>}
       {/* Stepper */}
       <div className="flex items-center justify-between gap-2">
         {STATUS_STEPS.map((s) => {
@@ -658,7 +665,7 @@ function ActiveJobFlow({
       </div>
 
       <div className="rd-current-stop"><p>Next stop · {nextJobStop(job).label}</p><strong>{nextJobStop(job).address}</strong></div>
-      {isRide && status === "ACCEPTED" && <PickupProgress key={job.id} bookingId={job.id} />}
+      {isRide && status === "ACCEPTED" && <PickupProgress key={job.id} bookingId={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} />}
       <JobRouteMap pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
@@ -699,8 +706,8 @@ function ActiveJobFlow({
         )}
       </div>
 
-      <div ref={paymentSection} tabIndex={-1}><details className="rd-details" open={status === 'IN_TRANSIT'}><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" onPaymentReady={setPaymentReady} /></details></div>
-      {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} onReleased={() => { onClose(); onUpdated({}); }} />}
+      <div ref={paymentSection} tabIndex={-1}><details className="rd-details" open={status === 'IN_TRANSIT'}><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady} /></details></div>
+      {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} onReleased={() => { onClose(); onUpdated({}); }} />}
 
       {/* Native-app tracking ticket */}
       {job.ticketId && <details className="rd-details"><summary>Optional tracking ticket<ChevronDown size={16} aria-hidden="true"/></summary><TrackingTicketCard job={job}/></details>}
@@ -733,6 +740,8 @@ function ActiveJobFlow({
 
       {showProof && (job.paymentMethod !== "CASH" || paymentReady) && (
         <div ref={proofSection}><ProofCapture
+          disabled={!ready}
+          onActionFailure={()=>void recovery.recheck()}
           bookingId={job.id}
           onProofState={setProofState}
           onDone={(completed) => {
@@ -751,7 +760,7 @@ function ActiveJobFlow({
             <Button
               size="lg"
               onClick={() => advance(nextStatus!)}
-              disabled={updating || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
+              disabled={!ready || updating || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
               className="w-full"
             >
               {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -763,12 +772,12 @@ function ActiveJobFlow({
             <Button
               size="lg"
               onClick={() => { if (!showProof || window.confirm('Discard the unsaved recipient signature? Your booking is kept.')) setShowProof(value => !value); }}
-              disabled={updating || (job.paymentMethod === "CASH" && !paymentReady)}
+              disabled={!ready || updating || (job.paymentMethod === "CASH" && !paymentReady)}
             >
               <ShieldCheck className="h-4 w-4" /> Get recipient signature
             </Button>
           )}
-          {showProof && <><Button type="submit" form={`delivery-proof-${job.id}`} disabled={proofState.busy || updating}>{proofState.busy ? 'Saving…' : proofState.hasSignature ? 'Complete delivery' : 'Save supporting proof'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel signature</Button></>}
+          {showProof && <><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || proofState.busy || updating}>{proofState.busy ? 'Saving…' : proofState.hasSignature ? 'Complete delivery' : 'Save supporting proof'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel signature</Button></>}
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">
@@ -797,10 +806,14 @@ async function loadStatsThroughReload(_onUpdated: (u: Partial<Job>) => void, _jo
 // ------------------------------ e-POD capture ------------------------------
 function ProofCapture({
   bookingId,
+  disabled = false,
+  onActionFailure,
   onDone,
   onProofState,
 }: {
   bookingId: string;
+  disabled?: boolean;
+  onActionFailure?: () => void;
   onDone: (completed: boolean) => void;
   onProofState: (state: { busy: boolean; hasSignature: boolean }) => void;
 }) {
@@ -826,7 +839,7 @@ function ProofCapture({
   }
 
   async function submit() {
-    if (proofPending.current || submitting || processingPhoto) return;
+    if (disabled || proofPending.current || submitting || processingPhoto) return;
     setError(null);
     if (!signatureSvg && !photoDataUrl) {
       setError("Provide a recipient signature or a drop-off photo.");
@@ -851,7 +864,7 @@ function ProofCapture({
       toast({title:data.proofs?.some((proof:{verified:boolean})=>proof.verified)?'Delivery completed':'Supporting proof saved',description:'Your booking has been updated.'});
       onDone(Boolean(data.proofs?.some((proof: { verified: boolean }) => proof.verified)));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Submission failed");
+      setError(e instanceof Error ? e.message : "Submission failed"); onActionFailure?.();
     } finally {
       proofPending.current = false;
       setSubmitting(false);
