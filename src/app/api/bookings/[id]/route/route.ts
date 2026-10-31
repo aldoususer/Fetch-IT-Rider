@@ -20,6 +20,7 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     const booking = await db.booking.findUnique({ where: { id } });
     if (!booking) throw new RiderError('Booking unavailable.', 404);
     const preview = booking.status === 'PENDING' || booking.status === 'MATCHED';
+    if (preview && requestHasExpired(booking, new Date())) throw new RiderError('This request has expired. Refresh available jobs.', 409);
     if (booking.riderId !== session.uid) {
       if (booking.riderId || !preview || requestHasExpired(booking, new Date()) || booking.excludedRiderIds.includes(session.uid)) throw new RiderError('This route is unavailable to you.', 403);
       const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
@@ -45,7 +46,7 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     // Check assignment/status again after the external call. A cancellation,
     // reassignment or stage change must not return obsolete navigation.
     const current = await db.booking.findUnique({ where: { id }, select: { status: true, riderId: true } });
-    if (!current || current.status !== booking.status || current.riderId !== booking.riderId) throw new RiderError('Booking changed. Refresh the job before loading directions.', 409);
+    if (!current || current.status !== booking.status || current.riderId !== booking.riderId || (preview && requestHasExpired(booking, new Date()))) throw new RiderError('Booking changed. Refresh the job before loading directions.', 409);
     return NextResponse.json({ route, destination: preview ? 'preview' : booking.status === 'ACCEPTED' ? 'pickup' : 'dropoff', approximate: true });
   } catch (error) {
     if (error instanceof RoutingError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
