@@ -6,7 +6,7 @@ Job navigation uses the native browser History API. Device Back returns to the o
 
 Controls use a minimum 48px touch target. Pinch zoom is enabled. Route maps start compact and can expand without leaving the booking. Cards prioritize fare and the pickup/drop-off pair, with complete addresses retained in the job screen. The notification inbox hides optional background-alert setup behind Settings. A single board notice explains connection failures instead of stacking duplicate messages.
 
-The workspace follows the system color scheme, including dialog, route-link and expanded summary colors. Light-mode primary buttons use a darker orange for readable white labels. Existing acceptance, pickup, payment, expiry and notification rules are unchanged. Customer proof photos remain deferred.
+The workspace uses a consistent white background, deep green text, pale sage selection accents and darker orange primary buttons with readable white labels. The notification inbox and job screen share this palette, including when the device uses dark mode. The PWA theme and launch background are white. Existing acceptance, pickup, payment, expiry and notification rules are unchanged. Customer proof photos remain deferred.
 
 ## Verification (2026-10-31)
 
