@@ -28,7 +28,7 @@ This is **not an always-running scheduler**. Worker state is durable, but a func
 
 ## Rollout and verification
 
-1. Apply only `202611010001_automatic_matching`, which adds nullable presence fields and a new dispatch table; it does not delete or activate accounts.
+1. Apply `202611010001_automatic_matching` for the additive table/columns, then the separately reviewed `202611010002_matching_runtime_grants`. The latter grants SELECT/INSERT/UPDATE on AutoDispatch and offer-timestamp updates to the four existing runtime groups. No role creation, account-role changes, credential access or DELETE privilege is added. Restricted deployments cannot use matching until these explicit grants are approved and applied.
 2. Deploy Rider first, then Admin/Superadmin, then Customer so exclusive-offer checks are live before new automated requests are created.
 3. Preserve current browser/ORS keys. New accounts and existing riders prepare notifications/location through Go online.
 4. Run Rider's `tests/automatching.test.cjs` and the existing navigation, push, expiry, payment and Google map regressions. Run Customer's `tests/automatching.integration.cjs` only with an explicitly isolated localhost schema and disabled external email/push. Production records are not test fixtures.
