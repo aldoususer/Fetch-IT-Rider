@@ -78,6 +78,7 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
         if (paymentError) throw new RiderError(paymentError, 409);
       }
       if (uploadedPath && await tx.deliveryProof.count({ where: { bookingId: id, proofType: "PHOTO" } }) >= 3) throw new RiderError("This delivery already has three supporting photos.", 409);
+      if (body.signatureSvg && !uploadedPath && !await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: "PHOTO" } })) throw new RiderError("Add a drop-off photo before completing delivery.", 409);
       const now = new Date();
       const proofs: { type: string; verified: boolean }[] = [];
       if (body.signatureSvg) {

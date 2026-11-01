@@ -40,7 +40,7 @@ export function bookingView<T extends BookingData>(booking: T) {
   return {
     ...rest,
     // Participant APIs keep signature/OTP details, but saved photos are staff-only.
-    ...(booking.deliveryProofs !== undefined ? { deliveryProofs: booking.deliveryProofs.filter(proof => proof.proofType !== "PHOTO") } : {}),
+    ...(booking.deliveryProofs !== undefined ? { hasDeliveryPhoto: booking.deliveryProofs.some(proof => proof.proofType === "PHOTO" && !!proof.photoUrl), deliveryProofs: booking.deliveryProofs.filter(proof => proof.proofType !== "PHOTO") } : {}),
     ...(booking.demoCommission !== undefined ? { demoCommission: booking.demoCommission === null ? null : Number(booking.demoCommission) } : {}),
     ...(booking.demoRiderEarnings !== undefined ? { demoRiderEarnings: booking.demoRiderEarnings === null ? null : Number(booking.demoRiderEarnings) } : {}),
     ...(booking.customerPaidAmount !== undefined ? { customerPaidAmount: booking.customerPaidAmount === null ? null : Number(booking.customerPaidAmount) } : {}),

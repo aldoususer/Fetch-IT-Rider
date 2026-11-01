@@ -602,7 +602,7 @@ function ActiveJobFlow({
   const [pickupOtp, setPickupOtp] = useState("");
   const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
-  const [proofState, setProofState] = useState({ busy: false, hasSignature: false });
+  const [proofState, setProofState] = useState({ busy: false, hasSignature: false, hasPhoto: false });
   const paymentSection=useRef<HTMLDivElement>(null), proofSection=useRef<HTMLDivElement>(null), pickupInput=useRef<HTMLInputElement>(null);
   const draftCallback=useRef(onDraftChange);
   useEffect(()=>{draftCallback.current=onDraftChange;},[onDraftChange]);
@@ -783,6 +783,7 @@ function ActiveJobFlow({
           disabled={!ready}
           onActionFailure={()=>void recovery.recheck()}
           bookingId={job.id}
+          photoAlreadySaved={job.hasDeliveryPhoto ?? false}
           onProofState={setProofState}
           onDone={(completed) => {
             setShowProof(false);
@@ -814,10 +815,10 @@ function ActiveJobFlow({
               onClick={() => { if (!showProof || window.confirm('Discard the unsaved recipient signature? Your booking is kept.')) setShowProof(value => !value); }}
               disabled={!ready || updating || (job.paymentMethod === "CASH" && !paymentReady)}
             >
-              <ShieldCheck className="h-4 w-4" /> Get recipient signature
+              <ShieldCheck className="h-4 w-4" /> Capture signature & photo
             </Button>
           )}
-          {showProof && <><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || proofState.busy || updating}>{proofState.busy ? 'Saving…' : proofState.hasSignature ? 'Complete delivery' : 'Save supporting proof'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel signature</Button></>}
+          {showProof && <><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.busy ? 'Saving…' : 'Complete delivery'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel signature</Button></>}
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">
@@ -846,6 +847,7 @@ async function loadStatsThroughReload(_onUpdated: (u: Partial<Job>) => void, _jo
 // ------------------------------ e-POD capture ------------------------------
 function ProofCapture({
   bookingId,
+  photoAlreadySaved = false,
   disabled = false,
   onActionFailure,
   onDone,
@@ -854,8 +856,9 @@ function ProofCapture({
   bookingId: string;
   disabled?: boolean;
   onActionFailure?: () => void;
+  photoAlreadySaved?: boolean;
   onDone: (completed: boolean) => void;
-  onProofState: (state: { busy: boolean; hasSignature: boolean }) => void;
+  onProofState: (state: { busy: boolean; hasSignature: boolean; hasPhoto: boolean }) => void;
 }) {
   const { toast } = useToast();
   const [signatureSvg, setSignatureSvg] = useState<string | null>(null);
@@ -866,7 +869,7 @@ function ProofCapture({
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const proofPending = useRef(false);
-  useEffect(()=>{onProofState({busy:submitting || processingPhoto,hasSignature:!!signatureSvg});},[submitting,processingPhoto,signatureSvg,onProofState]);
+  useEffect(()=>{onProofState({busy:submitting || processingPhoto,hasSignature:!!signatureSvg,hasPhoto:!!photoDataUrl || photoAlreadySaved});},[submitting,processingPhoto,signatureSvg,photoDataUrl,photoAlreadySaved,onProofState]);
 
   async function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -881,8 +884,8 @@ function ProofCapture({
   async function submit() {
     if (disabled || proofPending.current || submitting || processingPhoto) return;
     setError(null);
-    if (!signatureSvg && !photoDataUrl) {
-      setError("Provide a recipient signature or a drop-off photo.");
+    if (!signatureSvg || (!photoDataUrl && !photoAlreadySaved)) {
+      setError("Provide both a recipient signature and a drop-off photo.");
       return;
     }
     proofPending.current = true;
@@ -918,7 +921,7 @@ function ProofCapture({
           <ShieldCheck className="h-5 w-5 text-primary" /> Recipient confirmation
         </CardTitle>
         <CardDescription>
-          Collect the recipient's signature to complete delivery. You can also save a drop-off photo as supporting proof.
+          Collect the recipient's signature and a drop-off photo to complete delivery. Both are required.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 min-w-0 [&>*]:min-w-0">
@@ -947,9 +950,9 @@ function ProofCapture({
         {/* Photo */}
         <div className="space-y-2">
           <Label className="text-sm font-medium flex items-center gap-1.5">
-            <Camera className="h-4 w-4 text-primary" /> Drop-off photo (optional)
+            <Camera className="h-4 w-4 text-primary" /> Drop-off photo (required)
           </Label>
-          <p className="text-xs text-muted-foreground">Saved photos are available to authorized staff for delivery review.</p>
+          <p className="text-xs text-muted-foreground">{photoAlreadySaved ? "A drop-off photo is already saved. You can complete delivery with the recipient signature." : "A drop-off photo is required and is available to authorized staff for delivery review."}</p>
           <input
             ref={fileRef}
             type="file"
@@ -997,7 +1000,7 @@ function ProofCapture({
           </div>
         )}
 
-        <p className="rd-help">Your recipient signature completes the delivery. Use the action below when ready.</p>
+        <p className="rd-help">Your recipient signature and drop-off photo are required. Use the action below when both are ready.</p>
         </form>
       </CardContent>
     </Card>

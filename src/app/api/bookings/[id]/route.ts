@@ -122,6 +122,8 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         if (paymentError) throw new DispatchError(paymentError);
         const proof = await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: "SIGNATURE", verifiedAt: { not: null } } });
         if (!proof) throw new DispatchError("Record a recipient signature before completing delivery.");
+        const photo = await tx.deliveryProof.findFirst({ where: { bookingId: id, riderId: session.uid, proofType: "PHOTO" } });
+        if (!photo) throw new DispatchError("Add a drop-off photo before completing delivery.");
       }
       const result = await tx.booking.update({ where: { id }, data: {
         status, ...(status === "ACCEPTED" ? { riderId: session.uid, matchedAt: now, assignmentExpiresAt: null } : {}),
