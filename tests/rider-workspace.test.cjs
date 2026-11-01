@@ -14,7 +14,8 @@ function paymentHarness(record=cash,summaryOnly=false){
  return{render,requests,handlers,find:(type,label)=>nodes(render()).find(node=>node.type===type&&(!label||node.props.children===label)),setGet:fn=>getReply=fn,setPost:fn=>postReply=fn,get intervals(){return intervals;},async ready(){await new Promise(resolve=>setImmediate(resolve));render();}};
 }
 test('unknown availability is distinct from offline; next navigation follows the stage',()=>{
- assert.equal(ui.availabilityLabel(null),'Checking availability…');assert.equal(ui.availabilityLabel(false),'Offline');assert.equal(ui.availabilityLabel(true),'Online');
+ assert.equal(ui.availabilityLabel(null),'Checking availability…');assert.equal(ui.availabilityLabel(false),'Offline');assert.equal(ui.availabilityLabel(true),'Ready for jobs');
+ assert.equal(ui.availabilityLabel(true,false,false),'Paused');assert.equal(ui.availabilityLabel(true,false,false,1),'On a job');assert.equal(ui.availabilityLabel(true,false,false,0,1),'Offer waiting');assert.equal(ui.availabilityLabel(true,true,false),'Updating…');
  const job={pickupLabel:'Pickup',dropoffLabel:'Destination'};
  assert.equal(ui.nextJobStop({...job,status:'ACCEPTED'}).navigation,'pickup');for(const status of ['PICKED_UP','IN_TRANSIT'])assert.equal(ui.nextJobStop({...job,status}).navigation,'dropoff');
 });

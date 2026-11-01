@@ -68,7 +68,7 @@ async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: 
   return updated;
 }
 
-export async function assignRider(db: PrismaClient, id: string, actor: Actor, reason: unknown, riderId?: unknown) {
+export async function assignRider(db: PrismaClient, id: string, actor: Actor, reason: unknown, riderId?: unknown, offerOnly = false) {
   if (typeof reason !== "string" || !reason.trim() || reason.length > 500) throw new DispatchError("Add a reason of up to 500 characters.", 400);
   if (actor.role !== "RIDER" && (typeof riderId !== "string" || !riderId || riderId.length > 100)) throw new DispatchError("Choose a rider.", 400);
   return db.$transaction(async tx => {
@@ -76,6 +76,7 @@ export async function assignRider(db: PrismaClient, id: string, actor: Actor, re
     const booking = await tx.booking.findUnique({ where: { id } });
     if (!booking) throw new DispatchError("Booking not found.", 404);
     if (actor.role === "RIDER" && booking.riderId !== actor.uid) throw new DispatchError("This booking is no longer assigned to you.", 403);
+    if (offerOnly && (actor.role !== "RIDER" || booking.status !== "MATCHED" || (booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()))) throw new DispatchError("This offer is no longer available. Refresh jobs to check its status.");
     return offerNext(tx, booking, actor, reason.trim(), actor.role !== "RIDER" ? riderId as string : undefined);
   }, { maxWait: 10000, timeout: 20000 });
 }

@@ -38,8 +38,13 @@ export function filterHistoryJobs<T extends Pick<RiderJob, 'refCode' | 'pickupLa
   const text = query.trim().toLocaleLowerCase();
   return jobs.filter(job => (status === 'ALL' || job.status === status) && (!text || `${job.refCode} ${job.pickupLabel} ${job.dropoffLabel}`.toLocaleLowerCase().includes(text)));
 }
-export function availabilityLabel(online: boolean | null, pending = false) {
-  return online === null ? 'Checking availability…' : pending ? 'Updating…' : online ? 'Online' : 'Offline';
+export function availabilityLabel(online: boolean | null, pending = false, matchingReady = true, activeJobs = 0, offeredJobs = 0) {
+  if (online === null) return 'Checking availability…';
+  if (pending) return 'Updating…';
+  if (!online) return 'Offline';
+  if (activeJobs > 0) return 'On a job';
+  if (offeredJobs > 0) return 'Offer waiting';
+  return matchingReady ? 'Ready for jobs' : 'Paused';
 }
 export function pickupCodeFeedback(message: string) {
   if (/pickup code did not match/i.test(message)) return 'That code doesn’t match. Check the six digits with the passenger and try again.';

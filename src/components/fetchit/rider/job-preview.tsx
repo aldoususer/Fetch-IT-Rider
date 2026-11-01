@@ -1,16 +1,16 @@
 "use client";
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatJobTime, isUpcomingJob, jobTiming, type RiderJob } from '@/lib/rider-workspace';
 import { demoSplit, isDemoPayment } from '@/lib/payment-policy';
 import { JobRouteMap } from './job-route-map';
 import { OfferCountdown } from './offer-countdown';
-import { useEffect } from 'react';
-import { ReleaseBooking } from '../shared/release-booking';
+import { DeclineOffer } from './decline-offer';
 
 export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job: RiderJob; onAccept: () => Promise<void>; onReleased: () => void; acceptanceBlock?: string }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [now, setNow] = useState(Date.now);
+  const [declining, setDeclining] = useState(false);
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
   const expired=job.status==='MATCHED' && !!job.assignmentExpiresAt && Date.parse(job.assignmentExpiresAt)<=now;
   const pending = useRef(false);
@@ -26,17 +26,17 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
       <JobRouteMap key={job.id} bookingId={job.id} stage={job.status} pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
       <div className="rd-preview-fare"><span>{job.paymentMethod === 'CASH' ? 'Cash fare' : 'Rider share'}</span><strong>₱{fare.toFixed(2)}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p></div>
       <p className="rd-help">Requested {formatJobTime(job.createdAt)} · PH time. Customer contact details become available after acceptance.</p>
-      {job.status === 'MATCHED' && <ReleaseBooking id={job.id} disabled={!!acceptanceBlock} onReleased={onReleased}/>}
     </div>
     <div className="rd-flow-actions">
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {expired && <p role="status" className="rd-help">This offer expired. Refresh jobs for current requests.</p>}
       {acceptanceBlock && <p role="status" className="rd-help">{acceptanceBlock}</p>}
-      <Button disabled={busy || expired || upcoming || !!acceptanceBlock} onClick={async()=>{
+      <Button disabled={busy || declining || expired || upcoming || !!acceptanceBlock} onClick={async()=>{
         if(pending.current || expired || upcoming || acceptanceBlock)return;pending.current=true;setBusy(true);setError('');
         try { await onAccept(); } catch(failure) { setError(failure instanceof Error ? failure.message : 'Couldn’t accept this request. Refresh jobs to check its availability.'); }
         finally {pending.current=false;setBusy(false);}
       }}>{busy && <Loader2 size={18} className="animate-spin" aria-hidden="true"/>}{upcoming ? 'Available at pickup time' : acceptanceBlock ? 'Acceptance unavailable' : busy ? 'Refreshing GPS & accepting…' : job.type === 'RIDE' ? 'Accept ride' : 'Accept delivery'}</Button>
+      {job.status === 'MATCHED' && <DeclineOffer id={job.id} disabled={busy || expired || !!acceptanceBlock} onDeclined={onReleased} onBusyChange={value => { pending.current = value; setDeclining(value); }}/>}
       {upcoming && <p className="rd-help">Acceptance opens at the scheduled pickup time.</p>}
     </div>
   </div>;

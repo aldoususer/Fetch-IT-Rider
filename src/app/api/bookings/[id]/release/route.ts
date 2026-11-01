@@ -10,7 +10,7 @@ async function post(req: NextRequest, { params }: { params: Promise<{ id: string
   const body = await req.json().catch(() => null);
   try {
     const id = (await params).id;
-    await assignRider(db, id, { ...session, role: "RIDER" }, body?.reason);
+    await assignRider(db, id, { ...session, role: "RIDER" }, body?.reason, undefined, body?.offerOnly === true);
     schedulePushDelivery(id);
     return NextResponse.json({ message: "Booking released and offered to another available rider, or returned to the job board." });
   } catch (error) {

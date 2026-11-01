@@ -8,7 +8,7 @@ export function ReleaseBooking({ id, onReleased, disabled = false, onActionFailu
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  return <><Button size="sm" variant="outline" disabled={disabled} onClick={() => setOpen(true)}>Decline / release booking</Button><Dialog open={open} onOpenChange={value => { if (!pending.current) setOpen(value); }}><DialogContent><DialogHeader><DialogTitle>Release this booking?</DialogTitle><DialogDescription>The booking will be offered to another rider. You can release it only before pickup and before payment is recorded.</DialogDescription></DialogHeader><form className="space-y-3" onSubmit={async event => {
+  return <><Button size="sm" variant="outline" disabled={disabled} onClick={() => setOpen(true)}>Release booking</Button><Dialog open={open} onOpenChange={value => { if (!pending.current) setOpen(value); }}><DialogContent><DialogHeader><DialogTitle>Release this booking?</DialogTitle><DialogDescription>The booking will be offered to another rider. You can release it only before pickup and before payment is recorded.</DialogDescription></DialogHeader><form className="space-y-3" onSubmit={async event => {
     event.preventDefault(); if (pending.current || disabled) return;
     pending.current = true; setBusy(true); setError("");
     try {
