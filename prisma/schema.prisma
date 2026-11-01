@@ -309,6 +309,7 @@ model StaffResource {
 }
 
 model Booking {
+  dispatch AutoDispatch?
   id                  String        @id @default(cuid())
   refCode             String        @unique
   // Rider-only tracking ticket — R0001 (ride) / D0001 (delivery), sequential
@@ -706,7 +707,27 @@ model RiderApplicationEmail {
   @@index([applicationId, createdAt])
 }
 
+model AutoDispatch {
+  bookingId String @id
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  phase String @default("SEARCHING")
+  attempts Int @default(0)
+  nextAt DateTime @default(now())
+  workerToken String?
+  workerUntil DateTime?
+  pickupEtaSeconds Float?
+  ranking String?
+  lastReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([phase, nextAt, workerUntil])
+}
+
 model RiderPresence {
+  locationAccuracy Float?
+  onlineAt DateTime?
+  lastOfferAt DateTime?
+  onlineDeviceId String?
   userId     String    @id
   isOnline   Boolean   @default(false)
   lat        Float?

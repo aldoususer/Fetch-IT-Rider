@@ -1,3 +1,4 @@
+import { dispatchSelect } from '@/lib/matching-policy';
 import { expireRiderOffers } from "@/lib/dispatch";
 import { bookingView, riderSelect } from "@/lib/db-data";
 import type { Prisma } from "@prisma/client";
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const statusFilter: Prisma.BookingWhereInput =
     filter === "active"
-      ? { status: { in: ["PENDING", "MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } }
+      ? { status: { in: ["ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } }
       : filter === "history"
         ? { status: { in: ["DELIVERED", "CANCELLED"] } }
         : {};
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
   const bookings = await db.booking.findMany({
     where: { ...where, ...statusFilter },
     orderBy: { createdAt: "desc" },
-    include: {
+    include: { dispatch: { select: dispatchSelect },
       customer: { select: { id: true, name: true, phone: true } },
       rider: { select: riderSelect },
       deliveryProofs: true,

@@ -1,4 +1,7 @@
 "use client";
+import { GoOnlineDialog } from './go-online-dialog';
+import { OfferCountdown } from './offer-countdown';
+import { refreshRiderLocation, type RiderFix } from '@/lib/rider-location-client';
 import { useRiderNavigation } from "@/hooks/use-rider-navigation";
 import { useBookingRecovery } from "@/hooks/use-booking-recovery";
 import { useRiderAlerts } from "@/hooks/use-rider-alerts";
@@ -88,11 +91,15 @@ import "./rider-workspace.css";
 
 interface RiderStats {
   activeJobs: number;
+  offeredJobs?: number;
   completedJobs: number;
   availableJobs: number;
   rating: number;
   totalDeliveries: number;
   isOnline: boolean;
+  trackingRequired?: boolean;
+  matchingReady?: boolean;
+  matchingPauseReason?: string;
   earnings: number;
   demoEarnings: number;
   demoPaidOut: number;
@@ -117,6 +124,7 @@ export function RiderDashboard() {
 
   const alerts = useRiderAlerts(user?.id ?? "");
   const statusLock = useRef(false);
+  const [onlineSetupOpen, setOnlineSetupOpen] = useState(false);
   const [profile, setProfile] = useState<RiderProfileData | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [statsError, setStatsError] = useState('');
@@ -179,7 +187,7 @@ export function RiderDashboard() {
       if (tab === "active") {
         // The active feed is fresher than a slower stats request. Update the
         // count with the cards and discard any older stats response in flight.
-        const count = latest.filter(job => ['MATCHED', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(job.status)).length;
+        const count = latest.filter(job => ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(job.status)).length;
         if (statsActiveCount.current !== null && statsActiveCount.current !== count) {
           statsRequest.current++; statsActiveCount.current = count;
           setStats(previous => previous ? { ...previous, activeJobs: count } : previous);
@@ -216,18 +224,22 @@ export function RiderDashboard() {
     return () => controller.abort();
   }, [user?.id, stats?.rating, stats?.completedJobs]);
 
-  async function toggleOnline(next: boolean) {
-    if (statusLock.current || statusPending || !stats || statsError || !connected) return;
+  async function toggleOnline(next: boolean, location?: RiderFix) {
+    if (statusLock.current || statusPending || !stats || statsError || !connected) {
+      if (location) throw new Error('Check your connection and refresh availability before going online.');
+      return;
+    }
+    if (next && !location) { setOnlineSetupOpen(true); return; }
     statusLock.current = true; setStatusPending(true);
     try {
-      const res = await fetch("/api/rider/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ online: next }) });
+      const res = await fetch("/api/rider/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ online: next, ...(next ? { location, notificationPermission: Notification.permission } : {}) }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not update your availability.");
       setStats(previous => previous ? { ...previous, isOnline: data.isOnline } : previous);
       await refreshUser().catch(() => {});
-      toast({ title: data.isOnline ? "You're online" : "You're offline", description: data.isOnline ? "Jobs matching your vehicle will appear on the board." : "Go online again when you're ready for jobs." });
+      toast({ title: data.isOnline ? "You're online" : "You're offline", description: data.isOnline ? "Nearby offers and open requests appear in Available." : "Go online again when you're ready for jobs." });
       if (data.isOnline) void loadJobs().catch(() => {});
-    } catch (error) { toast({ title: "Availability not updated", description: error instanceof Error ? error.message : "Check your connection and try again.", variant: "destructive" }); }
+    } catch (error) { if (next) throw error; toast({ title: "Availability not updated", description: error instanceof Error ? error.message : "Check your connection and try again.", variant: "destructive" }); }
     finally { statusLock.current = false; setStatusPending(false); }
   }
   async function refreshBoard() {
@@ -240,6 +252,8 @@ export function RiderDashboard() {
   async function accept(job: Job) {
     // For PENDING jobs (no rider assigned), claim via PATCH.
     // For MATCHED jobs already pre-assigned, accept via PATCH status.
+    if (!('Notification' in window) || Notification.permission !== 'granted') throw new Error('Enable notifications through Go online before accepting jobs.');
+    await refreshRiderLocation();
     const res = await fetch(`/api/bookings/${job.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -334,7 +348,8 @@ export function RiderDashboard() {
     <main className="rd-main">
       <section className="rd-board-heading"><div><h1 ref={workspaceHeading} tabIndex={-1}>Your jobs</h1><p>{vehicleText}{serviceText ? ' · '+serviceText : ''}</p></div><Button variant="outline" size="sm" disabled={refreshing || !connected} onClick={()=>void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={18} className={refreshing?'animate-spin':''}/><span>Refresh</span></Button></section>
       {boardIssue && <div className="rd-notice" role="status"><p>{boardIssue}</p><Button variant="outline" disabled={!connected || refreshing} onClick={()=>void refreshBoard()}>Retry connection</Button></div>}
-      {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || (stats?.activeJobs??0)>0} availabilityKnown={!!stats}/>}
+      {stats?.isOnline && stats.matchingReady === false && <div className="rd-notice" role="status"><p>{stats.matchingPauseReason || 'New offers paused. Refresh your location and notifications.'}</p><Button variant="outline" onClick={()=>setOnlineSetupOpen(true)}>Resume receiving jobs</Button></div>}
+      {user && <BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || !!stats?.trackingRequired} availabilityKnown={!!stats}/>}
       {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>navigation.navigate('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
       <Tabs value={tab} onValueChange={v=>navigation.navigate(v as JobTab)}><TabsList className="rd-tabs">
         <TabsTrigger value="available"><Package size={20}/><span className="rd-tab-label">Available <span className="rd-tab-count">{jobLists.available?.length??stats?.availableJobs??'—'}</span></span></TabsTrigger>
@@ -347,7 +362,7 @@ export function RiderDashboard() {
         : jobLists[tab]===undefined ? null
         : jobs.length===0 ? <EmptyJobs tab={tab} isOnline={stats?stats.isOnline:null} onGoOnline={()=>void toggleOnline(true)}/>
         : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice">No bookings match this search. Try another address or clear your filters.</div>}{jobs.length===100 && <p className="rd-help">Searching your 100 most recent bookings.</p>}</section>
-        : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={tab==='available'} onOpen={()=>openJob(job)}/>)}</div>}
+        : tab==='available' ? <>{jobs.some(job=>job.status==='MATCHED') && <section className="rd-offers" aria-labelledby="rider-offers-heading"><h2 id="rider-offers-heading">Offered to you</h2><p>Exclusive offers. Accept or decline before the timer ends.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='MATCHED').map(job=><div key={job.id}><OfferCountdown expiresAt={job.assignmentExpiresAt}/><JobCard job={job} isAvailable onOpen={()=>openJob(job)}/></div>)}</div></section>}{jobs.some(job=>job.status==='PENDING') && <section className="rd-open-requests" aria-labelledby="open-requests-heading"><h2 id="open-requests-heading">Open requests</h2><p>Choose a request that fits your trip.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='PENDING').map(job=><JobCard key={job.id} job={job} isAvailable onOpen={()=>openJob(job)}/>)}</div></section>}</> : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={false} onOpen={()=>openJob(job)}/>)}</div>}
       {tab==='available' && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
       <details className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">
         <StatCard icon={<Activity size={20}/>} label="Active jobs" value={stats?.activeJobs??0} loading={!stats}/>
@@ -356,10 +371,11 @@ export function RiderDashboard() {
         <StatCard icon={<Wallet size={20}/>} label="Completed cash fares" value={'₱'+(stats?.earnings??0).toFixed(2)} loading={!stats}/>
       </div>{!!stats && (stats.demoEarnings>0||stats.demoAwaitingPayout>0||stats.demoPaidOut>0) && <div className="rd-notice"><p>Online test transactions · no money transferred</p><p>Earned ₱{stats.demoEarnings.toFixed(2)} · Awaiting review ₱{stats.demoAwaitingPayout.toFixed(2)} · Payouts ₱{stats.demoPaidOut.toFixed(2)}</p></div>}</details>
     </main>
+    {onlineSetupOpen && <GoOnlineDialog open onOpenChange={setOnlineSetupOpen} notificationsReady={alerts.browserEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted'} enableNotifications={alerts.enableBrowser} onReady={async fix=>{await toggleOnline(true,fix);void loadStats();}}/>}
     <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
     <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent fullScreenOnMobile className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
       {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{activeJob.status === 'PENDING' ? 'New request' : statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
-        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
+        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && (stats.offeredJobs??0)>0 ? "Accept or decline your exclusive offer before choosing another request." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={()=>accept(activeJob)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
           : <ActiveJobFlow key={activeJob.id} job={activeJob} connectionReady={connected && boardConnection.status === "connected"} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?mergeRiderJob(previous,{...previous,...updated}):previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
     </DialogContent></Dialog>
   </div>;

@@ -9,6 +9,7 @@ export async function recordBookingEvent(tx: Prisma.TransactionClient, bookingId
     actorRole: actor.role, ...change } });
   await enqueueBookingNotification(tx, event);
   if (event.riderId && event.toStatus === "CANCELLED" && event.fromStatus !== "CANCELLED") await queueRiderPushTask(tx, bookingId, "CANCELLED", event.id, event.riderId);
-  if (event.riderId && event.toStatus === "MATCHED" && event.fromStatus !== "MATCHED") await queueRiderPushTask(tx, bookingId, "ASSIGNED", event.id, event.riderId);
+  if (['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'].includes(event.toStatus)) await tx.autoDispatch.updateMany({ where: { bookingId }, data: { phase: 'DONE', workerToken: null, workerUntil: null } });
+  if (event.riderId && event.toStatus === "MATCHED" && (event.fromStatus !== "MATCHED" || event.action === 'REASSIGNED')) await queueRiderPushTask(tx, bookingId, "ASSIGNED", event.id, event.riderId);
   return event;
 }

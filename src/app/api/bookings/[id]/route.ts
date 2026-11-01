@@ -1,3 +1,5 @@
+import { dispatchSelect } from '@/lib/matching-policy';
+import { cookies } from 'next/headers';
 import { settleDemoEarnings } from "@/lib/demo-payments";
 import { isDemoPayment } from "@/lib/payment-policy";
 import { reserveAvailableRider, DispatchError } from "@/lib/dispatch";
@@ -34,7 +36,7 @@ async function handleGET(_req: NextRequest, { params }: Params) {
 
   const booking = await db.booking.findUnique({
     where: { id },
-    include: {
+    include: { dispatch: { select: dispatchSelect },
       customer: { select: { id: true, name: true, phone: true, email: true } },
       rider: { select: riderSelect },
       trackingUpdates: {
@@ -57,6 +59,7 @@ async function handleGET(_req: NextRequest, { params }: Params) {
   if (session.role === "RIDER" && booking.riderId !== session.uid) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  if (session.role === 'RIDER' && booking.status === 'MATCHED' && booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()) return NextResponse.json({ error: 'This offer expired. Refresh jobs for current requests.' }, { status: 409 });
 
   const snapshot = buildTicketSnapshot(booking);
   return NextResponse.json({
@@ -86,6 +89,10 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         if (!["PENDING", "MATCHED"].includes(booking.status) || (booking.riderId && booking.riderId !== session.uid) || booking.excludedRiderIds.includes(session.uid)) throw new DispatchError("This booking is no longer available to you.");
         if (booking.scheduledAt && booking.scheduledAt > now) throw new DispatchError("This scheduled booking is not due yet.");
         if (booking.assignmentExpiresAt && booking.assignmentExpiresAt <= now) throw new DispatchError("This booking offer has expired. Refresh the job board.");
+        const dispatch = await tx.autoDispatch.findUnique({ where: { bookingId: id } });
+        if (booking.status === 'PENDING' && dispatch && dispatch.phase !== 'OPEN') throw new DispatchError('This request is being matched. Wait for an offer or choose an open request.');
+        const deviceId = (await cookies()).get('fetchit_rider_push_device')?.value;
+        if (!deviceId || !await tx.customerPushSubscription.findFirst({ where: { customerId: session.uid, deviceId }, select: { id: true } })) throw new DispatchError('Enable notifications on this device before accepting jobs.');
         await reserveAvailableRider(tx, session.uid, booking, now);
       } else {
         if (booking.riderId !== session.uid) throw new DispatchError("You are no longer assigned to this booking.", 403);

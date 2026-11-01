@@ -21,6 +21,11 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!booking) throw new RiderError('Booking unavailable.', 404);
     const preview = booking.status === 'PENDING' || booking.status === 'MATCHED';
     if (preview && requestHasExpired(booking, new Date())) throw new RiderError('This request has expired. Refresh available jobs.', 409);
+    if (booking.status === 'MATCHED' && booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()) throw new RiderError('This offer expired. Refresh available jobs.', 409);
+    if (booking.status === 'PENDING') {
+      const dispatch = await db.autoDispatch.findUnique({ where: { bookingId: id }, select: { phase: true } });
+      if (dispatch && dispatch.phase !== 'OPEN') throw new RiderError('This request is being offered to a nearby rider. Choose an open request.', 403);
+    }
     if (booking.riderId !== session.uid) {
       if (booking.riderId || !preview || requestHasExpired(booking, new Date()) || booking.excludedRiderIds.includes(session.uid)) throw new RiderError('This route is unavailable to you.', 403);
       const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });

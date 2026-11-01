@@ -1,3 +1,4 @@
+import { usableMatchingLocation, ACCEPT_LOCATION_MAX_MS, MATCH_LOCATION_MAX_MS } from "./matching-policy";
 import { requestHasExpired, staleRequestWhere, REQUEST_EXPIRED_REASON } from "./job-expiry";
 import { cancelDemoPayment } from "./demo-payments";
 import { riderCanTakeBooking } from "./rider-eligibility";
@@ -14,20 +15,24 @@ export class DispatchError extends Error {
   constructor(message: string, public status = 409) { super(message); }
 }
 
-async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date) {
+async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date, automatic = false) {
   // Serialize every reservation/acceptance for a rider, preventing two jobs
   // from reserving the same available rider concurrently.
   await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${riderId} FOR UPDATE`;
   const rider = await tx.user.findUnique({ where: { id: riderId }, include: { riderProfile: true, riderPresence: true } });
   if (!rider || rider.role !== "RIDER" || rider.isBanned || rider.riderProfile?.vehicleClass !== booking.vehicleClass || !rider.riderPresence?.isOnline || rider.riderPresence.updatedAt.getTime() < now.getTime() - 5 * 60_000) return false;
+  if (!usableMatchingLocation(rider.riderPresence, now.getTime(), automatic ? MATCH_LOCATION_MAX_MS : ACCEPT_LOCATION_MAX_MS)) return false;
+  if (!await tx.customerPushSubscription.findFirst({ where: { customerId: riderId, ...(rider.authInvalidBefore ? { updatedAt: { gt: rider.authInvalidBefore } } : {}) }, select: { id: true } })) return false;
   if (!await riderCanTakeBooking(tx, riderId, booking)) return false;
   return await tx.booking.count({ where: { id: { not: booking.id }, riderId, status: { in: [...activeStatuses] } } }) === 0;
 }
 
-export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date) {
+export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date, automatic = false) {
   if (requestHasExpired(booking, now)) throw new DispatchError("This request has expired. Refresh jobs for current requests.");
+  const dispatch = await tx.autoDispatch.findUnique({ where: { bookingId: booking.id } });
+  if (booking.status === 'PENDING' && dispatch && dispatch.phase !== 'OPEN' && dispatch.phase !== 'SEARCHING') throw new DispatchError('This request is being offered to another rider. Refresh jobs.');
   if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("Complete online payment before assigning or accepting this booking.");
-  if (!await eligible(tx, riderId, booking, now)) throw new DispatchError("Choose an online rider with a matching vehicle and no active booking.");
+  if (!await eligible(tx, riderId, booking, now, automatic)) throw new DispatchError("Choose an online rider with a matching vehicle, recent GPS, enabled notifications and no active booking.");
 }
 
 async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" }, reason: string, requested?: string) {
@@ -45,9 +50,10 @@ async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: 
   let riderId: string | null = null;
   if (requested) {
     if(excluded.length>settings.maxReassignments) throw new DispatchError("The configured reassignment limit has been reached.");
-    await reserveAvailableRider(tx, requested, booking, now);
+    await reserveAvailableRider(tx, requested, booking, now, true);
     riderId = requested;
   }
+  await tx.autoDispatch.updateMany({ where: { bookingId: booking.id }, data: requested ? { phase: 'DONE', workerToken: null, workerUntil: null, lastReason: 'Manual dispatch override.' } : { phase: 'SEARCHING', nextAt: now, pickupEtaSeconds: null, ranking: null } });
   const toStatus = riderId ? "MATCHED" : "PENDING";
   const updated = await tx.booking.update({ where: { id: booking.id }, data: { riderId, status: toStatus,
     matchedAt: riderId ? now : null, assignmentExpiresAt: riderId ? new Date(now.getTime() + settings.offerSeconds*1000) : null,
@@ -79,7 +85,7 @@ export async function assignRider(db: PrismaClient, id: string, actor: Actor, re
 export async function expireRiderOffers(db: PrismaClient) {
   const now = new Date();
   const requestsExpired = await expireUnansweredRequests(db, now);
-  const rows = await db.booking.findMany({ where: { status: "MATCHED", assignmentExpiresAt: { lte: now }, NOT: staleRequestWhere(now) }, select: { id: true }, orderBy: { assignmentExpiresAt: "asc" }, take: 5 });
+  const rows = await db.booking.findMany({ where: { status: "MATCHED", dispatch: { isNot: { phase: 'OFFERED' } }, assignmentExpiresAt: { lte: now }, NOT: staleRequestWhere(now) }, select: { id: true }, orderBy: { assignmentExpiresAt: "asc" }, take: 5 });
   let expired = 0;
   for (const row of rows) {
     const changed = await db.$transaction(async tx => {
@@ -92,7 +98,7 @@ export async function expireRiderOffers(db: PrismaClient) {
     }, { maxWait: 10000, timeout: 20000 });
     if (changed) expired++;
   }
-  if (expired || requestsExpired) schedulePushDelivery();
+  schedulePushDelivery();
   return expired + requestsExpired;
 }
 

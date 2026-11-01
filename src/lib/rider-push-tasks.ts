@@ -1,3 +1,4 @@
+import { usableMatchingLocation, MATCH_LOCATION_MAX_MS } from './matching-policy';
 import { createHash } from 'node:crypto';
 import type { Booking, Prisma, PrismaClient } from '@prisma/client';
 import { approvalCoversRoute, liveApprovalWhere } from './rider-eligibility';
@@ -26,9 +27,12 @@ export function riderPushText(kind: Kind, booking: Pick<Booking, 'type' | 'sched
 async function recipientStillEligible(db: PrismaClient, booking: Booking, userId: string, kind: Kind) {
   if (kind === 'CANCELLED') return booking.status === 'CANCELLED' && booking.riderId === userId;
   if (!openRequest(booking)) return false;
+  const dispatch = await db.autoDispatch.findUnique({ where: { bookingId: booking.id } });
+  if (kind === 'NEW_REQUEST' && dispatch && dispatch.phase !== 'OPEN' && (!booking.scheduledAt || booking.scheduledAt <= new Date())) return false;
   if (kind === 'ASSIGNED' && (booking.status !== 'MATCHED' || booking.riderId !== userId || (booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()))) return false;
   if (kind === 'NEW_REQUEST' && (booking.status !== 'PENDING' || booking.riderId || booking.excludedRiderIds.includes(userId))) return false;
   const rider = await db.user.findUnique({ where: { id: userId }, include: { riderProfile: true, riderPresence: true } });
+  if (!usableMatchingLocation(rider?.riderPresence, Date.now(), MATCH_LOCATION_MAX_MS)) return false;
   if (!rider || rider.role !== 'RIDER' || rider.isBanned || !rider.riderPresence?.isOnline || rider.riderProfile?.vehicleClass !== booking.vehicleClass) return false;
   const approval = await db.riderServiceApproval.findFirst({ where: { userId, vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere() } });
   if (!approval || !approvalCoversRoute(approval, booking)) return false;

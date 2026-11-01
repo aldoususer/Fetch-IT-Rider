@@ -1,3 +1,4 @@
+import { availableRequestWhere, usableMatchingLocation } from '@/lib/matching-policy';
 import { staleRequestWhere } from "@/lib/job-expiry";
 import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { dispatchPaymentWhere } from "@/lib/dispatch";
@@ -21,17 +22,18 @@ export async function GET() {
   }
 
   const active = await db.booking.count({
-    where: { riderId: session.uid, status: { in: ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } },
+    where: { riderId: session.uid, status: { in: ["ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } },
   });
   const delivered = await db.booking.count({
     where: { riderId: session.uid, status: "DELIVERED" },
   });
   const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
   let available = 0;
-  if (rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass) {
+  const matchingReady = !!rider?.riderPresence?.isOnline && usableMatchingLocation(rider.riderPresence) && !!await db.customerPushSubscription.findFirst({where:{customerId:session.uid},select:{id:true}});
+  if (matchingReady && rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass) {
     const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere() } });
     const candidates = await db.booking.findMany({
-      where: { AND: [dispatchPaymentWhere, { NOT: staleRequestWhere() }], status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, vehicleClass: rider.riderProfile.vehicleClass, type: { in: [...new Set(approvals.map(a => a.service))] }, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
+      where: { AND: [dispatchPaymentWhere, { NOT: staleRequestWhere() }, availableRequestWhere(session.uid)], vehicleClass: rider.riderProfile.vehicleClass, type: { in: [...new Set(approvals.map(a => a.service))] }, OR: [{ scheduledAt: null }, { scheduledAt: { lte: new Date() } }] },
       select: { type: true, vehicleClass: true, pickupLat: true, pickupLng: true, dropoffLat: true, dropoffLng: true },
     });
     available = candidates.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).length;
@@ -47,6 +49,10 @@ export async function GET() {
   ]);
   return NextResponse.json({
     activeJobs: active,
+    offeredJobs: await db.booking.count({ where: { riderId: session.uid, status: 'MATCHED', OR: [{ assignmentExpiresAt: null }, { assignmentExpiresAt: { gt: new Date() } }] } }),
+    trackingRequired: !!await db.booking.findFirst({ where: { riderId: session.uid, status: { in: ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'] } }, select: { id: true } }),
+    matchingReady,
+    matchingPauseReason: !usableMatchingLocation(rider?.riderPresence) ? 'New offers paused. Open Rider and refresh your location.' : !matchingReady ? 'New offers paused. Enable notifications on this device.' : null,
     completedJobs: delivered,
     availableJobs: available,
     rating: rider?.riderProfile?.rating ?? 5.0,

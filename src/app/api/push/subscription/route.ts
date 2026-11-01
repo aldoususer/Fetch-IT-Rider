@@ -48,7 +48,11 @@ async function remove() {
   try {
     const session = await requireRider(await getRiderSession());
     const deviceId = (await cookies()).get(DEVICE_COOKIE)?.value;
-    if (deviceId) await db.customerPushSubscription.deleteMany({ where: { deviceId, customerId: session.uid } });
+    if (deviceId) await db.$transaction(async tx => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${session.uid} FOR UPDATE`;
+      await tx.customerPushSubscription.deleteMany({ where: { deviceId, customerId: session.uid } });
+      await tx.riderPresence.updateMany({ where: { userId: session.uid, onlineDeviceId: deviceId }, data: { isOnline: false, onlineDeviceId: null } });
+    });
     return NextResponse.json({ enabled: false });
   } catch (error) { return riderErrorResponse(error); }
 }

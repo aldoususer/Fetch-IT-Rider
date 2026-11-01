@@ -5,15 +5,21 @@ import { Button } from '@/components/ui/button';
 import { formatJobTime, isUpcomingJob, jobTiming, type RiderJob } from '@/lib/rider-workspace';
 import { demoSplit, isDemoPayment } from '@/lib/payment-policy';
 import { JobRouteMap } from './job-route-map';
+import { OfferCountdown } from './offer-countdown';
+import { useEffect } from 'react';
 import { ReleaseBooking } from '../shared/release-booking';
 
 export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job: RiderJob; onAccept: () => Promise<void>; onReleased: () => void; acceptanceBlock?: string }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [now, setNow] = useState(Date.now);
+  useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
+  const expired=job.status==='MATCHED' && !!job.assignmentExpiresAt && Date.parse(job.assignmentExpiresAt)<=now;
   const pending = useRef(false);
   const upcoming = isUpcomingJob(job), timing = jobTiming(job);
   const fare = isDemoPayment(job.paymentMethod) ? job.demoRiderEarnings ?? demoSplit(job.totalFare.toFixed(2),job.demoCommissionBps??1500).riderEarnings : job.totalFare;
   return <div className="rd-flow">
     <div className="rd-flow-body">
+      {job.status==='MATCHED' && <OfferCountdown expiresAt={job.assignmentExpiresAt}/>}
+      {job.dispatch?.pickupEtaSeconds != null && <p className="rd-help">About {Math.max(1,Math.ceil(job.dispatch.pickupEtaSeconds/60))} min to pickup · road estimate, no live traffic</p>}
       <p className={`rd-timing is-${timing.kind}`}><Clock size={16} aria-hidden="true"/>{timing.label}</p>
       {['older','overdue'].includes(timing.kind) && <p className="rd-help">This request has been waiting. Review its original pickup time before accepting; contact support if it is no longer valid.</p>}
       <dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
@@ -24,12 +30,13 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
     </div>
     <div className="rd-flow-actions">
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {expired && <p role="status" className="rd-help">This offer expired. Refresh jobs for current requests.</p>}
       {acceptanceBlock && <p role="status" className="rd-help">{acceptanceBlock}</p>}
-      <Button disabled={busy || upcoming || !!acceptanceBlock} onClick={async()=>{
-        if(pending.current || upcoming || acceptanceBlock)return;pending.current=true;setBusy(true);setError('');
+      <Button disabled={busy || expired || upcoming || !!acceptanceBlock} onClick={async()=>{
+        if(pending.current || expired || upcoming || acceptanceBlock)return;pending.current=true;setBusy(true);setError('');
         try { await onAccept(); } catch(failure) { setError(failure instanceof Error ? failure.message : 'Couldn’t accept this request. Refresh jobs to check its availability.'); }
         finally {pending.current=false;setBusy(false);}
-      }}>{busy && <Loader2 size={18} className="animate-spin" aria-hidden="true"/>}{upcoming ? 'Available at pickup time' : acceptanceBlock ? 'Acceptance unavailable' : busy ? 'Accepting…' : job.type === 'RIDE' ? 'Accept ride' : 'Accept delivery'}</Button>
+      }}>{busy && <Loader2 size={18} className="animate-spin" aria-hidden="true"/>}{upcoming ? 'Available at pickup time' : acceptanceBlock ? 'Acceptance unavailable' : busy ? 'Refreshing GPS & accepting…' : job.type === 'RIDE' ? 'Accept ride' : 'Accept delivery'}</Button>
       {upcoming && <p className="rd-help">Acceptance opens at the scheduled pickup time.</p>}
     </div>
   </div>;

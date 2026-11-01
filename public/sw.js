@@ -3,7 +3,7 @@
 // assets, so the user always gets fresh content when online but can still
 // load the app shell offline.
 
-const CACHE_VERSION = "fetchit-rider-background-v5";
+const CACHE_VERSION = "fetchit-rider-background-v6";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -114,6 +114,7 @@ self.addEventListener('push', event => {
     if (!data || data.recipientRole !== 'RIDER' || !['RIDE','DELIVERY'].includes(data.category) ||
         typeof data.id !== 'string' || data.id.length > 100 || typeof data.customerId !== 'string' ||
         typeof data.title !== 'string' || data.title.length > 160 || !safeRiderPushUrl(data.url)) return;
+    if (typeof data.expiresAt === 'number' && data.expiresAt <= Date.now()) return;
     await riderAccountWrite;
     if (await riderPushAccount(false) !== data.customerId) return;
     await self.registration.showNotification(data.title, { body: typeof data.body === 'string' ? data.body.slice(0,500) : 'Open Fetch-It Rider to view this update.',

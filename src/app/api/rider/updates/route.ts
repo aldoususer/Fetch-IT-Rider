@@ -1,3 +1,4 @@
+import { availableRequestWhere, usableMatchingLocation } from '@/lib/matching-policy';
 import { riderInbox } from "@/lib/rider-inbox";
 import { schedulePushDelivery } from "@/lib/push-delivery";
 import { NextResponse } from 'next/server';
@@ -20,10 +21,10 @@ export async function GET() {
   const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile?.vehicleClass, ...liveApprovalWhere(now) } });
   const select = { id: true, refCode: true, type: true, status: true, createdAt: true, updatedAt: true, scheduledAt: true } as const;
   const [candidates, assigned] = await Promise.all([
-    rider.riderPresence?.isOnline && rider.riderProfile ? db.booking.findMany({
+    rider.riderPresence?.isOnline && usableMatchingLocation(rider.riderPresence) && rider.riderProfile ? db.booking.findMany({
       where: { vehicleClass: rider.riderProfile.vehicleClass, type: { in: [...new Set(approvals.map(a => a.service))] },
         AND: [dispatchPaymentWhere, { NOT: staleRequestWhere(now) }],
-        OR: [{ status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: session.uid } } }, { status: 'MATCHED', riderId: session.uid }] },
+        ...availableRequestWhere(session.uid, now) },
       select: { ...select, vehicleClass: true, pickupLat: true, pickupLng: true, dropoffLat: true, dropoffLng: true },
       orderBy: { createdAt: 'desc' }, take: 200,
     }) : [],

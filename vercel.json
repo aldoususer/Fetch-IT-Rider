@@ -7,10 +7,13 @@
   },
   "functions": {
     "src/app/api/auth/seed/route.ts": {
-      "maxDuration": 30
+      "maxDuration": 300
     },
     "src/app/api/bookings/route.ts": {
-      "maxDuration": 30
+      "maxDuration": 300
+    },
+    "src/app/api/**/*.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [

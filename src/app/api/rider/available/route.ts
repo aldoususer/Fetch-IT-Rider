@@ -1,3 +1,4 @@
+import { availableRequestWhere, dispatchSelect, openDispatchWhere, usableMatchingLocation } from '@/lib/matching-policy';
 import { staleRequestWhere } from "@/lib/job-expiry";
 import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { expireRiderOffers, dispatchPaymentWhere } from "@/lib/dispatch";
@@ -45,22 +46,12 @@ export async function GET(req: NextRequest) {
   const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere(now) } });
   const services = [...new Set(approvals.map(a => a.service))];
   const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }] };
-  const where: Prisma.BookingWhereInput = includeMatched
-    ? {
-        vehicleClass: rider.riderProfile?.vehicleClass,
-        AND: [due, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }],
-        OR: [
-          { status: "PENDING", riderId: null, NOT: { excludedRiderIds: { has: session.uid } } },
-          { status: "MATCHED", riderId: session.uid },
-        ],
-      }
-    : {
-        vehicleClass: rider.riderProfile?.vehicleClass,
-        AND: [due, dispatchPaymentWhere],
-        status: "PENDING" as const, riderId: null, NOT: { excludedRiderIds: { has: session.uid } },
-      };
+  const where: Prisma.BookingWhereInput = {
+    vehicleClass: rider.riderProfile.vehicleClass,
+    AND: [due, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }, includeMatched ? availableRequestWhere(session.uid, now) : { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, AND: [openDispatchWhere] }],
+  };
 
-  const include = {
+  const include = { dispatch: { select: dispatchSelect },
       customer: { select: { id: true, name: true, phone: true } },
       rider: { select: riderSelect },
   } as const;
@@ -68,10 +59,10 @@ export async function GET(req: NextRequest) {
   // Separate queries keep future bookings from displacing jobs available now.
   const [jobs, upcoming] = await Promise.all([
     db.booking.findMany({ where: { ...where, type: { in: services } }, orderBy: { createdAt: "asc" }, take: 50, include }),
-    db.booking.findMany({ where: { ...where, type: { in: services }, AND: [{ scheduledAt: { gt: now } }, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }] }, orderBy: { scheduledAt: "asc" }, take: 50, include }),
+    db.booking.findMany({ where: { ...where, type: { in: services }, AND: [{ scheduledAt: { gt: now } }, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }, { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: session.uid } } }] }, orderBy: { scheduledAt: "asc" }, take: 50, include }),
   ]);
 
-  const visible = (rows: typeof jobs) => rows.filter(job => approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).map(job => riderJobView(bookingView(job)));
+  const visible = (rows: typeof jobs) => rows.filter(job => (job.scheduledAt && job.scheduledAt > now || usableMatchingLocation(rider.riderPresence, now.getTime())) && approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).map(job => riderJobView(bookingView(job)));
 
   return NextResponse.json({ jobs: visible(jobs), upcomingJobs: visible(upcoming), checkedAt: now.toISOString() }, { headers: { "Cache-Control": "private, no-store" } });
 }

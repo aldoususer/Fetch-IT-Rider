@@ -8,7 +8,10 @@ export async function POST() {
   const deviceId = (await cookies()).get("fetchit_rider_push_device")?.value;
   // Cookie is HttpOnly and unguessable. Revoke this installation even when
   // the login session has expired, before permitting an account switch.
-  if (deviceId) await db.customerPushSubscription.deleteMany({ where: { deviceId } });
+  if (deviceId) await db.$transaction(async tx => {
+    await tx.riderPresence.updateMany({ where: { onlineDeviceId: deviceId }, data: { isOnline: false, onlineDeviceId: null } });
+    await tx.customerPushSubscription.deleteMany({ where: { deviceId } });
+  });
   await clearSessionCookie();
   return NextResponse.json({ ok: true });
 }

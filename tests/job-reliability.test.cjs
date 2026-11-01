@@ -23,7 +23,7 @@ function dispatchHarness(current, { locked = true, payment = false } = {}) {
  const events = [], changes = [], refunds = [];
  const tx = { $queryRaw: async () => locked ? [{ id: 'booking' }] : [], booking: { findUnique: async () => current, update: async query => { changes.push(query.data); return current; } }, bookingLocation: { deleteMany: async () => {} }, deliveryChallenge: { deleteMany: async () => {} } };
  const db = { booking: { findMany: async () => [{ id: 'booking' }] }, $transaction: fn => fn(tx) };
- const module = load('src/lib/dispatch.ts', { './job-expiry': expiry, './demo-payments': { cancelDemoPayment: async (...args) => refunds.push(args) }, './rider-eligibility': { riderCanTakeBooking: async () => true }, './payment-policy': { isDemoPayment: () => payment }, './booking-events': { recordBookingEvent: async (...args) => events.push(args) }, './push-delivery': { schedulePushDelivery() {} }, './platform-policy': {} });
+ const module = load('src/lib/dispatch.ts', { './matching-policy': {}, './job-expiry': expiry, './demo-payments': { cancelDemoPayment: async (...args) => refunds.push(args) }, './rider-eligibility': { riderCanTakeBooking: async () => true }, './payment-policy': { isDemoPayment: () => payment }, './booking-events': { recordBookingEvent: async (...args) => events.push(args) }, './push-delivery': { schedulePushDelivery() {} }, './platform-policy': {} });
  return { run: () => module.expireUnansweredRequests(db, now), changes, events, refunds };
 }
 test('expiry rechecks the locked row after a competing acceptance', async () => { const h = dispatchHarness(request({ status: 'ACCEPTED' })); assert.equal(await h.run(), 0); assert.equal(h.changes.length, 0); });
