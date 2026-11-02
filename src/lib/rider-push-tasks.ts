@@ -1,4 +1,4 @@
-import { usableMatchingLocation, MATCH_LOCATION_MAX_MS } from './matching-policy';
+import { freshPresenceWhere } from './matching-policy';
 import { createHash } from 'node:crypto';
 import type { Booking, Prisma, PrismaClient } from '@prisma/client';
 import { approvalCoversRoute, liveApprovalWhere } from './rider-eligibility';
@@ -24,54 +24,65 @@ export function riderPushText(kind: Kind, booking: Pick<Booking, 'type' | 'sched
   const body = kind === 'CANCELLED' ? 'This booking has ended. Do not continue to pickup.' : kind === 'ASSIGNED' ? 'Review the offer before it expires.' : scheduled ? 'Review the pickup time. Acceptance opens when pickup is due.' : 'Open Fetch-It to check the route, fare and current availability.';
   return { title, body: booking.refCode + ' · ' + body };
 }
-async function recipientStillEligible(db: PrismaClient, booking: Booking, userId: string, kind: Kind) {
-  if (kind === 'CANCELLED') return booking.status === 'CANCELLED' && booking.riderId === userId;
+type PushBooking = Booking & { dispatch: { phase: string } | null };
+function bookingStillRelevant(booking: PushBooking, kind: Kind, userId?: string, now = new Date()) {
+  if (kind === 'CANCELLED') return booking.status === 'CANCELLED' && !!booking.riderId && (!userId || booking.riderId === userId);
   if (!openRequest(booking)) return false;
-  const dispatch = await db.autoDispatch.findUnique({ where: { bookingId: booking.id } });
-  if (kind === 'NEW_REQUEST' && dispatch && dispatch.phase !== 'OPEN' && (!booking.scheduledAt || booking.scheduledAt <= new Date())) return false;
-  if (kind === 'ASSIGNED' && (booking.status !== 'MATCHED' || booking.riderId !== userId || (booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()))) return false;
-  if (kind === 'NEW_REQUEST' && (booking.status !== 'PENDING' || booking.riderId || booking.excludedRiderIds.includes(userId))) return false;
-  const rider = await db.user.findUnique({ where: { id: userId }, include: { riderProfile: true, riderPresence: true } });
-  if (!usableMatchingLocation(rider?.riderPresence, Date.now(), MATCH_LOCATION_MAX_MS)) return false;
-  if (!rider || rider.role !== 'RIDER' || rider.isBanned || !rider.riderPresence?.isOnline || rider.riderProfile?.vehicleClass !== booking.vehicleClass) return false;
-  const approval = await db.riderServiceApproval.findFirst({ where: { userId, vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere() } });
-  if (!approval || !approvalCoversRoute(approval, booking)) return false;
-  return kind === 'ASSIGNED' || await db.booking.count({ where: { riderId: userId, id: { not: booking.id }, status: { in: [...active] } } }) === 0;
+  if (kind === 'NEW_REQUEST' && booking.dispatch && booking.dispatch.phase !== 'OPEN' && (!booking.scheduledAt || booking.scheduledAt <= now)) return false;
+  if (kind === 'ASSIGNED') return booking.status === 'MATCHED' && !!booking.riderId && (!userId || booking.riderId === userId) && (!booking.assignmentExpiresAt || booking.assignmentExpiresAt > now);
+  return booking.status === 'PENDING' && !booking.riderId && (!userId || !booking.excludedRiderIds.includes(userId));
+}
+function recipientWhere(booking: Booking, kind: Kind, now = new Date()): Prisma.UserWhereInput {
+  return { role: 'RIDER', isBanned: false, ...(kind === 'CANCELLED' ? { id: booking.riderId! } : {
+    riderProfile: { vehicleClass: booking.vehicleClass }, riderPresence: { ...freshPresenceWhere(now), lat: { gte: -90, lte: 90 }, lng: { gte: -180, lte: 180 } },
+    riderApprovals: { some: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } },
+    ...(kind === 'NEW_REQUEST' ? { bookingsAsRider: { none: { id: { not: booking.id }, status: { in: [...active] } } } } : { id: booking.riderId! }),
+  }) };
+}
+function approvalSelection(booking: Booking, now = new Date()) {
+  return { where: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } };
 }
 export async function riderPushStillRelevant(db: PrismaClient, notification: { sourceId: string; bookingId: string | null; customerId: string; createdAt: Date }) {
   const kind = notification.sourceId.startsWith('rider:new:') ? 'NEW_REQUEST' : notification.sourceId.startsWith('rider:assigned:') ? 'ASSIGNED' : notification.sourceId.startsWith('rider:cancelled:') ? 'CANCELLED' : null;
   if (!kind || !notification.bookingId || notification.createdAt < new Date(Date.now() - 10 * 60_000)) return false;
-  const booking = await db.booking.findUnique({ where: { id: notification.bookingId } });
-  return !!booking && recipientStillEligible(db, booking, notification.customerId, kind);
+  const booking = await db.booking.findUnique({ where: { id: notification.bookingId }, include: { dispatch: { select: { phase: true } } } });
+  if (!booking || !bookingStillRelevant(booking, kind, notification.customerId)) return false;
+  if (kind === 'CANCELLED') return true;
+  // Recheck current eligibility at send time, without a series of per-field reads.
+  const rider = await db.user.findFirst({ where: { ...recipientWhere(booking, kind), id: notification.customerId },
+    select: { riderApprovals: approvalSelection(booking) } });
+  return !!rider?.riderApprovals.some(approval => approvalCoversRoute(approval, booking));
 }
-export async function drainRiderPushTasks(db: PrismaClient) {
+export async function drainRiderPushTasks(db: PrismaClient, bookingId?: string) {
   const tasks = await db.$queryRaw<Task[]>`UPDATE "RiderNotificationTask" SET "leaseUntil" = CURRENT_TIMESTAMP + INTERVAL '60 seconds', "attempts" = "attempts" + 1
     WHERE "id" IN (SELECT "id" FROM "RiderNotificationTask" WHERE "processedAt" IS NULL AND "nextAttemptAt" <= CURRENT_TIMESTAMP
       AND ("leaseUntil" IS NULL OR "leaseUntil" < CURRENT_TIMESTAMP) AND "attempts" < 5
+      AND (${bookingId ?? null}::text IS NULL OR "bookingId" = ${bookingId ?? null})
       ORDER BY "createdAt" ASC LIMIT 2 FOR UPDATE SKIP LOCKED) RETURNING *`;
   for (const task of tasks) {
     try {
-      const booking = await db.booking.findUnique({ where: { id: task.bookingId } });
+      const booking = await db.booking.findUnique({ where: { id: task.bookingId }, include: { dispatch: { select: { phase: true } } } });
       let more = false, cursor = task.cursor;
-      if (booking && task.createdAt >= new Date(Date.now() - 10 * 60_000)) {
+      if (booking && bookingStillRelevant(booking, task.kind, task.riderId ?? undefined) && task.createdAt >= new Date(Date.now() - 10 * 60_000)) {
         const subscriptionWhere = { createdAt: { lte: task.createdAt } };
-        const candidates = await db.user.findMany({ where: { role: 'RIDER', isBanned: false,
-          ...(task.riderId ? { id: task.riderId } : { ...(task.cursor ? { id: { gt: task.cursor } } : {}), riderProfile: { vehicleClass: booking.vehicleClass }, riderPresence: { isOnline: true },
-            bookingsAsRider: { none: { status: { in: [...active] } } }, riderApprovals: { some: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere() } } }),
+        const candidates = await db.user.findMany({ where: { ...recipientWhere(booking, task.kind),
+          ...(task.riderId ? { id: task.riderId } : task.cursor ? { id: { gt: task.cursor } } : {}),
           pushSubscriptions: { some: subscriptionWhere },
-        }, select: { id: true, authInvalidBefore: true }, orderBy: { id: 'asc' }, take: 25 });
+        }, select: { id: true, authInvalidBefore: true, riderApprovals: approvalSelection(booking),
+          pushSubscriptions: { where: subscriptionWhere, select: { updatedAt: true } },
+        }, orderBy: { id: 'asc' }, take: 25 });
         more = !task.riderId && candidates.length === 25;
         cursor = candidates.at(-1)?.id ?? cursor;
         const prefix = task.kind === 'NEW_REQUEST' ? 'new' : task.kind === 'ASSIGNED' ? 'assigned' : 'cancelled';
         const text = riderPushText(task.kind, booking);
-        for (let offset = 0; offset < candidates.length; offset += 5) await Promise.all(candidates.slice(offset, offset + 5).map(async candidate => {
-          if (!await recipientStillEligible(db, booking, candidate.id, task.kind)) return;
-          // A password reset invalidates older device registrations.
-          if (!await db.customerPushSubscription.findFirst({ where: { customerId: candidate.id, ...subscriptionWhere,
-            ...(candidate.authInvalidBefore ? { updatedAt: { gt: candidate.authInvalidBefore } } : {}) }, select: { id: true } })) return;
-          await db.customerNotification.createMany({ data: [{ sourceId: `rider:${prefix}:${task.id}:${candidate.id}`, customerId: candidate.id,
-            bookingId: booking.id, category: booking.type, status: booking.status, ...text, url: '/?job=' + encodeURIComponent(booking.id), createdAt: task.createdAt }], skipDuplicates: true });
-        }));
+        // Batch the inbox insert; current state is checked again before external push.
+        const recipients = candidates.filter(candidate => bookingStillRelevant(booking, task.kind, candidate.id) &&
+          (task.kind === 'CANCELLED' || candidate.riderApprovals.some(approval => approvalCoversRoute(approval, booking))) &&
+          candidate.pushSubscriptions.some(subscription => !candidate.authInvalidBefore || subscription.updatedAt > candidate.authInvalidBefore));
+        if (recipients.length) await db.customerNotification.createMany({ data: recipients.map(candidate => ({
+          sourceId: `rider:${prefix}:${task.id}:${candidate.id}`, customerId: candidate.id,
+          bookingId: booking.id, category: booking.type, status: booking.status, ...text, url: '/?job=' + encodeURIComponent(booking.id), createdAt: task.createdAt,
+        })), skipDuplicates: true });
       }
       await db.$executeRaw`UPDATE "RiderNotificationTask" SET "processedAt" = ${more ? null : new Date()}, "cursor" = ${cursor}, "leaseUntil" = NULL, "attempts" = 0, "nextAttemptAt" = CURRENT_TIMESTAMP WHERE "id" = ${task.id}`;
     } catch {

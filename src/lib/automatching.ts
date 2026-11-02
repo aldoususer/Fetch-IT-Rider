@@ -43,9 +43,10 @@ async function chooseRiders(db: PrismaClient, booking: Booking, radiusKm: number
   if (routingEnabled()) {
     // Three bounded calls at most, outside database locks. The routing service
     // shares the existing ORS quota and cache; no extra paid API is introduced.
+    const deadlineAt = Date.now() + 3000;
     const results = await Promise.all(candidates.map(async candidate => {
       try {
-        const route = await roadRoute(candidate, pickup, booking.vehicleClass);
+        const route = await roadRoute(candidate, pickup, booking.vehicleClass, { deadlineAt });
         if (booking.vehicleClass === 'TRICYCLE' && booking.type === 'RIDE') {
           const approvals = eligible.find(rider => rider.id === candidate.id)!.riderApprovals;
           if (route.coordinates.some(([lng, lat]) => !approvals.some(approval => approvalCoversRoute(approval, { ...booking, pickupLat: lat, pickupLng: lng, dropoffLat: lat, dropoffLng: lng })))) return null;

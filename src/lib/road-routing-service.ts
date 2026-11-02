@@ -6,7 +6,13 @@ import { parseRoadRoute, routeOptions, RoutingError, type RoadRoute, type RouteP
 export const routingEnabled = () => !!process.env.OPENROUTESERVICE_API_KEY?.trim() && process.env.OPENROUTESERVICE_ENABLED !== '0';
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const bounded = (value: string | undefined, fallback: number, ceiling: number) => Math.min(ceiling, Math.max(1, Number.isInteger(Number(value)) ? Number(value) : fallback));
-export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: string): Promise<RoadRoute> {
+export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: string, optionsBudget?: { deadlineAt: number }): Promise<RoadRoute> {
+  const remaining = () => {
+    const budget = optionsBudget ? optionsBudget.deadlineAt - Date.now() : 10000;
+    if (budget <= 0) throw new RoutingError('ROUTE_DEADLINE', 'Pickup ETA is taking too long. Nearby distance will be used.');
+    return Math.max(1, Math.min(10000, budget));
+  };
+  remaining();
   if (!routingEnabled()) throw new RoutingError('ROUTE_NOT_CONFIGURED', 'Road directions are not enabled yet. Use the navigation link.');
   const coverage = bookingServiceAreaError(start, finish);
   if (coverage) throw new RoutingError('SERVICE_UNAVAILABLE', coverage, 422);
@@ -17,6 +23,7 @@ export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: 
     // Global per-key lock coordinates every deployment sharing this database.
     // It protects rolling quotas and suppresses duplicate route requests.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ors:${account}`}, 0))::text`;
+    remaining();
     const now = new Date();
     const rows = await tx.$queryRaw<Cached[]>`SELECT "result", "expiresAt", "leaseUntil" FROM "RoadRouteCache" WHERE "key" = ${key}`;
     const cached = rows[0];
@@ -31,15 +38,19 @@ export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: 
     await tx.$executeRaw`INSERT INTO "RoadRouteRequest" ("id", "account", "createdAt") VALUES (${randomUUID()}, ${account}, CURRENT_TIMESTAMP)`;
     await tx.$executeRaw`INSERT INTO "RoadRouteCache" ("key", "result", "expiresAt", "leaseUntil") VALUES (${key}, NULL, ${now}, ${new Date(now.getTime() + 20000)})
       ON CONFLICT ("key") DO UPDATE SET "result" = NULL, "expiresAt" = EXCLUDED."expiresAt", "leaseUntil" = EXCLUDED."leaseUntil"`;
-    await tx.$executeRaw`DELETE FROM "RoadRouteRequest" WHERE "id" IN (SELECT "id" FROM "RoadRouteRequest" WHERE "createdAt" < CURRENT_TIMESTAMP - INTERVAL '25 hours' LIMIT 100)`;
-    await tx.$executeRaw`DELETE FROM "RoadRouteCache" WHERE "key" IN (SELECT "key" FROM "RoadRouteCache" WHERE "expiresAt" < CURRENT_TIMESTAMP - INTERVAL '1 day' AND ("leaseUntil" IS NULL OR "leaseUntil" < CURRENT_TIMESTAMP) LIMIT 25)`;
+    // Normal directions requests perform bounded housekeeping. Matching must
+    // not delay a time-sensitive offer for cache maintenance.
+    if (!optionsBudget) {
+      await tx.$executeRaw`DELETE FROM "RoadRouteRequest" WHERE "id" IN (SELECT "id" FROM "RoadRouteRequest" WHERE "createdAt" < CURRENT_TIMESTAMP - INTERVAL '25 hours' LIMIT 100)`;
+      await tx.$executeRaw`DELETE FROM "RoadRouteCache" WHERE "key" IN (SELECT "key" FROM "RoadRouteCache" WHERE "expiresAt" < CURRENT_TIMESTAMP - INTERVAL '1 day' AND ("leaseUntil" IS NULL OR "leaseUntil" < CURRENT_TIMESTAMP) LIMIT 25)`;
+    }
     return { cached: null };
-  }, { maxWait: 5000, timeout: 10000 });
+  }, { maxWait: Math.min(5000, remaining()), timeout: remaining() });
   if (reservation.cached) return reservation.cached;
   try {
     // Fixed provider URL, no client-supplied URL and no credentials in logs/URLs.
     const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-      method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(10000),
+      method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(remaining()),
       headers: { Authorization: apiKey, 'Content-Type': 'application/json', Accept: 'application/geo+json' },
       body: JSON.stringify({ coordinates: [[start.lng, start.lat], [finish.lng, finish.lat]], radiuses: [150, 150], instructions: true, language: 'en', units: 'm', options }),
     });
@@ -48,7 +59,11 @@ export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: 
     await db.$executeRaw`UPDATE "RoadRouteCache" SET "result" = ${JSON.stringify(route)}::jsonb, "expiresAt" = ${new Date(Date.now() + 24 * 3600000)}, "leaseUntil" = NULL WHERE "key" = ${key}`;
     return route;
   } catch (error) {
-    await db.$executeRaw`UPDATE "RoadRouteCache" SET "result" = NULL, "expiresAt" = ${new Date(Date.now() + 60000)}, "leaseUntil" = NULL WHERE "key" = ${key}`;
+    const deadlineReached = !!optionsBudget && Date.now() >= optionsBudget.deadlineAt;
+    // An offer's short ETA budget is not evidence of a provider outage. Allow
+    // normal directions to retry instead of poisoning the cache for a minute.
+    await db.$executeRaw`UPDATE "RoadRouteCache" SET "result" = NULL, "expiresAt" = ${new Date(Date.now() + (deadlineReached ? 0 : 60000))}, "leaseUntil" = NULL WHERE "key" = ${key}`;
+    if (deadlineReached) throw new RoutingError('ROUTE_DEADLINE', 'Pickup ETA is taking too long. Nearby distance will be used.');
     if (error instanceof RoutingError) throw error;
     throw new RoutingError('ROUTE_PROVIDER', 'Road directions could not load. Check your connection and retry.');
   }

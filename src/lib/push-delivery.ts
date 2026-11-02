@@ -21,8 +21,8 @@ export async function webPushIdentity() {
   return db.webPushIdentity.findUniqueOrThrow({ where: { id: "customer" } });
 }
 
-export async function deliverPendingNotifications() {
-  const fanout = await drainRiderPushTasks(db);
+export async function deliverPendingNotifications(bookingId?: string) {
+  const fanout = await drainRiderPushTasks(db, bookingId);
   // A short lease keeps simultaneous rider/admin requests from sending the
   // same event together. A crashed worker can be retried after its lease ends.
   const claimed = await db.$queryRaw<{ id: string }[]>`
@@ -31,6 +31,7 @@ export async function deliverPendingNotifications() {
       SELECT "id" FROM "CustomerNotification"
       WHERE "pushDeliveredAt" IS NULL AND "pushNextAttemptAt" <= CURRENT_TIMESTAMP
         AND ("pushLeaseUntil" IS NULL OR "pushLeaseUntil" < CURRENT_TIMESTAMP) AND "pushAttempts" < 5
+        AND (${bookingId ?? null}::text IS NULL OR "bookingId" = ${bookingId ?? null})
       ORDER BY "createdAt" DESC LIMIT 12 FOR UPDATE SKIP LOCKED
     ) RETURNING "id"`;
   if (!claimed.length) return fanout;
@@ -55,6 +56,7 @@ export async function deliverPendingNotifications() {
       if (!validPushEndpoint(subscription.endpoint) || (notification.customer.role === 'RIDER' && riderTTL === 0)) return;
       if (localPushDryRun()) return;
       try {
+        const startedAt = Date.now();
         await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify({
           ...(riderExpiry ? { expiresAt: riderExpiry.getTime() } : {}),
           id, recipientRole: notification.customer.role, customerId: notification.customerId, category: notification.category, title: notification.title,
@@ -64,6 +66,8 @@ export async function deliverPendingNotifications() {
           url: notification.url,
         }), { vapidDetails: { subject: notification.customer.role === "RIDER" ? "https://fetch-it-rider.vercel.app" : "https://fetch-it-v1-2.vercel.app", publicKey: identity!.publicKey, privateKey: identity!.privateKey },
           TTL: notification.customer.role === "RIDER" ? riderTTL : 3600, urgency: "high", timeout: 5000 });
+        if (notification.customer.role === 'RIDER') console.info(JSON.stringify({ operation: 'rider:web-push', code: 'PUSH_SERVICE_ACCEPTED',
+          bookingId: notification.bookingId, queueAgeMs: Math.max(0, startedAt - notification.createdAt.getTime()), providerMs: Date.now() - startedAt }));
       } catch (error) {
         const status = (error as { statusCode?: number }).statusCode;
         if (status === 404 || status === 410) await db.customerPushSubscription.deleteMany({ where: { id: subscription.id, endpoint: subscription.endpoint } });
@@ -84,7 +88,16 @@ export async function deliverPendingNotifications() {
 export function schedulePushDelivery(bookingId?: string) {
   try {
     after(async () => {
-      try { const ids = bookingId ? [{ bookingId }] : await matchingRecoveryIds(db); await Promise.all(ids.map(row => runAutomaticMatching(db, row.bookingId, deliverPendingNotifications))); const deadline = Date.now() + 25000; for (let pass = 0; pass < 8 && Date.now() < deadline; pass++) { if (!await deliverPendingNotifications()) break; } }
+      try {
+        const drain = async (id?: string) => {
+          const deadline = Date.now() + 25000;
+          for (let pass = 0; pass < 8 && Date.now() < deadline; pass++) if (!await deliverPendingNotifications(id)) break;
+        };
+        const ids = bookingId ? [{ bookingId }] : await matchingRecoveryIds(db);
+        // Existing alerts must not wait behind the matching worker's offer
+        // lifetime. Each fresh offer drains its own booking before any backlog.
+        await Promise.all([drain(bookingId), ...ids.map(row => runAutomaticMatching(db, row.bookingId, () => drain(row.bookingId)))]);
+      }
       catch { console.warn(JSON.stringify({ operation: "customer:web-push", code: "PUSH_DELIVERY_UNAVAILABLE" })); }
     });
   } catch {
