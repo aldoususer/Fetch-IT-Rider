@@ -1,4 +1,5 @@
 'use client';
+import { startBookingTiming } from '@/lib/booking-client-timing';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { routeProgress, type RoadRoute, type RoutePoint } from '@/lib/road-routing';
@@ -20,16 +21,20 @@ export function RoadDirections({ bookingId, stage, onRoute }: { bookingId: strin
     if (pending.current || !navigator.onLine) return;
     pending.current = true; setBusy(true); setError(''); lastAttempt.current = Date.now();
     const generation = ++request.current, controller = new AbortController(); abort.current = controller;
+    const timing = startBookingTiming("road_route");
+    let outcome: "confirmed" | "failed" | "superseded" = "failed";
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(`/api/bookings/${encodeURIComponent(bookingId)}/route`, { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const response = await fetch(`/api/bookings/${encodeURIComponent(bookingId)}/route`, { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', ...timing.headers }, body: '{}' });
+      timing.response(response);
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.route) throw new Error(data?.error || 'Directions could not load. Please retry.');
-      if (generation !== request.current) return;
+      if (generation !== request.current) { outcome = "superseded"; return; }
+      outcome = "confirmed";
       setRoute(data.route); onRoute(data.route); deviations.current = 0;
     } catch (failure) {
       if (generation === request.current) setError(controller.signal.aborted ? 'Directions took too long to load. Please retry.' : failure instanceof Error ? failure.message : 'Directions unavailable.');
-    } finally { clearTimeout(timeout); if (generation === request.current) { pending.current = false; setBusy(false); } }
+    } finally { timing.finish(outcome); clearTimeout(timeout); if (generation === request.current) { pending.current = false; setBusy(false); } }
   }
   const progress = route && fix && !offline ? routeProgress(route, fix, now || Date.now()) : null;
   useEffect(() => {

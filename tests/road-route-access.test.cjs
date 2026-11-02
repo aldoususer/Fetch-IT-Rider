@@ -1,5 +1,9 @@
+
+const timingStub={withBookingTelemetry:(_,fn)=>fn,timeBooking:(_,fn)=>fn(),recordBookingTiming(){},bookingFailure(){}};
+const clientTimingStub={startBookingTiming:()=>({headers:{},response(){},finish(){}})};
+const transactionStub={timedDatabase:db=>db,bookingTransaction:(db,fn)=>db.$transaction(fn)};
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
-function compile(file,imports){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:name=>{if(!(name in imports))throw Error(name);return imports[name];},Response,Date,URL});return exports;}
+function compile(file,imports){imports={"@/lib/booking-telemetry":timingStub,"@/lib/booking-transaction":transactionStub,...imports};const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:name=>{if(!(name in imports))throw Error(name);return imports[name];},Response,Date,URL});return exports;}
 const expiry=compile('src/lib/job-expiry.ts',{});
 class RiderError extends Error {constructor(message,status){super(message);this.status=status;}}
 class RoutingError extends RiderError {}

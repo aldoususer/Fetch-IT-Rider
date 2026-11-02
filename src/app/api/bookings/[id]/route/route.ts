@@ -1,5 +1,8 @@
+import { withBookingTelemetry, timeBooking, bookingFailure, recordBookingTiming } from "@/lib/booking-telemetry";
+import { bookingTransaction, timedDatabase } from "@/lib/booking-transaction";
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db as rawDb } from "@/lib/db";
+const db = timedDatabase(rawDb);
 import { getSession } from '@/lib/session';
 import { requireRider, RiderError, riderErrorResponse } from '@/lib/rider-access';
 import { riderCanTakeBooking, approvalCoversRoute, liveApprovalWhere } from '@/lib/rider-eligibility';
@@ -11,7 +14,7 @@ import { RoutingError } from '@/lib/road-routing';
 export const runtime = 'nodejs';
 async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const session = await requireRider(await getSession());
+    const session = await timeBooking("auth", async () => requireRider(await getSession()));
     const origin = req.headers.get('origin');
     let sameOrigin = !origin;
     try { if (origin) sameOrigin = ['http:', 'https:'].includes(new URL(origin).protocol) && new URL(origin).host === req.headers.get('host'); } catch {}
@@ -42,7 +45,7 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       start = { lat: presence.lat, lng: presence.lng };
       if (booking.status === 'ACCEPTED') finish = { lat: booking.pickupLat, lng: booking.pickupLng };
     }
-    const route = await roadRoute(start, finish, booking.vehicleClass);
+    const route = await timeBooking("routing.total", () => roadRoute(start, finish, booking.vehicleClass, undefined, recordBookingTiming));
     if (booking.vehicleClass === 'TRICYCLE' && booking.type === 'RIDE') {
       const approval = await db.riderServiceApproval.findFirst({ where: { userId: session.uid, vehicleClass: 'TRICYCLE', service: 'RIDE', ...liveApprovalWhere() } });
       if (!approval || route.coordinates.some(([lng, lat]) => !approvalCoversRoute(approval, { vehicleClass: 'TRICYCLE', type: 'RIDE', pickupLat: lat, pickupLng: lng, dropoffLat: lat, dropoffLng: lng })))
@@ -59,4 +62,4 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     return riderErrorResponse(error);
   }
 }
-export const POST = withRequestLog('rider:road-route:POST', handlePOST);
+export const POST = withBookingTelemetry("road_route", withRequestLog('rider:road-route:POST', handlePOST));

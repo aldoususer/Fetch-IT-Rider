@@ -1,13 +1,16 @@
+import { proofSubmission, savedProofResult } from "@/lib/proof-submission";
+import { withBookingTelemetry, timeBooking, bookingFailure, recordBookingTiming } from "@/lib/booking-telemetry";
+import { bookingTransaction, timedDatabase } from "@/lib/booking-transaction";
 import { withRequestLog, RateLimitError, limitRequests } from "@/lib/request-guard";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db as rawDb } from "@/lib/db";
+const db = timedDatabase(rawDb);
 import { getSession } from "@/lib/session";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access";
 import { settleDemoEarnings } from "@/lib/demo-payments";
 import { isDemoPayment } from "@/lib/payment-policy";
 import { deliveryPaymentError } from "@/lib/payments";
-import { randomUUID } from "node:crypto";
 import { EPOD_MAX_DATA_URL_LENGTH } from "@/lib/epod-photo";
 import { uploadDeliveryPhoto, removeUncommittedPhoto } from "@/lib/epod-upload";
 
@@ -42,12 +45,12 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
   let uploadedPath: string | undefined;
   let photoProofId: string | undefined;
   try {
-    const session = await requireRider(await getSession());
+    const session = await timeBooking("auth", async () => requireRider(await getSession()));
     const origin = req.headers.get("origin");
     if ((origin && origin !== req.nextUrl.origin) || req.headers.get("sec-fetch-site") === "cross-site") throw new RiderError("This request is not allowed.", 403);
     await limitRequests("rider:proof", session.uid, 20, 5 * 60_000);
     const { id } = await params;
-    const body = await readProofBody(req);
+    const body = await timeBooking("proof.body", () => readProofBody(req));
     if (body?.otp !== undefined) throw new RiderError("OTP is used for ride pickup. Use a recipient signature for delivery completion.", 400);
     if (!body ||
         (body.signatureSvg !== undefined && (typeof body.signatureSvg !== "string" || body.signatureSvg.length > 100_000)) ||
@@ -56,8 +59,15 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
         (body.notes !== undefined && (typeof body.notes !== "string" || body.notes.length > 2000)))
       throw new RiderError("Provide a valid recipient signature or small delivery photo.", 400);
     if (!body.signatureSvg && !body.photoDataUrl) throw new RiderError("No proof artifacts provided.", 400);
+    const key = req.headers.get("Idempotency-Key");
+    if (key !== null && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(key)) throw new RiderError("Invalid proof submission reference.", 400);
+    const attempt = proofSubmission(id, session.uid, key, body);
     // Check access before decoding an image or spending a Blob upload operation.
     const currentBooking = await db.booking.findUnique({ where: { id } });
+    if (currentBooking?.riderId === session.uid && ["IN_TRANSIT", "DELIVERED"].includes(currentBooking.status)) {
+      const replay = await savedProofResult(db, id, session.uid, attempt);
+      if (replay) return NextResponse.json({ ok: true, ...replay });
+    }
     checkBooking(currentBooking, session.uid);
     if (body.signatureSvg && currentBooking) {
       const paymentError = await deliveryPaymentError(db, currentBooking);
@@ -65,13 +75,17 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     if (body.photoDataUrl) {
       if (await db.deliveryProof.count({ where: { bookingId: id, proofType: "PHOTO" } }) >= 3) throw new RiderError("This delivery already has three supporting photos.", 409);
-      photoProofId = randomUUID();
-      uploadedPath = await uploadDeliveryPhoto(id, photoProofId, body.photoDataUrl);
+      photoProofId = attempt.photoId;
+      uploadedPath = await timeBooking("proof.upload", () => uploadDeliveryPhoto(id, photoProofId!, body.photoDataUrl));
     }
-    const result = await db.$transaction(async tx => {
+    const result = await bookingTransaction(db, async tx => {
       // Serialize proof submission, completion, and cancellation.
-      await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
+      await timeBooking("db.booking_lock", () => tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`);
       const booking = await tx.booking.findUnique({ where: { id } });
+      if (booking?.riderId === session.uid && ["IN_TRANSIT", "DELIVERED"].includes(booking.status)) {
+        const replay = await savedProofResult(tx, id, session.uid, attempt);
+        if (replay) return replay;
+      }
       checkBooking(booking, session.uid);
       if (body.signatureSvg && booking) {
         const paymentError = await deliveryPaymentError(tx, booking);
@@ -82,7 +96,7 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       const now = new Date();
       const proofs: { type: string; verified: boolean }[] = [];
       if (body.signatureSvg) {
-        await tx.deliveryProof.create({ data: { bookingId: id, riderId: session.uid, proofType: "SIGNATURE",
+        await tx.deliveryProof.create({ data: { id: attempt.signatureId, bookingId: id, riderId: session.uid, proofType: "SIGNATURE",
           signatureSvg: body.signatureSvg, recipientName: body.recipientName ?? null, notes: body.notes ?? null, verifiedAt: now } });
         proofs.push({ type: "SIGNATURE", verified: true });
       }
@@ -105,10 +119,10 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       // A lost commit acknowledgement must never delete a committed proof photo.
       try {
         const saved = await db.deliveryProof.findUnique({ where: { id: photoProofId }, select: { id: true } });
-        if (!saved) await removeUncommittedPhoto(uploadedPath);
+        if (!saved) await timeBooking("proof.cleanup", () => removeUncommittedPhoto(uploadedPath!));
       } catch { console.error(JSON.stringify({ operation: "epod:cleanup", code: "COMMIT_STATE_UNKNOWN" })); }
     }
     if (error instanceof RateLimitError) throw error; return riderErrorResponse(error); }
 }
 
-export const POST = withRequestLog("rider:bookings/[id]/proof:POST", handlePOST);
+export const POST = withBookingTelemetry("proof_submit", withRequestLog("rider:bookings/[id]/proof:POST", handlePOST));

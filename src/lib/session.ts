@@ -1,3 +1,4 @@
+import { markVerifiedSession, timeBooking } from "./booking-telemetry";
 import { sessionSecret } from "./session-secret";
 import { db } from "./db";
 // Signed sessions retain their authentication time so password resets can
@@ -70,8 +71,10 @@ export async function getSession(): Promise<SessionPayload | null> {
   if (!token) return null;
   const session = verifySessionToken(token);
   if (!session) return null;
-  const user = await db.user.findUnique({ where: { id: session.uid }, select: { role: true, isBanned: true, authInvalidBefore: true } });
-  return isSessionCurrent(session, user) ? session : null;
+  const user = await timeBooking("auth.session_lookup", () => db.user.findUnique({ where: { id: session.uid }, select: { role: true, isBanned: true, authInvalidBefore: true } }));
+  if (!isSessionCurrent(session, user)) return null;
+  markVerifiedSession(session);
+  return session;
 }
 
 /** Authenticate native clients with the same signed token used by the web

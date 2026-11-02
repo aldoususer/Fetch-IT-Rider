@@ -1,4 +1,6 @@
 "use client";
+import { startBookingTiming } from '@/lib/booking-client-timing';
+import { savedMutation } from '@/lib/booking-mutation-client';
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useVisiblePoll } from "@/hooks/use-visible-poll";
@@ -24,13 +26,23 @@ export function PickupProgress({ bookingId, disabled = false, onActionFailure }:
   async function confirm(stage: "HEADING" | "ARRIVED") {
     if (pending.current || disabled) return;
     pending.current = true; version.current++; setBusy(true); setError("");
+    const timing = startBookingTiming('pickup_progress');
+    let outcome: 'confirmed' | 'recovered' | 'failed' | 'uncertain' = 'uncertain';
+    let uncertain = true;
     try {
-      const res = await fetch("/api/bookings/" + encodeURIComponent(bookingId) + "/pickup-progress", { method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(15000), body: JSON.stringify({ stage }) });
+      const res = await fetch("/api/bookings/" + encodeURIComponent(bookingId) + "/pickup-progress", { method: "POST", headers: { "Content-Type": "application/json", ...timing.headers }, signal: AbortSignal.timeout(15000), body: JSON.stringify({ stage }) });
+      timing.response(res); uncertain = res.ok || res.status >= 500;
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.pickupProgress) throw new Error(data?.error || "Pickup update could not be confirmed. Refresh its status before retrying.");
-      setProgress(data.pickupProgress); setLoaded(true);
-    } catch (error) { setError(error instanceof Error && error.name !== "TimeoutError" ? error.message : "Pickup update could not be confirmed. Refresh its status before retrying."); onActionFailure?.(); }
-    finally { pending.current = false; setBusy(false); }
+      setProgress(data.pickupProgress); setLoaded(true); outcome = 'confirmed';
+    } catch (error) {
+      if (uncertain) {
+        const saved = await savedMutation<{ pickupProgress: Progress }>(`/api/bookings/${encodeURIComponent(bookingId)}/pickup-progress`, state => !!state.pickupProgress && (state.pickupProgress.stage === stage || state.pickupProgress.stage === 'ARRIVED'));
+        if (saved) { setProgress(saved.pickupProgress); setLoaded(true); outcome = 'recovered'; return; }
+      }
+      outcome = uncertain ? 'uncertain' : 'failed'; setError(error instanceof Error && error.name !== "TimeoutError" ? error.message : "Pickup update could not be confirmed. Refresh its status before retrying."); onActionFailure?.();
+    }
+    finally { pending.current = false; setBusy(false); timing.finish(outcome); }
   }
   return <section className="space-y-3 rounded-xl border p-4" aria-label="Pickup arrival">
     <h3 className="font-medium">Pickup progress</h3>

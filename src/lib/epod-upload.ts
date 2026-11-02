@@ -1,3 +1,4 @@
+import { timeBooking, bookingFailure } from "./booking-telemetry";
 import { put, del } from "@vercel/blob";
 import sharp from "sharp";
 import { EPOD_MAX_DATA_URL_LENGTH, EPOD_MAX_PHOTO_BYTES } from "./epod-photo";
@@ -11,19 +12,19 @@ export async function uploadDeliveryPhoto(bookingId: string, proofId: string, da
   let photo: Buffer;
   try {
     const image = sharp(input, { limitInputPixels: 25_000_000, failOn: "warning" });
-    const metadata = await image.metadata();
+    const metadata = await timeBooking("proof.image_metadata", () => image.metadata());
     if (!["jpeg", "png", "webp"].includes(metadata.format ?? "") || (metadata.pages ?? 1) !== 1) throw new Error("Unsupported image");
     // Re-encode real image bytes, normalize phone orientation and remove metadata.
-    photo = await image.rotate().resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true }).flatten({ background: "#fff" }).jpeg({ quality: 75 }).toBuffer();
+    photo = await timeBooking("proof.image_encode", () => image.rotate().resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true }).flatten({ background: "#fff" }).jpeg({ quality: 75 }).toBuffer());
     if (photo.length > EPOD_MAX_PHOTO_BYTES) {
       photo = await sharp(photo).resize({ width: 960, height: 960, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 60 }).toBuffer();
     }
     if (photo.length > EPOD_MAX_PHOTO_BYTES) throw new Error("Image too large");
-  } catch { throw new RiderError("This photo could not be processed. Choose a smaller JPEG, PNG or WebP image.", 400); }
+  } catch (error) { bookingFailure("proof.image", error); throw new RiderError("This photo could not be processed. Choose a smaller JPEG, PNG or WebP image.", 400); }
   try {
-    const blob = await put(`epods/${bookingId}/${proofId}.jpg`, photo, { access: "private", contentType: "image/jpeg", addRandomSuffix: false, allowOverwrite: false });
+    const blob = await timeBooking("proof.blob_write", () => put(`epods/${bookingId}/${proofId}.jpg`, photo, { access: "private", contentType: "image/jpeg", addRandomSuffix: false, allowOverwrite: false }));
     return blob.pathname;
-  } catch { throw new RiderError("Photo storage is unavailable. Your proof was not saved. Please try again.", 503); }
+  } catch (error) { bookingFailure("proof.blob", error); throw new RiderError("Photo storage is unavailable. Your proof was not saved. Please try again.", 503); }
 }
 
 export async function removeUncommittedPhoto(pathname: string) {

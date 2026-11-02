@@ -1,12 +1,15 @@
+import { withBookingTelemetry, timeBooking, bookingFailure, recordBookingTiming } from "@/lib/booking-telemetry";
+import { bookingTransaction, timedDatabase } from "@/lib/booking-transaction";
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db as rawDb } from "@/lib/db";
+const db = timedDatabase(rawDb);
 import { getRiderSession, requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access";
 import { limitRequests, RateLimitError, withRequestLog } from "@/lib/request-guard";
 import { pickupEvents, pickupProgress } from "@/lib/pickup-progress";
 type Params = { params: Promise<{ id: string }> };
 async function get(_req: NextRequest, { params }: Params) {
   try {
-    const session = await requireRider(await getRiderSession());
+    const session = await requireRider(await timeBooking("auth", () => getRiderSession()));
     const booking = await db.booking.findFirst({ where: { id: (await params).id, riderId: session.uid },
       select: { type: true, status: true, riderId: true, matchedAt: true, createdAt: true, events: pickupEvents } });
     if (!booking) throw new RiderError("Booking not found.", 404);
@@ -15,12 +18,12 @@ async function get(_req: NextRequest, { params }: Params) {
 }
 async function post(req: NextRequest, { params }: Params) {
   try {
-    const session = await requireRider(await getRiderSession());
+    const session = await requireRider(await timeBooking("auth", () => getRiderSession()));
     await limitRequests("rider:pickup-progress", session.uid, 30, 60_000);
     const body = await req.json().catch(() => null);
     if (!["HEADING", "ARRIVED"].includes(body?.stage)) throw new RiderError("Choose heading to pickup or arrived at pickup.", 400);
     const id = (await params).id;
-    const progress = await db.$transaction(async tx => {
+    const progress = await bookingTransaction(db, async tx => {
       await tx.$queryRawUnsafe('SELECT "id" FROM "Booking" WHERE "id" = $1 FOR UPDATE', id);
       const booking = await tx.booking.findUnique({ where: { id }, include: { events: pickupEvents } });
       if (!booking || booking.riderId !== session.uid) throw new RiderError("You are no longer assigned to this booking.", 403);
@@ -43,5 +46,5 @@ async function post(req: NextRequest, { params }: Params) {
     return riderErrorResponse(error);
   }
 }
-export const GET = withRequestLog("rider:pickup-progress:GET", get);
-export const POST = withRequestLog("rider:pickup-progress:POST", post);
+export const GET = withBookingTelemetry("booking_read", withRequestLog("rider:pickup-progress:GET", get));
+export const POST = withBookingTelemetry("pickup_progress", withRequestLog("rider:pickup-progress:POST", post));

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { db } from './db';
 import { bookingServiceAreaError } from './service-area';
 import { parseRoadRoute, routeOptions, RoutingError, type RoadRoute, type RoutePoint } from './road-routing';
@@ -6,7 +7,13 @@ import { parseRoadRoute, routeOptions, RoutingError, type RoadRoute, type RouteP
 export const routingEnabled = () => !!process.env.OPENROUTESERVICE_API_KEY?.trim() && process.env.OPENROUTESERVICE_ENABLED !== '0';
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const bounded = (value: string | undefined, fallback: number, ceiling: number) => Math.min(ceiling, Math.max(1, Number.isInteger(Number(value)) ? Number(value) : fallback));
-export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: string, optionsBudget?: { deadlineAt: number }): Promise<RoadRoute> {
+export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: string, optionsBudget?: { deadlineAt: number }, observe?: (phase: string, durationMs: number) => void): Promise<RoadRoute> {
+  const measure = async <T>(phase: string, work: () => Promise<T>) => {
+    if (!observe) return work();
+    const started = performance.now();
+    try { return await work(); }
+    finally { try { observe(phase, performance.now() - started); } catch { /* Telemetry never changes routing. */ } }
+  };
   const remaining = () => {
     const budget = optionsBudget ? optionsBudget.deadlineAt - Date.now() : 10000;
     if (budget <= 0) throw new RoutingError('ROUTE_DEADLINE', 'Pickup ETA is taking too long. Nearby distance will be used.');
@@ -19,7 +26,7 @@ export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: 
   const options = routeOptions(vehicle), apiKey = process.env.OPENROUTESERVICE_API_KEY!.trim(), account = sha(apiKey);
   const key = sha(JSON.stringify([account, 'driving-car-v1', options, start.lat, start.lng, finish.lat, finish.lng]));
   type Cached = { result: RoadRoute | null; expiresAt: Date; leaseUntil: Date | null };
-  const reservation = await db.$transaction(async tx => {
+  const reservation = await measure('db.route_reservation', () => db.$transaction(async tx => {
     // Global per-key lock coordinates every deployment sharing this database.
     // It protects rolling quotas and suppresses duplicate route requests.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ors:${account}`}, 0))::text`;
@@ -45,18 +52,21 @@ export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: 
       await tx.$executeRaw`DELETE FROM "RoadRouteCache" WHERE "key" IN (SELECT "key" FROM "RoadRouteCache" WHERE "expiresAt" < CURRENT_TIMESTAMP - INTERVAL '1 day' AND ("leaseUntil" IS NULL OR "leaseUntil" < CURRENT_TIMESTAMP) LIMIT 25)`;
     }
     return { cached: null };
-  }, { maxWait: Math.min(5000, remaining()), timeout: remaining() });
+  }, { maxWait: Math.min(5000, remaining()), timeout: remaining() }));
   if (reservation.cached) return reservation.cached;
   try {
     // Fixed provider URL, no client-supplied URL and no credentials in logs/URLs.
-    const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-      method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(remaining()),
-      headers: { Authorization: apiKey, 'Content-Type': 'application/json', Accept: 'application/geo+json' },
-      body: JSON.stringify({ coordinates: [[start.lng, start.lat], [finish.lng, finish.lat]], radiuses: [150, 150], instructions: true, language: 'en', units: 'm', options }),
+    const route = await measure('routing.response', async () => {
+      const response = await measure('routing.provider', () => fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+        method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(remaining()),
+        headers: { Authorization: apiKey, 'Content-Type': 'application/json', Accept: 'application/geo+json' },
+        body: JSON.stringify({ coordinates: [[start.lng, start.lat], [finish.lng, finish.lat]], radiuses: [150, 150], instructions: true, language: 'en', units: 'm', options }),
+      }));
+      if (!response.ok) throw new RoutingError(response.status === 429 || response.status === 403 ? 'ROUTE_PROVIDER_LIMIT' : 'ROUTE_PROVIDER', response.status === 404 ? 'No accessible road route was found for these locations.' : 'Road directions are temporarily unavailable. Please retry later.', response.status === 404 ? 422 : 503);
+      const body = await measure('routing.body', () => response.json());
+      return measure('routing.parse', async () => parseRoadRoute(body, start, finish));
     });
-    if (!response.ok) throw new RoutingError(response.status === 429 || response.status === 403 ? 'ROUTE_PROVIDER_LIMIT' : 'ROUTE_PROVIDER', response.status === 404 ? 'No accessible road route was found for these locations.' : 'Road directions are temporarily unavailable. Please retry later.', response.status === 404 ? 422 : 503);
-    const route = parseRoadRoute(await response.json(), start, finish);
-    await db.$executeRaw`UPDATE "RoadRouteCache" SET "result" = ${JSON.stringify(route)}::jsonb, "expiresAt" = ${new Date(Date.now() + 24 * 3600000)}, "leaseUntil" = NULL WHERE "key" = ${key}`;
+    await measure('db.route_cache_write', () => db.$executeRaw`UPDATE "RoadRouteCache" SET "result" = ${JSON.stringify(route)}::jsonb, "expiresAt" = ${new Date(Date.now() + 24 * 3600000)}, "leaseUntil" = NULL WHERE "key" = ${key}`);
     return route;
   } catch (error) {
     const deadlineReached = !!optionsBudget && Date.now() >= optionsBudget.deadlineAt;

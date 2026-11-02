@@ -1,4 +1,6 @@
 "use client";
+import { startBookingTiming } from "@/lib/booking-client-timing";
+import { savedMutation } from "@/lib/booking-mutation-client";
 import { GoOnlineDialog } from './go-online-dialog';
 import { OfferCountdown } from './offer-countdown';
 import { acceptRiderBooking, type AcceptancePhase } from '@/lib/rider-acceptance-client';
@@ -611,16 +613,21 @@ function ActiveJobFlow({
 
   async function advance(to: BookingStatus) {
     if (advancePending.current || !ready || (to === 'DELIVERED' && !paymentReady)) return; advancePending.current = true;
+    const timing = startBookingTiming("job_status");
+    let outcome: "confirmed" | "recovered" | "failed" | "uncertain" = "uncertain";
+    let uncertain = true;
     setUpdating(true);
     setPickupOtpError(null);
     try {
       const res = await fetch(`/api/bookings/${job.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...timing.headers }, signal: AbortSignal.timeout(15000),
         body: JSON.stringify({ status: to, ...(isRide && to === "PICKED_UP" ? { otp: pickupOtp } : {}) }),
       });
+      timing.response(res); uncertain = res.ok || res.status >= 500;
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Update failed");
+      outcome = "confirmed";
       setPickupOtp("");
       onUpdated(data.booking);
       // Broadcast status change so the customer UI updates (no-op when no
@@ -642,6 +649,12 @@ function ActiveJobFlow({
         setShowProof(false);
       }
     } catch (e) {
+      if (uncertain) {
+        const order = ["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"];
+        const saved = await savedMutation<{ booking: Job }>(`/api/bookings/${job.id}`, state => state.booking?.id === job.id && state.booking.riderId === job.riderId && order.indexOf(state.booking.status) >= order.indexOf(to));
+        if (saved) { outcome = "recovered"; setPickupOtp(""); onUpdated(saved.booking); if (saved.booking.status === "DELIVERED") setShowProof(false); toast({ title: "Your update is saved", description: job.refCode }); return; }
+      }
+      outcome = uncertain ? "uncertain" : "failed";
       void recovery.recheck();
       if (isRide && to === "PICKED_UP") { setPickupOtpError(pickupCodeFeedback(e instanceof Error ? e.message : "Could not verify the pickup code.")); return; }
       toast({
@@ -650,7 +663,7 @@ function ActiveJobFlow({
         variant: "destructive",
       });
     } finally {
-      advancePending.current = false; setUpdating(false);
+      advancePending.current = false; setUpdating(false); timing.finish(outcome);
     }
   }
 

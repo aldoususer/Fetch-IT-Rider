@@ -1,3 +1,5 @@
+import { withBookingTelemetry, timeBooking, bookingFailure, recordBookingTiming } from "@/lib/booking-telemetry";
+import { bookingTransaction, timedDatabase } from "@/lib/booking-transaction";
 import { onlineLocationInput, dispatchSelect } from '@/lib/matching-policy';
 import { cookies } from 'next/headers';
 import { settleDemoEarnings } from "@/lib/demo-payments";
@@ -12,7 +14,8 @@ import { recordBookingEvent } from "@/lib/booking-events";
 //          Each transition also timestamps the appropriate field and updates ETA.
 
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db as rawDb } from "@/lib/db";
+const db = timedDatabase(rawDb);
 import { getRiderSession } from "@/lib/rider-access";
 import {
   BOOKING_STATUS_FLOW,
@@ -28,7 +31,7 @@ import { deliveryPaymentError } from "@/lib/payments";
 type Params = { params: Promise<{ id: string }> };
 
 async function handleGET(_req: NextRequest, { params }: Params) {
-  const session = await getRiderSession();
+  const session = await timeBooking("auth", () => getRiderSession());
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -69,21 +72,21 @@ async function handleGET(_req: NextRequest, { params }: Params) {
 
 async function handlePATCH(req: NextRequest, { params }: Params) {
   try {
-    const session = await getRiderSession();
+    const session = await timeBooking("auth", () => getRiderSession());
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { id } = await params;
     await limitRequests("rider:booking-status", session.uid, 60, 60_000);
     const body = await req.json().catch(() => null);
     const status = body?.status as BookingStatus;
     if (!["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(status)) return NextResponse.json({ error: "Invalid status. Use release booking to decline before pickup." }, { status: 400 });
-    const updated = await db.$transaction(async tx => {
-      await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`;
+    const updated = await bookingTransaction(db, async tx => {
+      await timeBooking("db.booking_lock", () => tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${id} FOR UPDATE`);
       const booking = await tx.booking.findUnique({ where: { id } });
       if (!booking) throw new DispatchError("Booking not found.", 404);
       if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("This demo booking needs a successful demo payment before it can progress.");
       const now = new Date();
       if (status === booking.status && booking.riderId === session.uid) {
-        return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
+        return booking;
       }
       if (status === "ACCEPTED") {
         if (!["PENDING", "MATCHED"].includes(booking.status) || (booking.riderId && booking.riderId !== session.uid) || booking.excludedRiderIds.includes(session.uid)) throw new DispatchError("This booking is no longer available to you.");
@@ -135,23 +138,24 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         status, ...(status === "ACCEPTED" ? { riderId: session.uid, matchedAt: now, assignmentExpiresAt: null } : {}),
         ...(status === "PICKED_UP" ? { pickedUpAt: now } : {}), ...(status === "DELIVERED" ? { deliveredAt: now } : {}),
         ...(["ACCEPTED", "IN_TRANSIT"].includes(status) ? { etaMinutes: booking.etaMinutes ?? etaMinutes(booking.distanceKm, VEHICLES[booking.vehicleClass].speedKph) } : {}),
-      }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
+      } });
       if (status === "DELIVERED") await tx.riderProfile.update({ where: { userId: session.uid }, data: { totalDeliveries: { increment: 1 } } });
       if (status === "DELIVERED") await settleDemoEarnings(tx, result);
       await recordBookingEvent(tx, id, { ...session, role: "RIDER" }, { action: status === "ACCEPTED" && !booking.riderId ? "ASSIGNED" : "STATUS_CHANGED", fromStatus: booking.status, toStatus: status, riderId: session.uid });
-      if (status === "DELIVERED") return tx.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } });
       return result;
     }, { maxWait: 10000, timeout: 20000 });
     if ("error" in updated) return NextResponse.json({ error: updated.error }, { status: updated.status });
-    const snapshot = buildTicketSnapshot(updated);
-    return NextResponse.json({ booking: { ...bookingView(updated), ticket: snapshot ? encodeTicket(snapshot) : null } });
+    const detail = await timeBooking("db.response_detail", () => db.booking.findUniqueOrThrow({ where: { id }, include: { customer: { select: { id: true, name: true, phone: true } }, rider: { select: riderSelect } } }));
+    const snapshot = buildTicketSnapshot(detail);
+    return NextResponse.json({ booking: { ...bookingView(detail), ticket: snapshot ? encodeTicket(snapshot) : null } });
   } catch (error) {
     if (error instanceof RateLimitError) throw error;
     if (error instanceof DispatchError) return NextResponse.json({ error: error.message }, { status: error.status });
+    bookingFailure("status", error);
     console.error("[rider status]", { code: safeErrorCode(error) });
     return NextResponse.json({ error: "Couldn’t update booking. Please retry." }, { status: 503 });
   }
 }
 
-export const GET = withRequestLog("rider:bookings/[id]:GET", handleGET);
-export const PATCH = withRequestLog("rider:bookings/[id]:PATCH", handlePATCH);
+export const GET = withBookingTelemetry("booking_read", withRequestLog("rider:bookings/[id]:GET", handleGET));
+export const PATCH = withBookingTelemetry("job_status", withRequestLog("rider:bookings/[id]:PATCH", handlePATCH));

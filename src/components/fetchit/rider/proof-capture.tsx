@@ -1,4 +1,6 @@
 'use client';
+import { startBookingTiming } from '@/lib/booking-client-timing';
+import { savedMutation } from '@/lib/booking-mutation-client';
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { AlertCircle, Camera, Loader2, PenTool, ShieldCheck, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -25,6 +27,7 @@ export function ProofCapture({ bookingId, photoAlreadySaved = false, disabled = 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null), proofPending = useRef(false), photoPending = useRef(false);
+  const proofAttempt = useRef<{ body: string; key: string } | null>(null);
   useEffect(() => {
     onProofState({ busy: submitting || processingPhoto, preparing: processingPhoto, hasSignature: !!signatureSvg, hasPhoto: !!photoDataUrl || photoAlreadySaved });
   }, [submitting, processingPhoto, signatureSvg, photoDataUrl, photoAlreadySaved, onProofState]);
@@ -44,20 +47,31 @@ export function ProofCapture({ bookingId, photoAlreadySaved = false, disabled = 
     setError('');
     if (!signatureSvg || (!photoDataUrl && !photoAlreadySaved)) { setError('Add the recipient signature and a drop-off photo before completing delivery.'); return; }
     proofPending.current = true; setSubmitting(true);
+    const timing = startBookingTiming('proof_submit');
+    let outcome: 'confirmed' | 'recovered' | 'failed' | 'uncertain' = 'uncertain';
+    let uncertain = true;
+    const body = JSON.stringify({ signatureSvg, photoDataUrl: photoDataUrl || undefined, recipientName: recipientName || undefined });
+    if (proofAttempt.current?.body !== body) proofAttempt.current = { body, key: crypto.randomUUID() };
     try {
       const response = await fetch(`/api/bookings/${encodeURIComponent(bookingId)}/proof`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(45000),
-        body: JSON.stringify({ signatureSvg, photoDataUrl: photoDataUrl || undefined, recipientName: recipientName || undefined }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...timing.headers, 'Idempotency-Key': proofAttempt.current.key }, signal: AbortSignal.timeout(45000), body,
       });
+      timing.response(response); uncertain = response.ok || response.status >= 500;
       const data = await response.json().catch(() => null);
       if (!response.ok || !Array.isArray(data?.proofs)) throw new Error(data?.error || 'Couldn’t confirm delivery. Your proof is still here. Check the job status before retrying.');
       const completed = data.proofs.some((proof: { verified: boolean }) => proof.verified);
+      outcome = 'confirmed';
       toast({ title: completed ? 'Delivery completed' : 'Supporting proof saved', description: 'Your booking has been updated.' });
       onDone(completed);
     } catch (failure) {
+      if (uncertain) {
+        const saved = await savedMutation<{ booking: { id: string; status: string } }>(`/api/bookings/${encodeURIComponent(bookingId)}`, state => state.booking?.id === bookingId && state.booking.status === 'DELIVERED');
+        if (saved) { outcome = 'recovered'; toast({ title: 'Delivery completed', description: 'Your saved booking confirms completion.' }); onDone(true); return; }
+      }
+      outcome = uncertain ? 'uncertain' : 'failed';
       setError(failure instanceof Error && failure.name !== 'TimeoutError' ? failure.message : 'Delivery confirmation timed out. Your proof is still here. Check the job status before retrying.');
       onActionFailure?.();
-    } finally { proofPending.current = false; setSubmitting(false); }
+    } finally { proofPending.current = false; setSubmitting(false); timing.finish(outcome); }
   }
 
   return <Card className="border-2 border-primary/30 bg-primary/5">
