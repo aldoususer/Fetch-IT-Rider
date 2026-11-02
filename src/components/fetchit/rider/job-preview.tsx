@@ -7,10 +7,12 @@ import { demoSplit, isDemoPayment } from '@/lib/payment-policy';
 import { JobRouteMap } from './job-route-map';
 import { OfferCountdown } from './offer-countdown';
 import { DeclineOffer } from './decline-offer';
+import type { AcceptancePhase } from '@/lib/rider-acceptance-client';
 
-export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job: RiderJob; onAccept: () => Promise<void>; onReleased: () => void; acceptanceBlock?: string }) {
+export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job: RiderJob; onAccept: (onPhase?: (phase: AcceptancePhase) => void) => Promise<void>; onReleased: () => void; acceptanceBlock?: string }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [now, setNow] = useState(Date.now);
   const [declining, setDeclining] = useState(false);
+  const [acceptPhase, setAcceptPhase] = useState<AcceptancePhase>('location');
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
   const expired=job.status==='MATCHED' && !!job.assignmentExpiresAt && Date.parse(job.assignmentExpiresAt)<=now;
   const pending = useRef(false);
@@ -33,9 +35,9 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
       {acceptanceBlock && <p role="status" className="rd-help">{acceptanceBlock}</p>}
       <Button disabled={busy || declining || expired || upcoming || !!acceptanceBlock} onClick={async()=>{
         if(pending.current || expired || upcoming || acceptanceBlock)return;pending.current=true;setBusy(true);setError('');
-        try { await onAccept(); } catch(failure) { setError(failure instanceof Error ? failure.message : 'Couldn’t accept this request. Refresh jobs to check its availability.'); }
+        try { await onAccept(setAcceptPhase); } catch(failure) { setError(failure instanceof Error ? failure.message : 'Couldn’t accept this request. Refresh jobs to check its availability.'); }
         finally {pending.current=false;setBusy(false);}
-      }}>{busy && <Loader2 size={18} className="animate-spin" aria-hidden="true"/>}{upcoming ? 'Available at pickup time' : acceptanceBlock ? 'Acceptance unavailable' : busy ? 'Refreshing GPS & accepting…' : job.type === 'RIDE' ? 'Accept ride' : 'Accept delivery'}</Button>
+      }}>{busy && <Loader2 size={18} className="animate-spin" aria-hidden="true"/>}{upcoming ? 'Available at pickup time' : acceptanceBlock ? 'Acceptance unavailable' : busy ? acceptPhase === 'accepting' ? 'Accepting booking…' : 'Checking your location…' : job.type === 'RIDE' ? 'Accept ride' : 'Accept delivery'}</Button>
       {job.status === 'MATCHED' && <DeclineOffer id={job.id} disabled={busy || expired || !!acceptanceBlock} onDeclined={onReleased} onBusyChange={value => { pending.current = value; setDeclining(value); }}/>}
       {upcoming && <p className="rd-help">Acceptance opens at the scheduled pickup time.</p>}
     </div>

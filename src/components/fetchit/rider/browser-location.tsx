@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { rememberRiderLocation, clearRiderLocation } from "@/lib/rider-location-client";
 import { Button } from "@/components/ui/button";
 
 type Fix = { lat: number; lng: number; accuracy: number; at: number; speedKph?: number; heading?: number };
@@ -37,15 +38,16 @@ export function BrowserLocation({ userId, needed, availabilityKnown = true }: { 
       if (controller.signal.aborted) return;
       const coords = position.coords;
       if (![coords.latitude, coords.longitude, coords.accuracy].every(Number.isFinite) || Date.now() - position.timestamp > 30_000) return;
-      if (coords.accuracy > 100) { setError('Location is too approximate. Move outdoors and retry.'); return; }
+      if (coords.accuracy > 100) { clearRiderLocation(userId); setError('Location is too approximate. Move outdoors and retry.'); return; }
       const point: Fix = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, at: position.timestamp,
         ...(coords.speed != null && coords.speed >= 0 ? { speedKph: coords.speed * 3.6 } : {}),
         ...(coords.heading != null && Number.isFinite(coords.heading) ? { heading: coords.heading } : {}) };
+      rememberRiderLocation(userId, { lat: point.lat, lng: point.lng, accuracy: point.accuracy, capturedAt: point.at });
       latest.current = point; setFix(point); void publish();
     };
     const onError = (failure: GeolocationPositionError) => {
       if (controller.signal.aborted) return;
-      latest.current = null; setFix(null); setSentAt(null);
+      clearRiderLocation(userId); latest.current = null; setFix(null); setSentAt(null);
       setError(failure.code === 1 ? "Location permission denied. Allow location in your browser’s site settings, then retry." : failure.code === 2 ? "Your device could not determine its location. Turn on location services and retry." : "Location timed out. Move near a window or outdoors and retry.");
     };
     const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 };
@@ -56,7 +58,7 @@ export function BrowserLocation({ userId, needed, availabilityKnown = true }: { 
     }, 10000);
     const resume = () => { setNow(Date.now()); if (!document.hidden && navigator.onLine) navigator.geolocation.getCurrentPosition(capture, onError, options); };
     document.addEventListener("visibilitychange", resume); window.addEventListener("online", resume);
-    return () => { controller.abort(); navigator.geolocation.clearWatch(watch); clearInterval(timer); latest.current = null;
+    return () => { clearRiderLocation(userId); controller.abort(); navigator.geolocation.clearWatch(watch); clearInterval(timer); latest.current = null;
       document.removeEventListener("visibilitychange", resume); window.removeEventListener("online", resume); };
   }, [enabled, needed, retry, userId]);
   const fresh = needed && enabled && fix && Math.max(now, Date.now()) - fix.at <= 30_000;
