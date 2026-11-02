@@ -225,7 +225,7 @@ export function RiderApplicationBoundary() {
       target?.scrollIntoView({block:'center'}); target?.focus({preventScroll:true});
     });
   }
-  if (loading) return <main className="ra"><p role="status">Loading your rider application…</p></main>;
+  if (loading) return <main className="min-h-screen flex items-center justify-center bg-background" aria-busy="true"><div className="flex flex-col items-center gap-3 text-muted-foreground"><img src="/rider-logo.png" alt="" width="48" height="48"/><p className="text-sm" role="status">Opening Fetch-It Rider…</p></div></main>;
   if (app && registrationScreen(app.status, canWork) === 'dashboard') return <RiderDashboard/>;
   if (app && registrationScreen(app.status, canWork) === 'waiting') return <ApplicationWaiting application={app} email={email} refreshing={checkingStatus} error={statusError || error} onRefresh={() => void checkStatus(false)} onSignOut={() => void logout()}/>;
   const documents = requiredDocuments(vehicle, services, fields);
