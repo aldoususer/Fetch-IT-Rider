@@ -247,6 +247,8 @@ model PlatformConfig {
 }
 
 model WorkflowCase {
+  emergencyAt    DateTime?
+  acknowledgedAt DateTime?
   id             String         @id @default(cuid())
   kind           String
   title          String
@@ -296,6 +298,7 @@ model SupportInternalNote {
 }
 
 model StaffResource {
+  audienceRoles String[] @default([])
   id          String   @id @default(cuid())
   kind        String
   title       String
@@ -511,6 +514,7 @@ model CustomerReview {
 }
 
 model SupportTicket {
+  isEmergency Boolean @default(false)
   id                    String                 @id @default(cuid())
   customerId            String
   bookingId             String?
@@ -818,6 +822,7 @@ model CustomerNotification {
   url               String
   createdAt         DateTime                     @default(now())
   readAt            DateTime?
+  dismissedAt       DateTime?
   pushDeliveredAt   DateTime?
   pushLeaseUntil    DateTime?
   pushNextAttemptAt DateTime                     @default(now())
@@ -863,4 +868,53 @@ model RoadRouteRequest {
   account String
   createdAt DateTime @default(now())
   @@index([account, createdAt])
+}
+
+// Durable staff events. Team intake, personal actions and shared advisories are
+// separate channels; an inbox read never acknowledges or completes a case.
+model StaffNotice {
+  id            String @id
+  channel       String
+  recipientId   String?
+  recipientRole String?
+  entityType    String
+  entityId      String
+  title         String
+  detail        String
+  urgent        Boolean @default(false)
+  createdAt     DateTime @default(now())
+  reads         StaffNoticeRead[]
+  @@index([channel, recipientId, createdAt, id])
+  @@index([entityType, entityId])
+}
+
+model StaffNoticeRead {
+  noticeId String
+  actorId String
+  readAt DateTime @default(now())
+  notice StaffNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  @@id([noticeId, actorId])
+}
+
+model PlatformIncident {
+  id String @id
+  category String
+  scope String
+  title String
+  detail String
+  severity String
+  platformWide Boolean @default(false)
+  active Boolean @default(true)
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  resolvedAt DateTime?
+}
+
+model ServiceHealthBucket {
+  service String
+  minute DateTime
+  requests Int @default(0)
+  failures Int @default(0)
+  @@id([service, minute])
 }

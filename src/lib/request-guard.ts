@@ -1,3 +1,4 @@
+import {scheduleServiceHealth} from './service-health';
 import { createHmac, randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
@@ -63,6 +64,7 @@ export function withRequestLog<Args extends [NextRequest, ...unknown[]]>(scope: 
         response = NextResponse.json({ error: "This service is temporarily unavailable. Please try again." }, { status: 503 });
       }
     }
+    scheduleServiceHealth(scope,response.status);
     response.headers.set("X-Request-ID", requestId);
     response.headers.set("Cache-Control", "private, no-store");
     if (args[0].method !== "GET" && /bookings|support/.test(scope)) schedulePushDelivery();

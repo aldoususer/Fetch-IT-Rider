@@ -21,7 +21,7 @@ export function isStaffRole(role: unknown): role is StaffRole {
 // Keep retired accounts manageable without allowing them to authenticate or be assigned again.
 export function isManagedStaffRole(role: unknown) { return isStaffRole(role) || role === "FINANCE"; }
 export function supportScope(actor: { id: string; role: string }) {
-  return hasPermission(actor.role, "support.manage") ? {} : { OR: [{ assignedAdminId: actor.id }, { assignedAdminId: null }] };
+  return hasPermission(actor.role, "operations") ? {} : hasPermission(actor.role, "support.manage") ? { isEmergency: false } : { isEmergency: false, OR: [{ assignedAdminId: actor.id }, { assignedAdminId: null }] };
 }
 export function caseScope(actor: { id: string; role: string }) {
   if (hasPermission(actor.role, "operations")) return {};
