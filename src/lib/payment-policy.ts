@@ -27,10 +27,15 @@ export function cashConfirmationAvailable(type: string, status: string, dropoffR
   return ["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"].includes(status);
 }
 
-export function deliveryCashCompletionError(booking: { type: string; paymentMethod: string; paymentStatus: string; totalFare: unknown; customerPaidAmount: unknown; riderReceivedAmount: unknown; customerPaidAt: unknown; riderReceivedAt: unknown }): string | null {
-  if (booking.type !== "DELIVERY" || booking.paymentMethod !== "CASH") return null;
-  if (!booking.riderReceivedAt) return "Confirm that you received the cash payment at drop-off before completing delivery.";
-  if (!booking.customerPaidAt) return "Wait for the customer to confirm their cash payment before completing delivery.";
-  if (booking.paymentStatus !== "PAID" || !confirmationsMatch(String(booking.customerPaidAmount), String(booking.riderReceivedAmount), String(booking.totalFare))) return "The cash confirmations must match the fare before delivery can be completed. Contact support to correct a payment.";
+type CompletionPayment = { type: string; paymentMethod: string; paymentStatus: string; totalFare: unknown; customerPaidAmount: unknown; riderReceivedAmount: unknown; customerPaidAt: unknown; riderReceivedAt: unknown };
+export function completionPaymentError(booking: CompletionPayment): string | null {
+  const service = booking.type === 'RIDE' ? 'ride' : 'delivery';
+  if (booking.paymentMethod !== 'CASH') return isDemoPayment(booking.paymentMethod) && booking.paymentStatus === 'PAID' ? null : `Payment must be confirmed before completing this ${service}.`;
+  if (!booking.riderReceivedAt) return booking.type === 'RIDE' ? 'Confirm that you received the cash payment before completing this ride.' : 'Confirm that you received the cash payment at drop-off before completing delivery.';
+  if (!booking.customerPaidAt) return `Wait for the customer to confirm their cash payment before completing ${service}.`;
+  if (booking.paymentStatus !== "PAID" || !confirmationsMatch(String(booking.customerPaidAmount), String(booking.riderReceivedAmount), String(booking.totalFare))) return `The cash confirmations must match the fare before ${service} can be completed. Contact support to correct a payment.`;
   return null;
+}
+export function deliveryCashCompletionError(booking: CompletionPayment): string | null {
+  return booking.type === 'DELIVERY' && booking.paymentMethod === 'CASH' ? completionPaymentError(booking) : null;
 }

@@ -1,7 +1,7 @@
 import { onlineLocationInput, dispatchSelect } from '@/lib/matching-policy';
 import { cookies } from 'next/headers';
 import { settleDemoEarnings } from "@/lib/demo-payments";
-import { isDemoPayment } from "@/lib/payment-policy";
+import { completionPaymentError, isDemoPayment } from "@/lib/payment-policy";
 import { reserveAvailableRider, DispatchError } from "@/lib/dispatch";
 import { withRequestLog, RateLimitError, limitRequests, safeErrorCode } from "@/lib/request-guard";
 import { bookingView, riderSelect } from "@/lib/db-data";
@@ -118,6 +118,10 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         } });
         // Commit failed attempts; a thrown error would roll them back.
         if (!ok) return { error: "Pickup code did not match. Confirm it with the passenger.", status: 400 };
+      }
+      if (status === 'DELIVERED' && booking.type === 'RIDE') {
+        const paymentError = completionPaymentError(booking);
+        if (paymentError) throw new DispatchError(paymentError);
       }
       if (status === "DELIVERED" && booking.type === "DELIVERY") {
         const paymentError = await deliveryPaymentError(tx, booking);

@@ -610,7 +610,7 @@ function ActiveJobFlow({
   useEffect(()=>{if(showProof)proofSection.current?.scrollIntoView({block:'start',behavior:'smooth'});},[showProof]);
 
   async function advance(to: BookingStatus) {
-    if (advancePending.current || !ready) return; advancePending.current = true;
+    if (advancePending.current || !ready || (to === 'DELIVERED' && !paymentReady)) return; advancePending.current = true;
     setUpdating(true);
     setPickupOtpError(null);
     try {
@@ -778,9 +778,9 @@ function ActiveJobFlow({
         </Card>
       )}
 
-      {showProof && (job.paymentMethod !== "CASH" || paymentReady) && (
+      {showProof && (
         <div ref={proofSection}><ProofCapture
-          disabled={!ready}
+          disabled={!ready || !paymentReady}
           onActionFailure={()=>void recovery.recheck()}
           bookingId={job.id}
           photoAlreadySaved={job.hasDeliveryPhoto ?? false}
@@ -801,24 +801,25 @@ function ActiveJobFlow({
             <Button
               size="lg"
               onClick={() => advance(nextStatus!)}
-              disabled={!ready || updating || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
+              disabled={!ready || updating || (nextStatus === 'DELIVERED' && !paymentReady) || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
               className="w-full"
             >
               {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               {nextLabel}
             </Button>
           )}
+          {status === 'IN_TRANSIT' && isRide && !paymentReady && <><p className="rd-help">Payment must be confirmed before completing this ride.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment</Button></>}
           {status === 'IN_TRANSIT' && !isRide && job.paymentMethod === 'CASH' && !paymentReady && <><p className="rd-help">Confirm arrival and cash payment before collecting delivery proof.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment steps</Button></>}
           {status === "IN_TRANSIT" && !isRide && !showProof && (
             <Button
               size="lg"
               onClick={() => setShowProof(true)}
-              disabled={!ready || updating || (job.paymentMethod === "CASH" && !paymentReady)}
+              disabled={!ready || updating || !paymentReady}
             >
               <ShieldCheck className="h-4 w-4" /> Capture signature & photo
             </Button>
           )}
-          {showProof && <><p className="rd-proof-checklist" role="status"><span className={proofState.hasSignature ? 'is-ready' : ''}>{proofState.hasSignature ? '✓ Signature ready' : '○ Signature needed'}</span><span className={proofState.hasPhoto ? 'is-ready' : ''}>{proofState.hasPhoto ? '✓ Photo ready' : '○ Photo needed'}</span></p><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel proof capture</Button></>}
+          {showProof && <><p className="rd-proof-checklist" role="status"><span className={proofState.hasSignature ? 'is-ready' : ''}>{proofState.hasSignature ? '✓ Signature ready' : '○ Signature needed'}</span><span className={proofState.hasPhoto ? 'is-ready' : ''}>{proofState.hasPhoto ? '✓ Photo ready' : '○ Photo needed'}</span></p><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || !paymentReady || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel proof capture</Button></>}
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">
