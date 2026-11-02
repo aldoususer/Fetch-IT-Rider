@@ -1,3 +1,4 @@
+import { planningTravelSeconds } from "./eta-policy";
 import { distanceMeters } from './road-routing';
 import { randomUUID } from 'node:crypto';
 import type { Booking, Prisma, PrismaClient } from '@prisma/client';
@@ -51,7 +52,7 @@ async function chooseRiders(db: PrismaClient, booking: Booking, radiusKm: number
           const approvals = eligible.find(rider => rider.id === candidate.id)!.riderApprovals;
           if (route.coordinates.some(([lng, lat]) => !approvals.some(approval => approvalCoversRoute(approval, { ...booking, pickupLat: lat, pickupLng: lng, dropoffLat: lat, dropoffLng: lng })))) return null;
         }
-        return { ...candidate, pickupEtaSeconds: route.durationSeconds };
+        return { ...candidate, pickupEtaSeconds: planningTravelSeconds(route.distanceMeters, route.durationSeconds, booking.vehicleClass) };
       } catch (failure) {
         // No reachable road / out-of-area is not a candidate. Provider outages
         // or shared quota exhaustion fall back honestly to nearby distance.

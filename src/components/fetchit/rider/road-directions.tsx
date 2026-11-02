@@ -1,11 +1,12 @@
 'use client';
+import { planningTravelSeconds, travelTimeRange } from '@/lib/eta-policy';
 import { startBookingTiming } from '@/lib/booking-client-timing';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { routeProgress, type RoadRoute, type RoutePoint } from '@/lib/road-routing';
 
 type Fix = RoutePoint & { accuracy: number; at: number };
-export function RoadDirections({ bookingId, stage, onRoute }: { bookingId: string; stage: string; onRoute: (route: RoadRoute | null) => void }) {
+export function RoadDirections({ bookingId, stage, vehicleClass = 'SEDAN', onRoute }: { bookingId: string; stage: string; vehicleClass?: string; onRoute: (route: RoadRoute | null) => void }) {
   const [route, setRoute] = useState<RoadRoute | null>(null), [error, setError] = useState('');
   const [busy, setBusy] = useState(false), [offline, setOffline] = useState(false), [fix, setFix] = useState<Fix | null>(null), [now, setNow] = useState(0);
   const pending = useRef(false), request = useRef(0), lastAttempt = useRef(0), deviations = useRef(0), abort = useRef<AbortController | null>(null);
@@ -51,7 +52,7 @@ export function RoadDirections({ bookingId, stage, onRoute }: { bookingId: strin
     {offline && <p role="status">You’re offline. Saved directions may be outdated.</p>}
     {error && <p role="status">{error} You can still use the external navigation link.</p>}
     {route && <>
-      <p>{(route.distanceMeters / 1000).toFixed(2)} km · About {Math.max(1, Math.round(route.durationSeconds / 60))} min <span className="rd-help">· No live traffic</span></p>
+      <p>{(route.distanceMeters / 1000).toFixed(2)} km · Estimated {travelTimeRange(planningTravelSeconds(route.distanceMeters, route.durationSeconds, vehicleClass))} min <span className="rd-help">· Planning estimate, no live traffic</span></p>
       {!preview && <div className="rd-current-stop" aria-live="polite">{progress?.offRoute ? <><strong>You appear to be off route</strong><p>{busy ? 'Updating directions…' : 'Refresh the route when it is safe to do so.'}</p></> : progress?.arrived ? <><strong>You’re near the destination</strong><p>Confirm the address before marking arrival. Navigation does not update the booking.</p></> : current ? <><strong>{current.instruction}</strong><p>{next ? `In about ${progress!.toTurnMeters} m: ${next.instruction}` : `${progress!.remainingMeters} m remaining`}</p></> : <p>Waiting for a fresh, accurate shared location. Directions below remain available.</p>}</div>}
       <details><summary>All turn instructions</summary><ol>{route.steps.map((step, i)=><li key={i}><span>{step.instruction}</span><small>{step.distance >= 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m'}</small></li>)}</ol></details>
       <p className="rd-help">Road guidance uses a car profile; motorcycle and tricycle access rules may differ. Follow road signs and your approved operating area.</p>

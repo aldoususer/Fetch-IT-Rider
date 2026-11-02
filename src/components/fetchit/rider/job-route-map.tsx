@@ -7,7 +7,7 @@ import { useRiderJobMap } from '@/hooks/use-rider-job-map';
 import { Button } from '@/components/ui/button';
 
 type Fix = RoutePoint & { accuracy: number; at: number };
-export function JobRouteMap({ pickup, dropoff, navigation = 'pickup', bookingId, stage = 'PENDING' }: { pickup: RoutePoint; dropoff: RoutePoint; navigation?: 'pickup' | 'dropoff' | 'none'; bookingId?: string; stage?: string }) {
+export function JobRouteMap({ pickup, dropoff, navigation = 'pickup', bookingId, stage = 'PENDING', vehicleClass = 'SEDAN' }: { pickup: RoutePoint; dropoff: RoutePoint; navigation?: 'pickup' | 'dropoff' | 'none'; bookingId?: string; stage?: string; vehicleClass?: string }) {
   const container = useRef<HTMLDivElement>(null);
   const routingAvailable = useAppStore(state => !!state.user?.roadRouting);
   const [road, setRoad] = useState<{ stage: string; route: RoadRoute | null } | null>(null);
@@ -32,7 +32,7 @@ export function JobRouteMap({ pickup, dropoff, navigation = 'pickup', bookingId,
         {(map.state === 'google' || map.state === 'standard') && <div className="absolute right-2 top-2 grid gap-1" aria-label="Map zoom"><Button className="min-h-12 min-w-12 bg-white text-foreground" variant="outline" aria-label="Zoom in" onClick={() => map.zoom(1)}>+</Button><Button className="min-h-12 min-w-12 bg-white text-foreground" variant="outline" aria-label="Zoom out" onClick={() => map.zoom(-1)}>−</Button></div>}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground" role="status">{map.state === 'google' ? 'Google Maps' : map.state === 'standard' ? 'Standard map · Directions remain available' : map.state === 'error' ? 'Map unavailable. Use the navigation links.' : 'Preparing map'}</span><div className="flex gap-1">{fresh && <Button className="min-h-12" variant="ghost" onClick={map.center}>Centre on me</Button>}<Button className="min-h-12" variant="ghost" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? 'Collapse map' : 'Expand map'}</Button></div></div>
-      {bookingId && routingAvailable && <RoadDirections key={bookingId + stage} bookingId={bookingId} stage={stage} onRoute={onRoute} />}
+      {bookingId && routingAvailable && <RoadDirections key={bookingId + stage} bookingId={bookingId} stage={stage} vehicleClass={vehicleClass} onRoute={onRoute} />}
       {road?.stage === stage && road.route && <p className="text-xs text-muted-foreground">Route data © <a className="underline" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> via openrouteservice.</p>}
       {navigation !== 'none' && <section className="space-y-2" aria-label="External navigation"><div><h3 className="text-sm font-semibold">Open in Google Maps</h3><p className="text-xs text-muted-foreground">These links open Google Maps in a new tab.</p></div><div className="rd-navigation"><a className="rd-navigation-primary" target="_blank" rel="noopener noreferrer" href={directions(navigation === 'pickup' ? pickup : dropoff)}>Navigate to {navigation === 'pickup' ? 'pickup' : 'drop-off'} ↗</a><a className="rd-navigation-secondary" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps/dir/?api=1&origin=${pickup.lat},${pickup.lng}&destination=${dropoff.lat},${dropoff.lng}&travelmode=driving`}>View full route ↗</a></div></section>}
     </> : <p className="text-sm text-muted-foreground">Map unavailable: booking coordinates are missing.</p>}

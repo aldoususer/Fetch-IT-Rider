@@ -2,9 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
 function load(file, imports, globals = {}) {
+  imports = { '@/lib/booking-client-timing': { startBookingTiming: () => ({ headers: {}, response() {}, finish() {} }) }, '@/lib/booking-mutation-client': { savedMutation: async () => null }, '@/lib/eta-policy': { travelTimeRange: seconds => `${Math.ceil(seconds/60)}–${Math.ceil(seconds/60)+2}` }, ...imports };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, require: name => { if (!(name in imports)) throw Error(name); return imports[name]; }, Date, Error, Response, AbortSignal, ...globals });
+    { exports, require: name => { if (!(name in imports)) throw Error(name); return imports[name]; }, Date, Error, Response, AbortSignal, crypto: require('node:crypto').webcrypto, ...globals });
   return exports;
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));

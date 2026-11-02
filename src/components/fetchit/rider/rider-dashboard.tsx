@@ -364,12 +364,12 @@ export function RiderDashboard() {
       <details className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">
         <StatCard icon={<Activity size={20}/>} label="Active jobs" value={stats?.activeJobs??0} loading={!stats}/>
         <StatCard icon={<CheckCircle2 size={20}/>} label="Completed" value={stats?.completedJobs??0} loading={!stats}/>
-        <StatCard icon={<Star size={20}/>} label="Customer rating" value={profile?.ratingCount?(profile.rating??0).toFixed(1):'No ratings yet'} loading={!stats}/>
+        <StatCard onClick={() => setProfileOpen(true)} icon={<Star size={20}/>} label="Customer rating" value={profile?.ratingCount?(profile.rating??0).toFixed(1):'No ratings yet'} loading={!stats}/>
         <StatCard icon={<Wallet size={20}/>} label="Completed cash fares" value={'₱'+(stats?.earnings??0).toFixed(2)} loading={!stats}/>
       </div>{!!stats && (stats.demoEarnings>0||stats.demoAwaitingPayout>0||stats.demoPaidOut>0) && <div className="rd-notice"><p>Online test transactions · no money transferred</p><p>Earned ₱{stats.demoEarnings.toFixed(2)} · Awaiting review ₱{stats.demoAwaitingPayout.toFixed(2)} · Payouts ₱{stats.demoPaidOut.toFixed(2)}</p></div>}</details>
     </main>
     {onlineSetupOpen && <GoOnlineDialog open onOpenChange={setOnlineSetupOpen} isOnline={!!stats?.isOnline} onGoOffline={()=>toggleOnline(false, undefined, true)} notificationsReady={deviceNotificationsReady} enableNotifications={alerts.enableBrowser} onReady={async fix=>{await toggleOnline(true,fix);void loadStats();}}/>}
-    <RiderAccountProfile open={profileOpen} onOpenChange={setProfileOpen}/>
+    <RiderAccountProfile showReviews open={profileOpen} onOpenChange={setProfileOpen}/>
     <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent fullScreenOnMobile className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
       {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{activeJob.status === 'PENDING' ? 'New request' : statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
         {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && (stats.offeredJobs??0)>0 ? "Accept or decline your exclusive offer before choosing another request." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={onPhase=>accept(activeJob,onPhase)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
@@ -382,14 +382,15 @@ function StatCard({
   icon,
   label,
   value,
-  loading,
+  loading, onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   value: React.ReactNode;
-  loading?: boolean;
+  loading?: boolean; onClick?: () => void;
 }) {
-  return <article className="rd-stat">{loading ? <Skeleton className="h-12 w-full"/> : <><div className="rd-stat-icon" aria-hidden="true">{icon}</div><div className="rd-stat-copy"><p>{label}</p><strong>{value}</strong></div></>}</article>;
+  const content = loading ? <Skeleton className="h-12 w-full"/> : <><div className="rd-stat-icon" aria-hidden="true">{icon}</div><div className="rd-stat-copy"><p>{label}</p><strong>{value}</strong></div></>;
+  return onClick ? <button type="button" className="rd-stat min-h-12 text-left focus-visible:outline-2 focus-visible:outline-ring" onClick={onClick} aria-label="View your customer ratings and reviews">{content}</button> : <article className="rd-stat">{content}</article>;
 }
 
 function OnlineToggle({
@@ -719,7 +720,7 @@ function ActiveJobFlow({
 
       <div className="rd-current-stop"><p>Next stop · {nextJobStop(job).label}</p><strong>{nextJobStop(job).address}</strong></div>
       {isRide && status === "ACCEPTED" && <PickupProgress key={`pickup:${job.id}`} bookingId={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} />}
-      <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
+      <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
         <div className="flex items-start gap-2">

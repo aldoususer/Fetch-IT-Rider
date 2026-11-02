@@ -4,6 +4,7 @@ import { Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatJobTime, isUpcomingJob, jobTiming, type RiderJob } from '@/lib/rider-workspace';
 import { demoSplit, isDemoPayment } from '@/lib/payment-policy';
+import { travelTimeRange } from '@/lib/eta-policy';
 import { JobRouteMap } from './job-route-map';
 import { OfferCountdown } from './offer-countdown';
 import { DeclineOffer } from './decline-offer';
@@ -21,11 +22,11 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
   return <div className="rd-flow">
     <div className="rd-flow-body">
       {job.status==='MATCHED' && <OfferCountdown expiresAt={job.assignmentExpiresAt}/>}
-      {job.dispatch?.pickupEtaSeconds != null && <p className="rd-help">About {Math.max(1,Math.ceil(job.dispatch.pickupEtaSeconds/60))} min to pickup · road estimate, no live traffic</p>}
+      {job.dispatch?.pickupEtaSeconds != null && <p className="rd-help">Estimated {travelTimeRange(job.dispatch.pickupEtaSeconds)} min to pickup · planning estimate, no live traffic</p>}
       <p className={`rd-timing is-${timing.kind}`}><Clock size={16} aria-hidden="true"/>{timing.label}</p>
       {['older','overdue'].includes(timing.kind) && <p className="rd-help">This request has been waiting. Review its original pickup time before accepting; contact support if it is no longer valid.</p>}
       <dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
-      <JobRouteMap key={job.id} bookingId={job.id} stage={job.status} pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
+      <JobRouteMap key={job.id} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
       <div className="rd-preview-fare"><span>{job.paymentMethod === 'CASH' ? 'Cash fare' : 'Rider share'}</span><strong>₱{fare.toFixed(2)}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p></div>
       <p className="rd-help">Requested {formatJobTime(job.createdAt)} · PH time. Customer contact details become available after acceptance.</p>
     </div>
