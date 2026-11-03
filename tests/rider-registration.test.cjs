@@ -61,6 +61,7 @@ test('account-only signup creates an unapproved draft; older vehicle payloads an
     '@/lib/request-guard': { withRequestLog: (_name, fn) => fn, RateLimitError, limitRequests: async () => {}, clientAddress: () => 'fixture', safeErrorCode: () => 'test' },
     '@/lib/password': { hashPassword: () => 'TEST_HASH' }, '@/lib/session': { createSessionToken: () => 'TEST_SESSION', setSessionCookie: async () => {} },
     '@/lib/db-data': { publicUser: user => ({ id: user.id, role: user.role }) },
+    '@/lib/road-routing-service': { routingEnabled: () => false },
   });
   const input = { name: 'Test Rider', email: 'rider@example.invalid', password: 'Testing12345!', role: 'RIDER' };
   async function post(patch = {}) { return POST(new Request('http://fixture.invalid/api/auth/signup', { method: 'POST', body: JSON.stringify({ ...input, ...patch }) })); }

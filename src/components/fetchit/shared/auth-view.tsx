@@ -35,14 +35,14 @@ import { useLocalDemo } from '@/hooks/use-local-demo';
 const DEMO_EMAIL = "rider@fetchit.app";
 const DEMO_PASSWORD = "demo1234";
 
-export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
+export function AuthView({ initialMode, initialEmail = "", signInNotice, onSignedIn }: { initialMode: "login" | "signup"; initialEmail?: string; signInNotice?: string; onSignedIn?: () => void }) {
   const lab = useLocalDemo();
   const setView = useAppStore((s) => s.setView);
   const setUser = useAppStore((s) => s.setUser);
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
 
   // Shared fields
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   // Signup-only fields
   const [name, setName] = useState("");
@@ -76,6 +76,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Login failed");
         setUser(data.user);
+        onSignedIn?.();
       } else {
         if (!validNewPassword(password)) throw new Error(PASSWORD_REQUIREMENT);
         const res = await fetch("/api/auth/signup", {
@@ -157,6 +158,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
               </div>
             </CardHeader>
             <CardContent>
+              {signInNotice && <p role="status" className="mb-4 text-sm text-muted-foreground">{signInNotice}</p>}
               <Tabs
                 value={mode}
                 onValueChange={(v) => { setMode(v as "login" | "signup"); setError(null); setExistingAccount(false); }}
@@ -169,7 +171,7 @@ export function AuthView({ initialMode }: { initialMode: "login" | "signup" }) {
                 </details>}
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Login</TabsTrigger>
-                  <TabsTrigger value="signup">Sign up</TabsTrigger>
+                  <TabsTrigger value="signup" disabled={!!onSignedIn}>Sign up</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="login" className="space-y-4">

@@ -13,6 +13,7 @@ import "./rider-application.css";
 import { useLocalDemo } from '@/hooks/use-local-demo';
 import { useVisiblePoll } from '@/hooks/use-visible-poll';
 import { readApplicationJson } from '@/lib/application-client-response';
+import { AuthView } from '../shared/auth-view';
 
 type Doc = { id: string; kind: string; current: boolean; status: string; reason?: string; originalName?: string | null; mimeType?: string };
 type Application = { uploadContext: string; isDemo: boolean; id: string; version: number; status: string; vehicleClass: string; services: string[]; fields: Fields; fieldReviews: Record<string, Review>; documents: Doc[]; emailVerifiedAt?: string; orientationAt?: string; orientationVenue?: string; orientationInstructions?: string; emails: { id: string; kind: string; status: string }[] };
@@ -34,6 +35,14 @@ export function RiderApplicationBoundary() {
   const [app, setApp] = useState<Application | null>(null), [fields, setFields] = useState<Fields>({}), [vehicle, setVehicle] = useState("MOTORCYCLE"), [services, setServices] = useState(["DELIVERY"]);
   const [canWork, setCanWork] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [code, setCode] = useState("");
   const [extra, setExtra] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const requireSignIn = useCallback((response: Response) => {
+    if (response.status !== 401) return false;
+    setSessionExpired(true);
+    setError('');
+    setPopup(null);
+    return true;
+  }, []);
   const [confirmReal, setConfirmReal] = useState(false);
   const [demoProgress, setDemoProgress] = useState('');
   const [popup, setPopup] = useState<{ kind: 'requirements'; issues: RegistrationIssue[] } | { kind: 'status' } | null>(null);
@@ -70,7 +79,10 @@ export function RiderApplicationBoundary() {
   const load = useCallback(async (initial = false, signal?: AbortSignal) => {
     const startedVersion = mutationVersion.current;
     try {
-      const res = await fetch(endpoint, { cache: "no-store", signal }); const data = await readApplicationJson(res);
+      const res = await fetch(endpoint, { cache: "no-store", signal });
+      if (signal?.aborted || mutationVersion.current !== startedVersion) return;
+      if (!signal?.aborted && requireSignIn(res)) return;
+      const data = await readApplicationJson(res);
       if (signal?.aborted || mutationVersion.current !== startedVersion) return;
       if (!res.ok) throw new Error(data.error || "Application unavailable.");
       hydrate(data.application); setCanWork(data.canWork);
@@ -78,17 +90,19 @@ export function RiderApplicationBoundary() {
       else if (data.application.status === 'NEEDS_CORRECTION') { setNotice(''); setStep(resumeRegistration(data.application)); }
       else if (!["DRAFT", "NEEDS_CORRECTION"].includes(data.application.status)) setStep(4);
     } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Application unavailable."); } finally { if (!signal?.aborted) setLoading(false); }
-  }, [hydrate]);
+  }, [hydrate, requireSignIn]);
   useEffect(() => { const controller = new AbortController(); // Initial fetch updates state only after the response; abort prevents stale account data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (userId) void load(true, controller.signal); return () => controller.abort(); }, [userId, load]);
-  useVisiblePoll(app && !editable && !canWork && !busy && !hasUploads && !checkingStatus ? userId || '' : '', signal => load(false, signal), 3000, false);
+  useVisiblePoll(!sessionExpired && app && !editable && !canWork && !busy && !hasUploads && !checkingStatus ? userId || '' : '', signal => load(false, signal), 3000, false);
   async function checkStatus(showPopup = true) {
     if (busy || checkingStatus || uploadQueue.hasPending()) return;
     if (showPopup) setPopup({ kind: 'status' }); setError(''); setStatusError(''); setCheckingStatus(true); setNotice('');
     const startedVersion = mutationVersion.current;
     try {
-      const response = await fetch(endpoint, { cache: 'no-store' }), data = await readApplicationJson(response);
+      const response = await fetch(endpoint, { cache: 'no-store' });
+      if (requireSignIn(response)) return;
+      const data = await readApplicationJson(response);
       if (!response.ok) throw Error(data.error || 'Could not check application status.');
       if (mutationVersion.current !== startedVersion) return;
       if (!dirtyRef.current || !['DRAFT', 'NEEDS_CORRECTION'].includes(data.application.status)) hydrate(data.application);
@@ -137,8 +151,10 @@ export function RiderApplicationBoundary() {
   }
 
   async function request(body: Record<string, unknown>) {
+    if (sessionExpired) throw new Error('Sign in again to continue your rider application.');
     mutationVersion.current++;
     const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: applicationRef.current?.version, ...body }) });
+    if (requireSignIn(res)) throw new Error('Sign in again to continue your rider application.');
     const result = await readApplicationJson(res);
     if (body.action === "send-code" && (res.ok || res.status === 429)) {
       const retry = res.ok ? 60 : Number(res.headers.get("Retry-After") || 60);
@@ -225,6 +241,7 @@ export function RiderApplicationBoundary() {
       target?.scrollIntoView({block:'center'}); target?.focus({preventScroll:true});
     });
   }
+  if (sessionExpired) return <AuthView initialMode="login" initialEmail={email ?? ''} signInNotice="Your session expired. Sign in again to continue your rider application. Your saved progress and the details on this page are kept while this page stays open." onSignedIn={() => { setSessionExpired(false); setError(''); setPopup(null); setCode(''); if (!applicationRef.current) { setLoading(true); void load(true); } }} />;
   if (loading) return <main className="min-h-screen flex items-center justify-center bg-background" aria-busy="true"><div className="flex flex-col items-center gap-3 text-muted-foreground"><img src="/rider-logo.png" alt="" width="48" height="48"/><p className="text-sm" role="status">Opening Fetch-It Rider…</p></div></main>;
   if (app && registrationScreen(app.status, canWork) === 'dashboard') return <RiderDashboard/>;
   if (app && registrationScreen(app.status, canWork) === 'waiting') return <ApplicationWaiting application={app} email={email} refreshing={checkingStatus} error={statusError || error} onRefresh={() => void checkStatus(false)} onSignOut={() => void logout()}/>;
