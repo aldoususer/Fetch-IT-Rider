@@ -11,6 +11,7 @@ import { useRiderAlerts } from "@/hooks/use-rider-alerts";
 import { RiderNotifications } from "./rider-notifications";
 import type { RiderAlert } from "@/lib/rider-alerts";
 import { PickupProgress } from "./pickup-progress";
+import { PickupQrScanner } from "./pickup-qr-scanner";
 import { BrowserLocation } from "./browser-location";
 import type { RiderProfileData } from "../shared/rider-profile";
 import { RiderAccountProfile } from "./rider-account-profile";
@@ -785,7 +786,8 @@ function ActiveJobFlow({
         <Card className="border-primary/30 bg-primary/5 py-0">
           <CardContent className="space-y-3 p-4">
             <Label htmlFor={`pickup-otp-${job.id}`} className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Passenger pickup code</Label>
-            <p className="text-sm text-muted-foreground">At pickup, ask the passenger for their six-digit code. Verification confirms the passenger is on board.</p>
+            <p className="text-sm text-muted-foreground">At pickup, scan the passenger’s QR or enter their six-digit code. Verify it below to confirm the passenger is on board.</p>
+            <PickupQrScanner bookingId={job.id} disabled={!ready || updating} onScan={code => { setPickupOtp(code); setPickupOtpError(null); }} />
             <Input ref={pickupInput} id={`pickup-otp-${job.id}`} inputMode="numeric" autoComplete="off" maxLength={6} placeholder="6-digit code" value={pickupOtp} disabled={updating} onChange={event => { setPickupOtp(event.target.value.replace(/\D/g, "").slice(0, 6)); setPickupOtpError(null); }} aria-invalid={!!pickupOtpError} className="font-mono text-lg tracking-widest" />
             {pickupOtpError && <p role="alert" className="text-sm text-destructive">{pickupOtpError}</p>}
           </CardContent>

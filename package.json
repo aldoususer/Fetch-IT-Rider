@@ -35,7 +35,8 @@
     "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.3.1",
     "web-push": "3.6.7",
-    "zustand": "^5.0.6"
+    "zustand": "^5.0.6",
+    "jsqr": "^1.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
