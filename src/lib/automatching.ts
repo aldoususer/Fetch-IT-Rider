@@ -23,9 +23,8 @@ export async function queueAutomaticMatching(tx: Prisma.TransactionClient, booki
   await tx.autoDispatch.create({ data: { bookingId: booking.id, phase: settings.automatchingEnabled ? 'SEARCHING' : 'OPEN', nextAt: booking.scheduledAt && booking.scheduledAt > new Date() ? booking.scheduledAt : new Date() } });
 }
 async function openRequest(tx: Prisma.TransactionClient, booking: Booking, reason: string) {
-  // Declines/timeouts suppress further automatic offers, not a rider's later
-  // deliberate choice from the open list after the matching round has ended.
-  await tx.booking.update({ where: { id: booking.id }, data: { excludedRiderIds: [] } });
+  // Keep per-booking exclusions after matching ends. A missed or declined
+  // offer must not return to that rider through the open list or push fanout.
   await tx.autoDispatch.update({ where: { bookingId: booking.id }, data: { phase: 'OPEN', lastReason: reason, pickupEtaSeconds: null, ranking: null } });
   await queueRiderPushTask(tx, booking.id, 'NEW_REQUEST', `open:${booking.id}:${booking.updatedAt.getTime()}`);
 }

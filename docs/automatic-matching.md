@@ -18,7 +18,7 @@ Candidates must be online, unbanned, have valid vehicle/service approval, recent
 
 The worker locks the booking and rider before making an exclusive MATCHED offer. It stores attempt count, deadline, worker ownership and progress in `AutoDispatch`. Decline or expiry advances to the next eligible rider, rechecking location and approval. A stale worker cannot overwrite a cancellation, acceptance or staff reassignment. Manual assignment overrides automatic matching. A rider may have only one reserved/active booking.
 
-On exhaustion or no candidate, the request becomes OPEN and appears in eligible riders' open list. Previous automatic declines/timeouts do not prevent a later deliberate selection from that list. Payment eligibility, request expiry, pickup OTP and completion/payment safeguards remain enforced. Participant responses expose only phase, attempts and approximate pickup ETA/ranking, never worker tokens or other riders' global positions.
+On exhaustion or no candidate, the request becomes OPEN for eligible riders who have not already declined or missed an offer for this booking. Per-booking exclusions are preserved: the previous rider cannot see it again in Available, claim it through a saved link, preview its route or receive a fresh open-request push. Other bookings remain available to that rider. An explicit staff reassignment remains an audited override. Payment eligibility, request expiry, pickup OTP and completion/payment safeguards remain enforced. Participant responses expose only phase, attempts and approximate pickup ETA/ranking, never worker tokens or other riders' global positions.
 
 ## Background execution and limits
 
