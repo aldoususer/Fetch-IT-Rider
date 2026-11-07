@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { GOOGLE_MAP_FAILURE, loadRiderGoogleMaps } from '@/lib/rider-google-maps';
 import { googleRiderMap, standardRiderMap, type RiderMap } from '@/lib/rider-map-renderer';
 import type { RoadRoute, RoutePoint } from '@/lib/road-routing';
@@ -9,7 +9,13 @@ export function useRiderJobMap(host: RefObject<HTMLDivElement | null>, pickup: R
   const [state, setState] = useState<'loading' | 'google' | 'standard' | 'error'>('loading');
   const [traffic, setTraffic] = useState<'off' | 'on' | 'unavailable'>('off');
   const trafficEnabled = useRef(false);
-  useEffect(() => { latest.current.road = road; adapter.current?.route(road); }, [road]);
+  const setMapTraffic = useCallback((enabled: boolean) => {
+    if (!adapter.current) return;
+    const success = adapter.current.traffic(enabled);
+    trafficEnabled.current = success && enabled;
+    setTraffic(success ? enabled ? 'on' : 'off' : enabled ? 'unavailable' : 'off');
+  }, []);
+  useEffect(() => { latest.current.road = road; adapter.current?.route(road); setMapTraffic(!!road); }, [road, setMapTraffic]);
   useEffect(() => { latest.current.rider = rider; adapter.current?.rider(rider); }, [rider?.lat, rider?.lng]);
   useEffect(() => {
     const element = host.current;
@@ -40,7 +46,7 @@ export function useRiderJobMap(host: RefObject<HTMLDivElement | null>, pickup: R
         if (disposed || fallingBack) return;
         adapter.current = googleRiderMap(element, sdk, pickup, dropoff);
         trafficEnabled.current = false; setTraffic('off');
-        sync(); setState('google');
+        sync(); setMapTraffic(!!latest.current.road); setState('google');
       } catch { if (!disposed) await fallback(); }
       finally { clearTimeout(timer); }
     };
@@ -51,11 +57,9 @@ export function useRiderJobMap(host: RefObject<HTMLDivElement | null>, pickup: R
     if (observer) observer.observe(element); else void start();
     return () => { disposed = true; controller.abort(); observer?.disconnect(); resize.disconnect(); window.removeEventListener(GOOGLE_MAP_FAILURE, failed); adapter.current?.destroy(); adapter.current = null; };
     // Route, GPS, stage and resize updates must not create billable maps.
-  }, [host, pickup.lat, pickup.lng, dropoff.lat, dropoff.lng, valid]);
+  }, [host, pickup.lat, pickup.lng, dropoff.lat, dropoff.lng, valid, setMapTraffic]);
   return { state, traffic, toggleTraffic: () => {
     const enabled = !trafficEnabled.current;
-    const success = adapter.current?.traffic(enabled) ?? false;
-    trafficEnabled.current = success && enabled;
-    setTraffic(success ? enabled ? 'on' : 'off' : 'unavailable');
+    if (latest.current.road) setMapTraffic(enabled);
   }, zoom: (change: number) => adapter.current?.zoom(change), center: () => { if (latest.current.rider) adapter.current?.center(latest.current.rider); } };
 }
