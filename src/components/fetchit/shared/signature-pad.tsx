@@ -9,19 +9,29 @@ import { Button } from "@/components/ui/button";
 
 type Point = { x: number; y: number };
 
+function restoreStrokes(value: string): Point[][] {
+  // Read coordinates only; never inject stored SVG markup into the document.
+  return [...value.matchAll(/<path d="([ML\d.\s-]+)"/g)].map(match =>
+    [...match[1].matchAll(/[ML]\s+(-?[\d.]+)\s+(-?[\d.]+)/g)]
+      .map(point => ({ x: Number(point[1]), y: Number(point[2]) }))
+      .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y)));
+}
+
 export function SignaturePad({
   onChange,
   height = 160,
+  defaultValue = '',
 }: {
   onChange: (svgPath: string | null) => void;
   height?: number;
+  defaultValue?: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const drawing = useRef(false);
-  const savedStrokes = useRef<Point[][]>([]);
+  const savedStrokes = useRef<Point[][]>(restoreStrokes(defaultValue));
   const activeStroke = useRef<Point[]>([]);
   // Rendered strokes (committed) + the in-progress stroke.
-  const [strokes, setStrokes] = useState<Point[][]>([]);
+  const [strokes, setStrokes] = useState<Point[][]>(() => restoreStrokes(defaultValue));
   const [current, setCurrent] = useState<Point[]>([]);
 
   function getPoint(e: React.PointerEvent<SVGSVGElement>) {
@@ -105,7 +115,7 @@ export function SignaturePad({
   return (
     <div className="space-y-2">
       <div
-        className="relative rounded-lg border-2 border-dashed bg-card overflow-hidden touch-none"
+        className="relative rounded-lg border-2 border-dashed bg-white overflow-hidden touch-none"
         style={{ height }}
       >
         <svg
@@ -122,7 +132,7 @@ export function SignaturePad({
           {strokes.map((s, i) => renderStroke(s, `s-${i}`))}
           {renderStroke(current, "cur")}
         </svg>
-        <div className="absolute bottom-1 left-2 text-xs text-muted-foreground pointer-events-none">
+        <div className="absolute bottom-1 left-2 text-xs text-slate-600 pointer-events-none">
           Sign here
         </div>
         <div className="absolute bottom-1 right-2" style={{ lineHeight: 0 }}>
@@ -130,9 +140,10 @@ export function SignaturePad({
             type="button"
             size="icon"
             variant="outline"
-            className="h-7 w-7"
+            className="h-12 w-12"
             onClick={clear}
             title="Clear"
+            aria-label="Clear recipient signature"
           >
             <Eraser className="h-3.5 w-3.5" />
           </Button>

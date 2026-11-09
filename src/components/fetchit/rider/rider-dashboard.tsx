@@ -1,5 +1,6 @@
 "use client";
 import { startBookingTiming } from "@/lib/booking-client-timing";
+import { readProofDraft, removeProofDraft, retainActiveProofDrafts } from '@/lib/proof-drafts';
 import { savedMutation } from "@/lib/booking-mutation-client";
 import { GoOnlineDialog } from './go-online-dialog';
 import { OfferCountdown } from './offer-countdown';
@@ -15,6 +16,7 @@ import { PickupQrScanner } from "./pickup-qr-scanner";
 import { BrowserLocation } from "./browser-location";
 import type { RiderProfileData } from "../shared/rider-profile";
 import { RiderAccountProfile } from "./rider-account-profile";
+import { SlowRequestFeedback } from "../shared/slow-request-feedback";
 import { ProofCapture, type ProofState } from "./proof-capture";
 import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
 
@@ -136,6 +138,7 @@ export function RiderDashboard() {
   const navigationRequest = useRef(0);
   const knownJobs = useRef(new Map<string, Job>());
   const restoreScroll = useRef<number | null>(null);
+  const earningsRequested = useRef(false);
   const lastJobTrigger = useRef<HTMLElement | null>(null);
   const workspaceHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -152,6 +155,9 @@ export function RiderDashboard() {
   const [jobsCheckedAt, setJobsCheckedAt] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [jobErrors, setJobErrors] = useState<Partial<Record<JobTab, string>>>({});
+  useEffect(() => {
+    if (user?.id && activeJob && (isHistoryJob(activeJob) || activeJob.riderId !== user.id)) void removeProofDraft(user.id, activeJob.id).catch(() => {});
+  }, [user?.id, activeJob?.id, activeJob?.status, activeJob?.riderId]);
   const jobsRequest = useRef(0);
   const statsRequest = useRef(0);
   const statsActiveCount = useRef<number | null>(null);
@@ -185,6 +191,7 @@ export function RiderDashboard() {
       setJobsCheckedAt(new Date().toISOString());
       setJobErrors(previous => ({ ...previous, [tab]: undefined }));
       if (tab === "active") {
+        if (user?.id && latest.length < 100) void retainActiveProofDrafts(user.id, latest).catch(() => {});
         // The active feed is fresher than a slower stats request. Update the
         // count with the cards and discard any older stats response in flight.
         const count = latest.filter(job => ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(job.status)).length;
@@ -202,7 +209,7 @@ export function RiderDashboard() {
       if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [tab]: error instanceof TypeError ? 'Couldn’t connect. Reconnect and refresh your jobs.' : error instanceof Error ? error.message : 'Couldn’t update jobs. Please try again.' }));
       throw error;
     }
-  }, [tab]);
+  }, [tab, user?.id]);
 
   useVisiblePoll(user ? `${user.id}:stats` : "", loadStats, 10000);
 
@@ -301,12 +308,12 @@ export function RiderDashboard() {
     return () => navigator.serviceWorker?.removeEventListener('message', message);
   }, [user?.id, toast]);
   const reconnecting = boardConnection.status === 'reconnecting' || alerts.connection.status === 'reconnecting';
-  const boardIssue = !connected ? 'You’re offline. Saved jobs and entered details are kept. Reconnect before updating a booking.' : jobErrors[tab] || statsError || (reconnecting ? 'Reconnecting… Your saved jobs and entered details are kept.' : '');
+  const boardIssue = !connected ? 'No internet connection. Job statuses may be out of date. Reconnect before updating a booking.' : jobErrors[tab] || statsError || (reconnecting ? 'Reconnecting to Fetch-It… Existing job details remain visible while we check for updates.' : '');
   const visibleHistory = filterHistoryJobs(jobs, historyQuery, historyFilter);
   const serviceText = profile?.services.map(service => service === 'RIDE' ? 'Passenger rides' : 'Delivery').join(' + ');
   const vehicleText = stats?.vehicleClass ? VEHICLES[stats.vehicleClass as keyof typeof VEHICLES]?.label ?? stats.vehicleClass : 'Your rider workspace';
   function canLeaveJob() {
-    if (detailDirty.current && !window.confirm('Leave this job? Your unsaved pickup code or delivery proof will be discarded. Your booking is kept.')) return false;
+    if (detailDirty.current && !window.confirm('Leave this job? Your pickup code or proof details that have not finished saving will be lost. Your booking is kept.')) return false;
     detailDirty.current = false; return true;
   }
   const navigation = useRiderNavigation(user?.id ?? '', state => {
@@ -319,7 +326,17 @@ export function RiderDashboard() {
     });
   }, canLeaveJob);
   useEffect(() => {
-    if (activeJob || jobLists[tab] === undefined || restoreScroll.current === null) return;
+    if (activeJob) return;
+    if (earningsRequested.current) {
+      restoreScroll.current = null;
+      const frame = requestAnimationFrame(() => {
+        const activity = document.getElementById('rider-activity') as HTMLDetailsElement | null;
+        if (activity) { activity.open = true; activity.scrollIntoView({block:'start',behavior:'smooth'}); activity.focus({preventScroll:true}); }
+        earningsRequested.current = false;
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    if (jobLists[tab] === undefined || restoreScroll.current === null) return;
     const top = restoreScroll.current; restoreScroll.current = null;
     const frame = requestAnimationFrame(() => window.scrollTo({ top, behavior: 'instant' }));
     return () => cancelAnimationFrame(frame);
@@ -354,15 +371,15 @@ export function RiderDashboard() {
         <TabsTrigger value="active"><CircleDot size={20}/><span className="rd-tab-label">Active <span className="rd-tab-count">{stats?.activeJobs??'—'}</span></span></TabsTrigger>
         <TabsTrigger value="history"><Clock size={20}/><span className="rd-tab-label">History</span></TabsTrigger>
       </TabsList></Tabs>
-      {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected ? 'Updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Saved jobs'}</p>}
+      {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected && !reconnecting ? 'Updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Last confirmed '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})+' · Updates paused'}</p>}
       {tab==='history' && <div className="rd-history-tools"><div className="rd-search"><Search size={18} aria-hidden="true"/><label className="sr-only" htmlFor="rider-history-search">Search booking history</label><input id="rider-history-search" type="search" placeholder="Search reference or address" value={historyQuery} onChange={event=>setHistoryQuery(event.target.value)}/></div><Button variant="outline" aria-label="Filter booking history" aria-expanded={historyFiltersOpen} aria-controls="rider-history-filters" onClick={()=>setHistoryFiltersOpen(value=>!value)}><SlidersHorizontal size={18}/>Filters{historyFilter!=='ALL'?' · 1':''}</Button>{historyFiltersOpen && <div id="rider-history-filters" className="rd-history-filters"><label>Status<select value={historyFilter} onChange={event=>setHistoryFilter(event.target.value)}><option value="ALL">All bookings</option><option value="DELIVERED">Completed</option><option value="CANCELLED">Cancelled</option></select></label><Button variant="ghost" onClick={()=>{setHistoryFilter('ALL');setHistoryQuery('');}}>Clear filters</Button></div>}</div>}
       {loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
         : jobLists[tab]===undefined ? null
-        : jobs.length===0 ? <EmptyJobs tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
-        : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice">No bookings match this search. Try another address or clear your filters.</div>}{jobs.length===100 && <p className="rd-help">Searching your 100 most recent bookings.</p>}</section>
+        : jobs.length===0 ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
+        : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice"><p>No bookings match this search. Try another address or clear your filters.</p><Button variant="outline" className="min-h-12" onClick={()=>{setHistoryFilter("ALL");setHistoryQuery("");}}>Clear filters</Button></div>}{jobs.length===100 && <p className="rd-help">Searching your 100 most recent bookings.</p>}</section>
         : tab==='available' ? <>{jobs.some(job=>job.status==='MATCHED') && <section className="rd-offers" aria-labelledby="rider-offers-heading"><h2 id="rider-offers-heading">Offered to you</h2><p>Exclusive offers. Accept or decline before the timer ends.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='MATCHED').map(job=><div key={job.id}><OfferCountdown expiresAt={job.assignmentExpiresAt}/><JobCard job={job} isAvailable onOpen={()=>openJob(job)}/></div>)}</div></section>}{jobs.some(job=>job.status==='PENDING') && <section className="rd-open-requests" aria-labelledby="open-requests-heading"><h2 id="open-requests-heading">Open requests</h2><p>Choose a request that fits your trip.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='PENDING').map(job=><JobCard key={job.id} job={job} isAvailable onOpen={()=>openJob(job)}/>)}</div></section>}</> : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={false} onOpen={()=>openJob(job)}/>)}</div>}
       {tab==='available' && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
-      <details className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">
+      <details id="rider-activity" tabIndex={-1} className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">
         <StatCard icon={<Activity size={20}/>} label="Active jobs" value={stats?.activeJobs??0} loading={!stats}/>
         <StatCard icon={<CheckCircle2 size={20}/>} label="Completed" value={stats?.completedJobs??0} loading={!stats}/>
         <StatCard onClick={() => setProfileOpen(true)} icon={<Star size={20}/>} label="Customer rating" value={profile?.ratingCount?(profile.rating??0).toFixed(1):'No ratings yet'} loading={!stats}/>
@@ -371,9 +388,9 @@ export function RiderDashboard() {
     </main>
     {onlineSetupOpen && <GoOnlineDialog open onOpenChange={setOnlineSetupOpen} isOnline={!!stats?.isOnline} onGoOffline={()=>toggleOnline(false, undefined, true)} notificationsReady={deviceNotificationsReady} enableNotifications={alerts.enableBrowser} onReady={async fix=>{await toggleOnline(true,fix);void loadStats();}}/>}
     <RiderAccountProfile showReviews open={profileOpen} onOpenChange={setProfileOpen}/>
-    <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent fullScreenOnMobile className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
+    <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent fullScreenOnMobile className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();if(earningsRequested.current)return;(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
       {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{activeJob.status === 'PENDING' ? 'New request' : statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
-        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && (stats.offeredJobs??0)>0 ? "Accept or decline your exclusive offer before choosing another request." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={onPhase=>accept(activeJob,onPhase)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
+        {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected} onBack={closeJob} onEarnings={()=>{earningsRequested.current=true;navigation.navigate(tab,null,true);}}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && (stats.offeredJobs??0)>0 ? "Accept or decline your exclusive offer before choosing another request." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={onPhase=>accept(activeJob,onPhase)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
           : <ActiveJobFlow key={activeJob.id} job={activeJob} connectionReady={connected && boardConnection.status === "connected"} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?mergeRiderJob(previous,{...previous,...updated}):previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
     </DialogContent></Dialog>
   </div>;
@@ -426,13 +443,15 @@ function EmptyJobs({
   tab,
   isOnline,
   paused = false, activeJobs = 0, pauseReason, onResume,
-  onGoOnline,
+  onGoOnline, connected, onFindJobs, onActiveJobs,
 }: {
   tab: "available" | "active" | "history";
   isOnline: boolean | null;
+  connected: boolean; onFindJobs: () => void; onActiveJobs: () => void;
   onGoOnline: () => void;
   paused?: boolean; activeJobs?: number; pauseReason?: string; onResume: () => void;
 }) {
+  if (!connected) return <Card className="rd-empty"><CardContent className="py-10 text-center space-y-3"><h3 className="font-semibold text-lg">Connect to check your jobs</h3><p className="text-muted-foreground">We can’t confirm whether new jobs are available while your device is offline. This page checks again when your connection returns.</p></CardContent></Card>;
   if (tab === "history") {
     return (
       <Card className="rd-empty border-2 border-dashed bg-card">
@@ -442,8 +461,9 @@ function EmptyJobs({
           </div>
           <h3 className="font-semibold text-lg">No booking history yet</h3>
           <p className="text-muted-foreground mt-1">
-            Accept your first job to start earning.
+            Completed and cancelled bookings will appear here.
           </p>
+          <Button className="mt-5" onClick={onFindJobs}>Find available jobs</Button>
         </CardContent>
       </Card>
     );
@@ -464,8 +484,10 @@ function EmptyJobs({
               : "You're offline — go online to start receiving job matches."
             : "Accept a job from the Available tab to start driving."}
         </p>
+        {tab === "active" && <Button className="mt-5" onClick={onFindJobs}>Find available jobs</Button>}
+        {tab === "available" && activeJobs > 0 && <Button className="mt-5" onClick={onActiveJobs}>Continue active job</Button>}
         {tab === "available" && paused && <Button className="mt-5" onClick={onResume}>Resume receiving jobs</Button>}
-        {tab === "available" && isOnline === false && activeJobs === 0 && (
+        {tab === "available" && !paused && isOnline === false && activeJobs === 0 && (
           <Button className="mt-5" onClick={onGoOnline}>
             <PowerCircle className="h-4 w-4" /> Go online
           </Button>
@@ -597,12 +619,14 @@ function ActiveJobFlow({
   onDraftChange: (dirty: boolean) => void;
 }) {
   const { toast } = useToast();
+  const ownerId = useAppStore(state => state.user?.id ?? "");
   const status = job.status;
   const recovery = useBookingRecovery(job.id, onUpdated, connectionReady);
   const ready = recovery.ready;
   const [updating, setUpdating] = useState(false);
   const advancePending = useRef(false);
   const [showProof, setShowProof] = useState(false);
+  const [actionPhase, setActionPhase] = useState("");
   const [pickupOtp, setPickupOtp] = useState("");
   const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
@@ -610,15 +634,23 @@ function ActiveJobFlow({
   const paymentSection=useRef<HTMLDivElement>(null), proofSection=useRef<HTMLDivElement>(null), pickupInput=useRef<HTMLInputElement>(null);
   const draftCallback=useRef(onDraftChange);
   useEffect(()=>{draftCallback.current=onDraftChange;},[onDraftChange]);
-  useEffect(()=>{draftCallback.current(!!pickupOtp || showProof);return()=>draftCallback.current(false);},[pickupOtp,showProof]);
+  useEffect(()=>{draftCallback.current(!!pickupOtp || !!proofState.unsafe);return()=>draftCallback.current(false);},[pickupOtp,proofState.unsafe]);
   useEffect(()=>{if(showProof)proofSection.current?.scrollIntoView({block:'start',behavior:'smooth'});},[showProof]);
+  useEffect(() => {
+    if (!ready || !ownerId) return;
+    let cancelled = false;
+    if (status !== 'IN_TRANSIT' || job.riderId !== ownerId) { void removeProofDraft(ownerId, job.id).catch(() => {}); return; }
+    if (job.type !== 'RIDE') void readProofDraft(ownerId, job.id).then(draft => { if (!cancelled && draft) setShowProof(true); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [ready, ownerId, job.id, job.riderId, job.type, status]);
+
 
   async function advance(to: BookingStatus) {
     if (advancePending.current || !ready || (to === 'DELIVERED' && !paymentReady)) return; advancePending.current = true;
     const timing = startBookingTiming("job_status");
     let outcome: "confirmed" | "recovered" | "failed" | "uncertain" = "uncertain";
     let uncertain = true;
-    setUpdating(true);
+    setUpdating(true); setActionPhase("Sending your booking update…");
     setPickupOtpError(null);
     try {
       const res = await fetch(`/api/bookings/${job.id}`, {
@@ -652,6 +684,7 @@ function ActiveJobFlow({
       }
     } catch (e) {
       if (uncertain) {
+        setActionPhase("Checking whether your update was already saved…");
         const order = ["ACCEPTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED"];
         const saved = await savedMutation<{ booking: Job }>(`/api/bookings/${job.id}`, state => state.booking?.id === job.id && state.booking.riderId === job.riderId && order.indexOf(state.booking.status) >= order.indexOf(to));
         if (saved) { outcome = "recovered"; setPickupOtp(""); onUpdated(saved.booking); if (saved.booking.status === "DELIVERED") setShowProof(false); toast({ title: "Your update is saved", description: job.refCode }); return; }
@@ -665,7 +698,7 @@ function ActiveJobFlow({
         variant: "destructive",
       });
     } finally {
-      advancePending.current = false; setUpdating(false); timing.finish(outcome);
+      advancePending.current = false; setUpdating(false); setActionPhase(""); timing.finish(outcome);
     }
   }
 
@@ -693,6 +726,8 @@ function ActiveJobFlow({
   return (
     <div className="rd-flow"><div className="rd-flow-body space-y-4">
       {!ready && <section className="rd-notice" role="status"><p>{recovery.error || "Checking the latest booking before enabling updates. Your entered details are kept."}</p>{recovery.error && <Button variant="outline" disabled={!connectionReady} onClick={()=>void recovery.recheck()}>Retry booking check</Button>}</section>}
+      {ready && recovery.confirmedAt > 0 && <p className="rd-help" role="status">Job status confirmed at {new Date(recovery.confirmedAt).toLocaleTimeString('en-PH', {timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})} · PH time</p>}
+      {actionPhase && <div className="space-y-2"><p className="rd-proof-status" role="status"><Loader2 size={20} className="animate-spin" aria-hidden="true"/>{actionPhase}</p><SlowRequestFeedback message="This update is taking longer than usual. Keep this job open while we check its status; avoid sending it again."/></div>}
       {/* Stepper */}
       <div className="flex items-center justify-between gap-2">
         {STATUS_STEPS.map((s) => {
@@ -799,6 +834,7 @@ function ActiveJobFlow({
           disabled={!ready || !paymentReady}
           onActionFailure={()=>void recovery.recheck()}
           bookingId={job.id}
+          ownerId={ownerId}
           photoAlreadySaved={job.hasDeliveryPhoto ?? false}
           onProofState={setProofState}
           onDone={(completed) => {
@@ -835,7 +871,7 @@ function ActiveJobFlow({
               <ShieldCheck className="h-4 w-4" /> Capture signature & photo
             </Button>
           )}
-          {showProof && <><p className="rd-proof-checklist" role="status"><span className={proofState.hasSignature ? 'is-ready' : ''}>{proofState.hasSignature ? '✓ Signature ready' : '○ Signature needed'}</span><span className={proofState.hasPhoto ? 'is-ready' : ''}>{proofState.hasPhoto ? '✓ Photo ready' : '○ Photo needed'}</span></p><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || !paymentReady || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(window.confirm('Discard unsaved proof details? Your booking is kept.'))setShowProof(false);}}>Cancel proof capture</Button></>}
+          {showProof && <><p className="rd-proof-checklist" role="status"><span className={proofState.hasSignature ? 'is-ready' : ''}>{proofState.hasSignature ? '✓ Signature ready' : '○ Signature needed'}</span><span className={proofState.hasPhoto ? 'is-ready' : ''}>{proofState.hasPhoto ? '✓ Photo ready' : '○ Photo needed'}</span></p><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || !paymentReady || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(!proofState.unsafe || window.confirm("Some proof details have not finished saving. Close anyway?"))setShowProof(false);}}>Close proof capture</Button></>}
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">

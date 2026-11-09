@@ -10,6 +10,7 @@
 
 import { create } from "zustand";
 import { setRiderPushAccount } from './rider-push';
+import { setProofDraftOwner } from './proof-drafts';
 
 let sessionEpoch = 0;
 let pendingLogout = false;
@@ -81,6 +82,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPendingRole: (r) => set({ pendingRole: r }),
   setUser: (u) => {
     sessionEpoch++;
+    setProofDraftOwner(isAllowedRole(u?.role) ? u!.id : null);
     if (isAllowedRole(u?.role)) setPendingLogout(false);
     set({
       user: isAllowedRole(u?.role) ? u : null,
@@ -99,12 +101,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch("/api/auth/me", { cache: "no-store" });
       if (epoch !== sessionEpoch) return;
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) setProofDraftOwner(null);
         set({ user: null, view: guestView(get().view), bootstrapped: true });
         return;
       }
       const data = (await res.json()) as { user: AuthUser | null };
       if (epoch !== sessionEpoch) return;
       const allowed = isAllowedRole(data.user?.role);
+      setProofDraftOwner(allowed ? data.user!.id : null);
       set({
         user: allowed ? data.user : null,
         view: allowed ? "rider-dashboard" : guestView(get().view),
@@ -115,8 +119,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   logout: async () => {
-    if (typeof window !== "undefined" && !window.confirm("Are you sure you want to log out of Fetch-It?")) return;
+    if (typeof window !== "undefined" && !window.confirm("Log out of Fetch-It? Unfinished delivery proof saved on this device will be removed.")) return;
     const epoch = ++sessionEpoch;
+    setProofDraftOwner(null);
     void setRiderPushAccount(null).catch(() => {});
     setPendingLogout(true);
     set({ user: null, view: "landing", pendingRole: null });
@@ -137,11 +142,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch("/api/auth/me", { cache: "no-store" });
       if (epoch !== sessionEpoch) return;
       if (!res.ok) {
-        if (res.status === 401 || res.status === 403) set({ user: null, view: guestView(get().view) });
+        if (res.status === 401 || res.status === 403) { setProofDraftOwner(null); set({ user: null, view: guestView(get().view) }); }
         return;
       }
       const data = (await res.json()) as { user: AuthUser | null };
       if (epoch !== sessionEpoch) return;
+      setProofDraftOwner(isAllowedRole(data.user?.role) ? data.user!.id : null);
       if (isAllowedRole(data.user?.role)) set({ user: data.user });
       else set({ user: null, view: guestView(get().view) });
     } catch { /* A temporary network failure must not restore or switch accounts. */ }

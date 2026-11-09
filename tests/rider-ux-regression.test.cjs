@@ -2,10 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
 function load(file, imports, globals = {}) {
-  imports = { '@/lib/booking-client-timing': { startBookingTiming: () => ({ headers: {}, response() {}, finish() {} }) }, '@/lib/booking-mutation-client': { savedMutation: async () => null }, '@/lib/eta-policy': { travelTimeRange: seconds => `${Math.ceil(seconds/60)}–${Math.ceil(seconds/60)+2}` }, ...imports };
+  imports = { '@/lib/booking-client-timing': { startBookingTiming: () => ({ headers: {}, response() {}, finish() {} }) }, '@/lib/booking-mutation-client': { savedMutation: async () => null }, '@/lib/proof-drafts': { readProofDraft: async () => null, saveProofDraft: async () => true, removeProofDraft: async () => {} }, '../shared/slow-request-feedback': { SlowRequestFeedback: 'slow-feedback' }, '@/lib/eta-policy': { travelTimeRange: seconds => `${Math.ceil(seconds/60)}–${Math.ceil(seconds/60)+2}` }, ...imports };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, require: name => { if (!(name in imports)) throw Error(name); return imports[name]; }, Date, Error, Response, AbortSignal, crypto: require('node:crypto').webcrypto, ...globals });
+    { exports, queueMicrotask, require: name => { if (!(name in imports)) throw Error(name); return imports[name]; }, Date, Error, Response, AbortSignal, crypto: require('node:crypto').webcrypto, ...globals });
   return exports;
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -93,10 +93,11 @@ test('declining a current offer returns it for matching; accepted-job release st
 
 test('photo preparation stays local; failed confirmation preserves proof and retry sends one request', async () => {
   let prepare, reply, completed = 0; const requests = [], state = [];
-  const h = ui('src/components/fetchit/rider/proof-capture.tsx', 'ProofCapture', { bookingId: 'b', onProofState: value => state.push(value), onDone: () => completed++ }, {
+  const h = ui('src/components/fetchit/rider/proof-capture.tsx', 'ProofCapture', { bookingId: 'b', ownerId: 'rider', onProofState: value => state.push(value), onDone: () => completed++ }, {
     '@/hooks/use-toast': { useToast: () => ({ toast() {} }) }, '../shared/signature-pad': { SignaturePad: 'signature' },
     '@/lib/epod-photo-client': { prepareDeliveryPhoto: () => new Promise(resolve => prepare = resolve) },
   }, { fetch: (url, init) => { requests.push({ url, ...init }); return new Promise(resolve => reply = resolve); } });
+  h.render(); await flush();
   const input = nodes(h.render()).find(node => node.type === 'input' && node.props.type === 'file');
   input.props.onChange({ target: { files: [{ name: 'dropoff.jpg' }], value: 'file' } });
   assert.match(text(h.render()), /Preparing photo/); assert.equal(state.at(-1).preparing, true);
@@ -104,12 +105,41 @@ test('photo preparation stays local; failed confirmation preserves proof and ret
   nodes(h.render()).find(node => node.type === 'input' && node.props.placeholder === 'Recipient’s name').props.onChange({ target: { value: 'Mira' } });
   h.find('form').props.onSubmit({ preventDefault() {} }); assert.equal(requests.length, 0);
   prepare('data:image/jpeg;base64,AA=='); await flush(); assert.match(text(h.render()), /dropoff.jpg/);
-  const submit = h.find('form').props.onSubmit; submit({ preventDefault() {} }); submit({ preventDefault() {} }); assert.equal(requests.length, 1);
+  const submit = h.find('form').props.onSubmit; submit({ preventDefault() {} }); submit({ preventDefault() {} }); await flush(); assert.equal(requests.length, 1);
   assert.match(text(h.render()), /Uploading proof and confirming/);
   reply(Response.json({ error: 'Connection interrupted. Retry.' }, { status: 503 })); await flush();
   assert.equal(completed, 0); assert.match(text(h.render()), /Connection interrupted/); assert.match(text(h.render()), /dropoff.jpg/);
   assert.equal(nodes(h.render()).find(node => node.type === 'input' && node.props.placeholder === 'Recipient’s name').props.value, 'Mira');
-  h.find('form').props.onSubmit({ preventDefault() {} }); assert.equal(requests.length, 2); assert.equal(requests[0].body, requests[1].body);
+  h.find('form').props.onSubmit({ preventDefault() {} }); await flush(); assert.equal(requests.length, 2); assert.equal(requests[0].body, requests[1].body);
   reply(Response.json({ proofs: [{ verified: true }] })); await flush(); assert.equal(completed, 1);
 });
 
+
+test('a reopened proof restores signature, photo, recipient and request key without submitting', async () => {
+  const draft = { signatureSvg: '<path d="M 1 1 L 2 2" />', photoDataUrl: 'data:image/jpeg;base64,AA==', photoName: 'saved.jpg', recipientName: 'Recipient', attemptKey: 'same-attempt' };
+  const requests = [], writes = [], states = [];
+  const h = ui('src/components/fetchit/rider/proof-capture.tsx', 'ProofCapture', { bookingId: 'b', ownerId: 'r', onProofState: value => states.push(value), onDone() {} }, {
+    '@/hooks/use-toast': { useToast: () => ({ toast() {} }) }, '../shared/signature-pad': { SignaturePad: 'signature' }, '@/lib/epod-photo-client': {},
+    '@/lib/proof-drafts': { readProofDraft: async () => draft, saveProofDraft: async value => { writes.push(value); return true; }, removeProofDraft: async () => {} },
+  }, { fetch: async (_, init) => { requests.push(init); return Response.json({ proofs: [{ verified: true }] }); } });
+  h.render(); await flush();
+  assert.equal(h.find('signature').props.defaultValue, draft.signatureSvg);
+  assert.equal(nodes(h.render()).find(n => n.type === 'img').props.src, draft.photoDataUrl);
+  assert.equal(nodes(h.render()).find(n => n.type === 'input' && n.props.placeholder === 'Recipient’s name').props.value, 'Recipient');
+  assert.equal(requests.length, 0); assert.equal(writes.length, 0, 'Restoring does not extend the draft lifetime');
+  h.find('form').props.onSubmit({ preventDefault() {} }); await flush();
+  assert.equal(requests.length, 1); assert.equal(requests[0].headers['Idempotency-Key'], 'same-attempt'); assert.equal(writes[0].attemptKey, 'same-attempt');
+});
+
+test('a storage failure keeps proof in the form, warns before leaving and offers a save retry', async () => {
+  const states = []; let blocked = true, writes = 0;
+  const h = ui('src/components/fetchit/rider/proof-capture.tsx', 'ProofCapture', { bookingId: 'b', ownerId: 'r', onProofState: v => states.push(v), onDone() {} }, {
+    '@/hooks/use-toast': { useToast: () => ({ toast() {} }) }, '../shared/signature-pad': { SignaturePad: 'signature' }, '@/lib/epod-photo-client': {},
+    '@/lib/proof-drafts': { readProofDraft: async () => null, saveProofDraft: async () => { writes++; if (blocked) throw Error('Quota'); return true; }, removeProofDraft: async () => {} },
+  });
+  h.render(); await flush(); h.find('signature').props.onChange('<path d="M 1 1 L 2 2" />'); h.render(); await flush();
+  assert.match(text(h.render()), /Couldn’t save proof/); assert.equal(states.at(-1).unsafe, true);
+  assert.equal(h.find('signature').props.defaultValue, '<path d="M 1 1 L 2 2" />');
+  blocked = false; h.find('button', 'Retry saving draft').props.onClick(); h.render(); await flush();
+  assert.equal(writes, 2); assert.match(text(h.render()), /Proof saved on this device/); assert.equal(states.at(-1).unsafe, false);
+});

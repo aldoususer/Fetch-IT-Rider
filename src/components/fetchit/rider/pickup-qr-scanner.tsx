@@ -41,10 +41,10 @@ export function PickupQrScanner({ bookingId, disabled, onScan }: {
         <Button type="button" variant="outline" className="min-h-12 w-full" onClick={() => { setActive(false); setMessage(""); setError(null); }}>Stop scanning · Enter code instead</Button>
       </> : <Button type="button" variant="outline" className="min-h-12 w-full" disabled={disabled}
         onClick={() => { setError(null); setMessage("Opening camera… Allow camera access when asked."); setActive(true); }}>
-        <ScanLine className="h-4 w-4" aria-hidden="true" /> Scan pickup QR
+        <ScanLine className="h-4 w-4" aria-hidden="true" /> {error ? 'Retry camera' : 'Scan pickup QR'}
       </Button>}
       {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && <div className="space-y-2"><p role="alert" className="text-sm text-destructive">{error}</p><Button type="button" variant="outline" className="min-h-12 w-full" onClick={() => { setActive(false); document.getElementById(`pickup-otp-${bookingId}`)?.focus(); }}>Enter six-digit code instead</Button></div>}
     </div>
   );
 }
