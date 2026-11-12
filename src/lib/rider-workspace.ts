@@ -6,7 +6,7 @@ export interface RiderJob {
   customerId: string; riderId: string | null; pickupLabel: string; pickupLat: number; pickupLng: number;
   dropoffLabel: string; dropoffLat: number; dropoffLng: number; vehicleClass: VehicleClass;
   cargoWeightKg: number; passengers: number; cargoNotes: string | null; scheduledAt: string | null;
-  distanceKm: number; baseFare: number; surgeMultiplier: number; totalFare: number; paymentMethod: string;
+  distanceKm: number; baseFare: number; surgeMultiplier: number; totalFare: number; paymentMethod: string; fareBreakdown?: unknown;
   paymentStatus: string; demoCommissionBps: number | null; demoRiderEarnings: number | null; currency: string;
   dispatch?: { phase: string; attempts: number; pickupEtaSeconds: number | null; ranking: string | null } | null;
   status: BookingStatus; assignmentExpiresAt?: string | null; etaMinutes: number | null; createdAt: string; updatedAt?: string;

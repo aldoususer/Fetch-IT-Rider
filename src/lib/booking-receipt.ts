@@ -3,13 +3,14 @@ import type { Booking } from "@prisma/client";
 import { VEHICLES } from "./pricing-defaults";
 import { statusLabel as customerStatusLabel } from "./pricing-defaults";
 import { isDemoPayment, PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from "./payment-policy";
+import { readFareSnapshot } from "./fare-policy";
 
 type ReceiptBooking = Pick<Booking,
   "refCode" | "type" | "status" | "createdAt" | "deliveredAt" | "scheduledAt" |
   "pickupLabel" | "dropoffLabel" | "vehicleClass" | "distanceKm" | "passengers" |
   "cargoWeightKg" | "baseFare" | "totalFare" | "currency" | "surgeMultiplier" |
   "paymentMethod" | "paymentStatus" | "paidAt" | "paymentReference" | "cancellationReason"
-> & { customer: { name: string }; rider: { name: string } | null };
+> & { fareBreakdown?: unknown; customer: { name: string }; rider: { name: string } | null };
 
 const WIDTH = 360;
 const MARGIN = 28;
@@ -62,7 +63,7 @@ export async function buildBookingReceipt(booking: ReceiptBooking, issuedAt = ne
   const draws: ((page: PDFPage, height: number) => void)[] = [];
   let y = 28;
   const contentWidth = WIDTH - MARGIN * 2;
-  const money = (amount: number) => booking.currency + " " + amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money = (amount: number) => booking.currency + " " + amount.toLocaleString("en-PH", { minimumFractionDigits: Number.isInteger(amount) ? 0 : 2, maximumFractionDigits: 2 });
   const drawText = (value: string, x: number, top: number, size = 9, font = regular, color = INK) => {
     const text = printable(value, font);
     draws.push((page, height) => page.drawText(text, { x, y: height - top - size, size, font, color }));
@@ -130,7 +131,16 @@ export async function buildBookingReceipt(booking: ReceiptBooking, issuedAt = ne
   const total = Number(booking.totalFare);
   const base = Number(booking.baseFare);
   // Use historical stored amounts; never recalculate an old receipt at today's rates.
-  if (base >= 0 && base <= total) {
+  const savedFare = readFareSnapshot(booking.fareBreakdown, total);
+  if (savedFare) {
+    row("Base fare", money(savedFare.baseFare));
+    if (savedFare.distanceFare) row("Distance charge", money(savedFare.distanceFare));
+    if (savedFare.weightFare) row("Weight charge", money(savedFare.weightFare));
+    if (savedFare.surgeFare) row("Busy-period charge", money(savedFare.surgeFare));
+    if (savedFare.minimumAdjustment) row("Minimum adjustment", money(savedFare.minimumAdjustment));
+    if (savedFare.roundingAdjustment) row("Fare rounding", money(savedFare.roundingAdjustment));
+    row("Booking fee", money(savedFare.bookingFee));
+  } else if (base >= 0 && base <= total) {
     row("Base fare", money(base));
     const adjustment = Math.round((total - base) * 100) / 100;
     if (adjustment > 0) row("Distance & adjustments", money(adjustment));

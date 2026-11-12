@@ -2,6 +2,7 @@ import { scheduleReceiptDelivery } from "./receipt-email";
 import type { Booking, Prisma, PrismaClient } from "@prisma/client";
 import { demoSplit, isDemoPayment } from "./payment-policy";
 import { PaymentError } from "./payments";
+import { readFareSnapshot } from "./fare-policy";
 
 type Actor = { uid: string; name: string; role: "CUSTOMER" | "RIDER" | "ADMIN" | "SUPERADMIN" };
 
@@ -38,9 +39,11 @@ export async function startDemoCheckout(db: PrismaClient, id: string, actor: Act
 export async function settleDemoEarnings(tx: Prisma.TransactionClient, booking: Booking) {
   if (!isDemoPayment(booking.paymentMethod) || booking.status !== "DELIVERED" || booking.paymentStatus !== "PAID" || !booking.riderId || booking.demoRiderEarnings !== null) return;
   if (booking.demoCommissionBps === null) throw new PaymentError("Commission is missing.", 409);
-  const split = demoSplit(booking.totalFare.toString(), booking.demoCommissionBps);
+  const fare = readFareSnapshot(booking.fareBreakdown, booking.totalFare);
+  if (booking.fareBreakdown && !fare) throw new PaymentError("The saved fare breakdown needs review.", 409);
+  const split = fare ? { commission: fare.bookingFee, riderEarnings: fare.transportFare } : demoSplit(booking.totalFare.toString(), booking.demoCommissionBps);
   await tx.booking.update({ where: { id: booking.id }, data: { demoCommission: split.commission, demoRiderEarnings: split.riderEarnings } });
-  await tx.paymentEvent.create({ data: { bookingId: booking.id, actorId: booking.riderId, actorName: "Demo accounting", actorRole: "RIDER", action: "DEMO_EARNINGS_RECORDED", amount: split.riderEarnings, fromStatus: "PAID", toStatus: "PAID", reason: `${booking.demoCommissionBps / 100}% demo commission; no real money moved.` } });
+  await tx.paymentEvent.create({ data: { bookingId: booking.id, actorId: booking.riderId, actorName: "Payment accounting", actorRole: "RIDER", action: "DEMO_EARNINGS_RECORDED", amount: split.riderEarnings, fromStatus: "PAID", toStatus: "PAID", reason: fare ? `PHP ${fare.bookingFee} booking fee; rider transport fare PHP ${fare.transportFare}. Simulated settlement; no real money moved.` : `${booking.demoCommissionBps / 100}% commission; simulated settlement, no real money moved.` } });
 }
 
 export async function resolveDemoCheckout(db: PrismaClient, checkoutId: string, actor: Actor, outcome: unknown) {

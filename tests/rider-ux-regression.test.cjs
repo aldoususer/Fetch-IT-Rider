@@ -5,7 +5,7 @@ function load(file, imports, globals = {}) {
   imports = { '@/lib/booking-client-timing': { startBookingTiming: () => ({ headers: {}, response() {}, finish() {} }) }, '@/lib/booking-mutation-client': { savedMutation: async () => null }, '@/lib/proof-drafts': { readProofDraft: async () => null, saveProofDraft: async () => true, removeProofDraft: async () => {} }, '../shared/slow-request-feedback': { SlowRequestFeedback: 'slow-feedback' }, '@/lib/eta-policy': { travelTimeRange: seconds => `${Math.ceil(seconds/60)}–${Math.ceil(seconds/60)+2}` }, ...imports };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,
-    { exports, queueMicrotask, require: name => { if (!(name in imports)) throw Error(name); return imports[name]; }, Date, Error, Response, AbortSignal, crypto: require('node:crypto').webcrypto, ...globals });
+    { exports, queueMicrotask, require: name => { if (name==="@/lib/fare-policy") return require("./helpers/fare-policy.cjs"); if (!(name in imports)) throw Error(name); return imports[name]; }, Date, Error, Response, AbortSignal, crypto: require('node:crypto').webcrypto, ...globals });
   return exports;
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));

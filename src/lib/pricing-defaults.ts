@@ -1,11 +1,7 @@
 // Fetch-It domain constants — vehicle classes, fares, statuses.
 // Kept in a single place so the UI and API agree on values.
 //
-// PRICING NOTE (PHP, Metro Manila / provincial urban baseline):
-// Rates are benchmarked against Philippine on-demand delivery and trucking
-// pricing — Lalamove / Grab Express style for the 2-wheel and sedan classes,
-// and standard FTL/LTL trucking rates for van, flatbed and reefer.
-// Every amount below is in Philippine pesos.
+// Delivery rates in Philippine pesos. Passenger ride rates are in fare-policy.ts.
 
 export type Role = "CUSTOMER" | "RIDER" | "ADMIN";
 
@@ -94,15 +90,15 @@ export const VEHICLES: Record<VehicleClass, VehicleMeta> = {
   MOTORCYCLE: {
     id: "MOTORCYCLE",
     label: "Motorcycle",
-    description: "Best for small parcels under 20 kg in dense urban traffic.",
-    baseFare: 60,
+    description: "For small parcels up to 5 kg.",
+    baseFare: 50,
     includedKm: 2,
     perKm: 10,
-    longHaulPerKm: 8,
-    minimumFare: 60,
-    capacityKg: 20,
+    longHaulPerKm: 10,
+    minimumFare: 50,
+    capacityKg: 5,
     freeWeightKg: 5,
-    perKgOverFree: 4,
+    perKgOverFree: 0,
     icon: "moto",
     speedKph: 22,
     handlingMinutes: 8,
@@ -110,15 +106,15 @@ export const VEHICLES: Record<VehicleClass, VehicleMeta> = {
   TRICYCLE: {
     id: "TRICYCLE",
     label: "Tricycle",
-    description: "For local deliveries and parcels up to 50 kg.",
-    baseFare: 50,
-    includedKm: 1,
-    perKm: 12,
-    longHaulPerKm: 10,
-    minimumFare: 50,
-    capacityKg: 50,
-    freeWeightKg: 5,
-    perKgOverFree: 3,
+    description: "For local deliveries and parcels up to 10 kg.",
+    baseFare: 70,
+    includedKm: 2,
+    perKm: 15,
+    longHaulPerKm: 15,
+    minimumFare: 70,
+    capacityKg: 10,
+    freeWeightKg: 10,
+    perKgOverFree: 0,
     icon: "tricycle",
     speedKph: 18,
     handlingMinutes: 6,
@@ -126,15 +122,15 @@ export const VEHICLES: Record<VehicleClass, VehicleMeta> = {
   SEDAN: {
     id: "SEDAN",
     label: "Car",
-    description: "Ideal for documents and boxed goods up to 200 kg.",
-    baseFare: 130,
+    description: "For documents and boxed goods up to 20 kg.",
+    baseFare: 100,
     includedKm: 2,
-    perKm: 16,
-    longHaulPerKm: 13,
-    minimumFare: 130,
-    capacityKg: 200,
+    perKm: 20,
+    longHaulPerKm: 20,
+    minimumFare: 100,
+    capacityKg: 20,
     freeWeightKg: 20,
-    perKgOverFree: 2.5,
+    perKgOverFree: 0,
     icon: "car",
     speedKph: 20,
     handlingMinutes: 10,

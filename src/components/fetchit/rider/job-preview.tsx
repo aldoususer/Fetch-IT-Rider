@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatJobTime, isUpcomingJob, jobTiming, type RiderJob } from '@/lib/rider-workspace';
-import { demoSplit, isDemoPayment } from '@/lib/payment-policy';
+import { riderEarningsForBooking, readFareSnapshot } from '@/lib/fare-policy';
 import { travelTimeRange } from '@/lib/eta-policy';
 import { JobRouteMap } from './job-route-map';
 import { OfferCountdown } from './offer-countdown';
@@ -18,7 +18,8 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
   const expired=job.status==='MATCHED' && !!job.assignmentExpiresAt && Date.parse(job.assignmentExpiresAt)<=now;
   const pending = useRef(false);
   const upcoming = isUpcomingJob(job), timing = jobTiming(job);
-  const fare = isDemoPayment(job.paymentMethod) ? job.demoRiderEarnings ?? demoSplit(job.totalFare.toFixed(2),job.demoCommissionBps??1500).riderEarnings : job.totalFare;
+  const fare = riderEarningsForBooking(job);
+  const savedFare = readFareSnapshot(job.fareBreakdown, job.totalFare);
   return <div className="rd-flow">
     <div className="rd-flow-body">
       {job.status==='MATCHED' && <OfferCountdown expiresAt={job.assignmentExpiresAt}/>}
@@ -27,7 +28,7 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
       {['older','overdue'].includes(timing.kind) && <p className="rd-help">This request has been waiting. Review its original pickup time before accepting; contact support if it is no longer valid.</p>}
       <dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
       <JobRouteMap key={job.id} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
-      <div className="rd-preview-fare"><span>{job.paymentMethod === 'CASH' ? 'Cash fare' : 'Rider share'}</span><strong>₱{fare.toFixed(2)}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p></div>
+      <div className="rd-preview-fare"><span>Your transport fare</span><strong>₱{fare.toLocaleString('en-PH')}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p>{savedFare && <p>{job.paymentMethod === 'CASH' ? 'Collect' : 'Customer total'}: ₱{savedFare.totalFare} · Includes ₱{savedFare.bookingFee} Fetch-It booking fee</p>}</div>
       <p className="rd-help">Requested {formatJobTime(job.createdAt)} · PH time. Customer contact details become available after acceptance.</p>
     </div>
     <div className="rd-flow-actions">

@@ -339,6 +339,7 @@ model Booking {
   baseFare            Decimal       @db.Decimal(12, 2)
   surgeMultiplier     Decimal       @default(1.0) @db.Decimal(5, 3)
   totalFare           Decimal       @db.Decimal(12, 2)
+  fareBreakdown       Json?
   currency            String        @default("PHP")
   status              BookingStatus @default(PENDING)
   matchedAt           DateTime?

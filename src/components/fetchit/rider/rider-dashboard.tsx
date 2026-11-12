@@ -18,7 +18,7 @@ import type { RiderProfileData } from "../shared/rider-profile";
 import { RiderAccountProfile } from "./rider-account-profile";
 import { SlowRequestFeedback } from "../shared/slow-request-feedback";
 import { ProofCapture, type ProofState } from "./proof-capture";
-import { demoSplit, isDemoPayment } from "@/lib/payment-policy";
+import { riderEarningsForBooking } from "@/lib/fare-policy";
 
 // Rider dashboard — stats header, available jobs feed, active job tracker
 // with ride pickup OTP verification and delivery e-POD (signature + photo).
@@ -115,7 +115,7 @@ type Job = RiderJob;
 type JobTab = "available" | "active" | "history";
 
 function riderShare(job: Job) {
-  return isDemoPayment(job.paymentMethod) ? job.demoRiderEarnings ?? demoSplit(job.totalFare.toFixed(2), job.demoCommissionBps ?? 1500).riderEarnings : job.totalFare;
+  return riderEarningsForBooking(job);
 }
 
 export function RiderDashboard() {
