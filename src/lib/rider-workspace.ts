@@ -2,6 +2,8 @@ import type { BookingStatus, VehicleClass } from './constants';
 
 export interface RiderJob {
   hasDeliveryPhoto?: boolean;
+  customerPickupConfirmedAt?: string | null;
+  customerDropoffConfirmedAt?: string | null;
   id: string; refCode: string; ticketId: string | null; ticket: string | null; type: string;
   customerId: string; riderId: string | null; pickupLabel: string; pickupLat: number; pickupLng: number;
   dropoffLabel: string; dropoffLat: number; dropoffLng: number; vehicleClass: VehicleClass;

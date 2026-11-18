@@ -19,6 +19,7 @@ import { RiderAccountProfile } from "./rider-account-profile";
 import { SlowRequestFeedback } from "../shared/slow-request-feedback";
 import { ProofCapture, type ProofState } from "./proof-capture";
 import { riderEarningsForBooking } from "@/lib/fare-policy";
+import { rideConfirmationError } from "@/lib/ride-confirmation-policy";
 
 // Rider dashboard — stats header, available jobs feed, active job tracker
 // with ride pickup OTP verification and delivery e-POD (signature + photo).
@@ -661,7 +662,7 @@ function ActiveJobFlow({
 
 
   async function advance(to: BookingStatus) {
-    if (advancePending.current || !ready || (to === 'DELIVERED' && !paymentReady)) return; advancePending.current = true;
+    if (advancePending.current || !ready || rideConfirmationError(job, to) || (to === 'DELIVERED' && !paymentReady)) return; advancePending.current = true;
     const timing = startBookingTiming("job_status");
     let outcome: "confirmed" | "recovered" | "failed" | "uncertain" = "uncertain";
     let uncertain = true;
@@ -718,6 +719,7 @@ function ActiveJobFlow({
   }
 
   const nextStatus = NEXT_STATUS[status];
+  const customerConfirmationMessage = nextStatus ? rideConfirmationError(job, nextStatus) : null;
   const isRide = job.type === "RIDE";
   const canAdvance = nextStatus != null && (isRide || nextStatus !== "DELIVERED");
   const nextLabel = nextStatus
@@ -868,13 +870,15 @@ function ActiveJobFlow({
             <Button
               size="lg"
               onClick={() => advance(nextStatus!)}
-              disabled={!ready || updating || (nextStatus === 'DELIVERED' && !paymentReady) || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
+              disabled={!ready || updating || !!customerConfirmationMessage || (nextStatus === 'DELIVERED' && !paymentReady) || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
               className="w-full"
             >
               {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               {nextLabel}
             </Button>
           )}
+          {customerConfirmationMessage && <p role="status" className="rd-help">{customerConfirmationMessage}</p>}
+          {isRide && job.customerPickupConfirmedAt && <p className="rd-help">Customer confirmed pickup{job.customerDropoffConfirmedAt ? " and arrival at drop-off" : ""}.</p>}
           {status === 'IN_TRANSIT' && isRide && !paymentReady && <><p className="rd-help">Payment must be confirmed before completing this ride.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment</Button></>}
           {status === 'IN_TRANSIT' && !isRide && job.paymentMethod === 'CASH' && !paymentReady && <><p className="rd-help">Confirm arrival and cash payment before collecting delivery proof.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment steps</Button></>}
           {status === "IN_TRANSIT" && !isRide && !showProof && (

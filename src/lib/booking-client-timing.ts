@@ -1,6 +1,6 @@
 "use client";
 
-export function startBookingTiming(action: "confirm" | "fare" | "cash_payment" | "dropoff_arrival" | "job_accept" | "job_status" | "pickup_progress" | "proof_submit" | "road_route") {
+export function startBookingTiming(action: "confirm" | "fare" | "cash_payment" | "dropoff_arrival" | "job_accept" | "job_status" | "pickup_progress" | "proof_submit" | "road_route" | "ride_confirmation") {
   const started = performance.now(), eventId = crypto.randomUUID();
   let requestId: string | undefined, backendMs: number | undefined, responseHeadersMs: number | undefined;
   let finished = false;

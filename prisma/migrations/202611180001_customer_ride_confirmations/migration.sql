@@ -1,0 +1,6 @@
+ALTER TABLE "Booking"
+  ADD COLUMN "customerPickupConfirmedAt" TIMESTAMP(3),
+  ADD COLUMN "customerDropoffConfirmedAt" TIMESTAMP(3);
+
+ALTER TYPE "BookingEventAction" ADD VALUE 'CUSTOMER_PICKUP_CONFIRMED';
+ALTER TYPE "BookingEventAction" ADD VALUE 'CUSTOMER_DROPOFF_CONFIRMED';

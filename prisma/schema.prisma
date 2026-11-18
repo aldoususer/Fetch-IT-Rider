@@ -87,6 +87,8 @@ enum BookingEventAction {
   STATUS_CHANGED
   CANCELLED
   REASSIGNED
+  CUSTOMER_PICKUP_CONFIRMED
+  CUSTOMER_DROPOFF_CONFIRMED
 }
 
 enum PaymentMethod {
@@ -344,6 +346,8 @@ model Booking {
   status              BookingStatus @default(PENDING)
   matchedAt           DateTime?
   pickedUpAt          DateTime?
+  customerPickupConfirmedAt DateTime?
+  customerDropoffConfirmedAt DateTime?
   deliveredAt         DateTime?
   cancelledAt         DateTime?
   cancellationReason  String?

@@ -7,6 +7,7 @@ import { completionPaymentError, isDemoPayment } from "@/lib/payment-policy";
 import { reserveAvailableRider, DispatchError } from "@/lib/dispatch";
 import { withRequestLog, RateLimitError, limitRequests, safeErrorCode } from "@/lib/request-guard";
 import { bookingView, riderSelect } from "@/lib/db-data";
+import { rideConfirmationError } from "@/lib/ride-confirmation-policy";
 import { recordBookingEvent } from "@/lib/booking-events";
 // /api/bookings/[id]
 // GET    — fetch a single booking (with customer / rider / proofs / latest tracking).
@@ -122,6 +123,8 @@ async function handlePATCH(req: NextRequest, { params }: Params) {
         // Commit failed attempts; a thrown error would roll them back.
         if (!ok) return { error: "Pickup code did not match. Confirm it with the passenger.", status: 400 };
       }
+      const confirmationError = rideConfirmationError(booking, status);
+      if (confirmationError) throw new DispatchError(confirmationError);
       if (status === 'DELIVERED' && booking.type === 'RIDE') {
         const paymentError = completionPaymentError(booking);
         if (paymentError) throw new DispatchError(paymentError);

@@ -216,7 +216,7 @@ export const RIDE_STATUS_LABEL: Record<BookingStatus, string> = {
   PENDING: "Finding your driver",
   MATCHED: "Driver assigned",
   ACCEPTED: "Driver accepted",
-  PICKED_UP: "On board",
+  PICKED_UP: "Pickup verified",
   IN_TRANSIT: "Heading to drop-off",
   DELIVERED: "Ride completed",
   CANCELLED: "Cancelled",
