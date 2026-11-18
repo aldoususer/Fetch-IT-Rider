@@ -88,7 +88,8 @@ import { ProfileMenu } from "../shared/profile-menu";
 import { JobHistoryRow, JobHistorySummary } from './job-history';
 import { JobPreview } from './job-preview';
 import { availabilityLabel, filterHistoryJobs, isHistoryJob, jobTiming, nextJobStop, pickupCodeFeedback, mergeRiderJob, type RiderJob } from '@/lib/rider-workspace';
-import { ArrowLeft, SlidersHorizontal, Search } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
+import { HistoryFilters } from './history-filters';
 import "./rider-workspace.css";
 
 interface RiderStats {
@@ -133,6 +134,7 @@ export function RiderDashboard() {
   const [connected, setConnected] = useState(true);
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyFilter, setHistoryFilter] = useState('ALL');
+  const [historyDate, setHistoryDate] = useState('');
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
   const detailDirty = useRef(false);
   const navigationRequest = useRef(0);
@@ -150,21 +152,24 @@ export function RiderDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<RiderStats | null>(null);
   const [tab, setTab] = useState<JobTab>("available");
-  const [jobLists, setJobLists] = useState<Partial<Record<JobTab, Job[]>>>({});
+  const [jobLists, setJobLists] = useState<Partial<Record<string, Job[]>>>({});
   const [upcomingJobs, setUpcomingJobs] = useState<Job[]>([]);
   const [jobsCheckedAt, setJobsCheckedAt] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
-  const [jobErrors, setJobErrors] = useState<Partial<Record<JobTab, string>>>({});
+  const [jobErrors, setJobErrors] = useState<Partial<Record<string, string>>>({});
   useEffect(() => {
     if (user?.id && activeJob && (isHistoryJob(activeJob) || activeJob.riderId !== user.id)) void removeProofDraft(user.id, activeJob.id).catch(() => {});
   }, [user?.id, activeJob?.id, activeJob?.status, activeJob?.riderId]);
   const jobsRequest = useRef(0);
   const statsRequest = useRef(0);
   const statsActiveCount = useRef<number | null>(null);
-  const jobs = jobLists[tab] ?? [];
+  const requestedHistoryDate = tab === 'history' ? historyDate : '';
+  const listKey = tab === 'history' ? `history:${requestedHistoryDate}` : tab;
+  const jobs = jobLists[listKey] ?? [];
+  function clearHistoryFilters() { setHistoryFilter('ALL'); setHistoryQuery(''); setHistoryDate(''); }
   // Only a tab's first load uses skeletons. Refreshes preserve its existing
   // cards and their mounted state, including any open job actions.
-  const loading = jobLists[tab] === undefined && !jobErrors[tab];
+  const loading = jobLists[listKey] === undefined && !jobErrors[listKey];
 
   const loadStats = useCallback(async (signal?: AbortSignal) => {
     const request = ++statsRequest.current;
@@ -179,17 +184,17 @@ export function RiderDashboard() {
   const loadJobs = useCallback(async (signal?: AbortSignal) => {
     const request = ++jobsRequest.current;
     try {
-      const path = tab === "available" ? "/api/rider/available?includeMatched=true" : `/api/bookings?filter=${tab}`;
+      const path = tab === "available" ? "/api/rider/available?includeMatched=true" : `/api/bookings?filter=${tab}${requestedHistoryDate ? `&date=${encodeURIComponent(requestedHistoryDate)}` : ""}`;
       const res = await fetch(path, { cache: "no-store", signal });
       const data = await res.json().catch(()=>null);
       if (!res.ok) throw new Error(res.status===401?'Your session expired. Sign in again to refresh jobs.':res.status===403?data?.error||'Your rider account cannot access these jobs. Contact support.':'Jobs are temporarily unavailable. Please try again.');
       if (signal?.aborted || request !== jobsRequest.current) return;
       const latest = tab === "available" ? data?.jobs : data?.bookings;
       if (!Array.isArray(latest)) throw new Error("Jobs are temporarily unavailable. Please try again.");
-      setJobLists(previous => ({ ...previous, [tab]: latest as Job[] }));
+      setJobLists(previous => ({ ...previous, [listKey]: latest as Job[] }));
       if (tab === "available") setUpcomingJobs(Array.isArray(data.upcomingJobs) ? data.upcomingJobs : []);
       setJobsCheckedAt(new Date().toISOString());
-      setJobErrors(previous => ({ ...previous, [tab]: undefined }));
+      setJobErrors(previous => ({ ...previous, [listKey]: undefined }));
       if (tab === "active") {
         if (user?.id && latest.length < 100) void retainActiveProofDrafts(user.id, latest).catch(() => {});
         // The active feed is fresher than a slower stats request. Update the
@@ -206,10 +211,10 @@ export function RiderDashboard() {
         return incoming ? mergeRiderJob(previous, incoming) : null;
       });
     } catch (error) {
-      if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [tab]: error instanceof TypeError ? 'Couldn’t connect. Reconnect and refresh your jobs.' : error instanceof Error ? error.message : 'Couldn’t update jobs. Please try again.' }));
+      if (!signal?.aborted && request === jobsRequest.current) setJobErrors(previous => ({ ...previous, [listKey]: error instanceof TypeError ? 'Couldn’t connect. Reconnect and refresh your jobs.' : error instanceof Error ? error.message : 'Couldn’t update jobs. Please try again.' }));
       throw error;
     }
-  }, [tab, user?.id]);
+  }, [tab, user?.id, requestedHistoryDate, listKey]);
 
   useVisiblePoll(user ? `${user.id}:stats` : "", loadStats, 10000);
 
@@ -308,7 +313,7 @@ export function RiderDashboard() {
     return () => navigator.serviceWorker?.removeEventListener('message', message);
   }, [user?.id, toast]);
   const reconnecting = boardConnection.status === 'reconnecting' || alerts.connection.status === 'reconnecting';
-  const boardIssue = !connected ? 'No internet connection. Job statuses may be out of date. Reconnect before updating a booking.' : jobErrors[tab] || statsError || (reconnecting ? 'Reconnecting to Fetch-It… Existing job details remain visible while we check for updates.' : '');
+  const boardIssue = !connected ? 'No internet connection. Job statuses may be out of date. Reconnect before updating a booking.' : jobErrors[listKey] || statsError || (reconnecting ? 'Reconnecting to Fetch-It… Existing job details remain visible while we check for updates.' : '');
   const visibleHistory = filterHistoryJobs(jobs, historyQuery, historyFilter);
   const serviceText = profile?.services.map(service => service === 'RIDE' ? 'Passenger rides' : 'Delivery').join(' + ');
   const vehicleText = stats?.vehicleClass ? VEHICLES[stats.vehicleClass as keyof typeof VEHICLES]?.label ?? stats.vehicleClass : 'Your rider workspace';
@@ -336,11 +341,11 @@ export function RiderDashboard() {
       });
       return () => cancelAnimationFrame(frame);
     }
-    if (jobLists[tab] === undefined || restoreScroll.current === null) return;
+    if (jobLists[listKey] === undefined || restoreScroll.current === null) return;
     const top = restoreScroll.current; restoreScroll.current = null;
     const frame = requestAnimationFrame(() => window.scrollTo({ top, behavior: 'instant' }));
     return () => cancelAnimationFrame(frame);
-  }, [activeJob, jobLists, tab]);
+  }, [activeJob, jobLists, listKey]);
   function openJob(job: Job) {
     lastJobTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     knownJobs.current.set(job.id, job);
@@ -372,11 +377,11 @@ export function RiderDashboard() {
         <TabsTrigger value="history"><Clock size={20}/><span className="rd-tab-label">History</span></TabsTrigger>
       </TabsList></Tabs>
       {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected && !reconnecting ? 'Updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Last confirmed '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})+' · Updates paused'}</p>}
-      {tab==='history' && <div className="rd-history-tools"><div className="rd-search"><Search size={18} aria-hidden="true"/><label className="sr-only" htmlFor="rider-history-search">Search booking history</label><input id="rider-history-search" type="search" placeholder="Search reference or address" value={historyQuery} onChange={event=>setHistoryQuery(event.target.value)}/></div><Button variant="outline" aria-label="Filter booking history" aria-expanded={historyFiltersOpen} aria-controls="rider-history-filters" onClick={()=>setHistoryFiltersOpen(value=>!value)}><SlidersHorizontal size={18}/>Filters{historyFilter!=='ALL'?' · 1':''}</Button>{historyFiltersOpen && <div id="rider-history-filters" className="rd-history-filters"><label>Status<select value={historyFilter} onChange={event=>setHistoryFilter(event.target.value)}><option value="ALL">All bookings</option><option value="DELIVERED">Completed</option><option value="CANCELLED">Cancelled</option></select></label><Button variant="ghost" onClick={()=>{setHistoryFilter('ALL');setHistoryQuery('');}}>Clear filters</Button></div>}</div>}
+      {tab==='history' && <HistoryFilters query={historyQuery} status={historyFilter} date={historyDate} open={historyFiltersOpen} onQuery={setHistoryQuery} onStatus={setHistoryFilter} onDate={setHistoryDate} onToggle={()=>setHistoryFiltersOpen(value=>!value)} onClear={clearHistoryFilters}/>}
       {loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
-        : jobLists[tab]===undefined ? null
-        : jobs.length===0 ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
-        : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice"><p>No bookings match this search. Try another address or clear your filters.</p><Button variant="outline" className="min-h-12" onClick={()=>{setHistoryFilter("ALL");setHistoryQuery("");}}>Clear filters</Button></div>}{jobs.length===100 && <p className="rd-help">Searching your 100 most recent bookings.</p>}</section>
+        : jobLists[listKey]===undefined ? null
+        : jobs.length===0 && !(tab==='history' && (historyDate || historyQuery || historyFilter!=='ALL')) ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
+        : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice"><p>No bookings match this date or search. Try another date, address or status, or clear your filters.</p><Button variant="outline" className="min-h-12" onClick={clearHistoryFilters}>Clear filters</Button></div>}{jobs.length===100 && <p className="rd-help">{historyDate ? 'Showing the 100 most recent bookings on this date.' : 'Searching your 100 most recent bookings.'}</p>}</section>
         : tab==='available' ? <>{jobs.some(job=>job.status==='MATCHED') && <section className="rd-offers" aria-labelledby="rider-offers-heading"><h2 id="rider-offers-heading">Offered to you</h2><p>Exclusive offers. Accept or decline before the timer ends.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='MATCHED').map(job=><div key={job.id}><OfferCountdown expiresAt={job.assignmentExpiresAt}/><JobCard job={job} isAvailable onOpen={()=>openJob(job)}/></div>)}</div></section>}{jobs.some(job=>job.status==='PENDING') && <section className="rd-open-requests" aria-labelledby="open-requests-heading"><h2 id="open-requests-heading">Open requests</h2><p>Choose a request that fits your trip.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='PENDING').map(job=><JobCard key={job.id} job={job} isAvailable onOpen={()=>openJob(job)}/>)}</div></section>}</> : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={false} onOpen={()=>openJob(job)}/>)}</div>}
       {tab==='available' && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
       <details id="rider-activity" tabIndex={-1} className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">

@@ -12,14 +12,18 @@ import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 import { riderJobView } from "@/lib/job-privacy";
+import { riderHistoryDateRange } from '@/lib/rider-history-date';
 
 export async function GET(req: NextRequest) {
   const session = await getRiderSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await expireRiderOffers(db);
   const url = new URL(req.url);
   const filter = url.searchParams.get("filter") || "active"; // active | history | all
+  const date = filter === 'history' ? url.searchParams.get('date') || '' : '';
+  const dateRange = date ? riderHistoryDateRange(date) : null;
+  if (date && !dateRange) return NextResponse.json({ error: 'Choose a valid booking date.' }, { status: 400 });
+  await expireRiderOffers(db);
 
   const where =
     session.role === "CUSTOMER"
@@ -36,7 +40,7 @@ export async function GET(req: NextRequest) {
         : {};
 
   const bookings = await db.booking.findMany({
-    where: { ...where, ...statusFilter },
+    where: { ...where, ...statusFilter, ...(dateRange ? { createdAt: dateRange } : {}) },
     orderBy: { createdAt: "desc" },
     include: { dispatch: { select: dispatchSelect },
       customer: { select: { id: true, name: true, phone: true } },
