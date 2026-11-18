@@ -6,6 +6,7 @@ import { requireRider, RiderError, riderErrorResponse } from "@/lib/rider-access
 import { cookies } from 'next/headers';
 import { onlineLocationInput } from '@/lib/matching-policy';
 import { schedulePushDelivery } from '@/lib/push-delivery';
+import { offersPaused, pauseMessage } from '@/lib/rider-cancellation-policy';
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +22,8 @@ export async function POST(req: NextRequest) {
     const updated = await db.$transaction(async tx => {
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${session.uid} FOR UPDATE`;
       if (body.online) {
+        const presence = await tx.riderPresence.findUnique({ where: { userId: session.uid }, select: { offerPausedUntil: true } });
+        if (offersPaused(presence)) throw new RiderError(pauseMessage(presence!.offerPausedUntil!), 409);
         const profile = await tx.riderProfile.findUnique({ where: { userId: session.uid } });
         if (!profile || !(await approvedServices(tx, session.uid, profile.vehicleClass)).length) throw new RiderError("Complete your rider application and service approval before going online.", 403);
         if (body.notificationPermission !== 'granted' || !deviceId || !await tx.customerPushSubscription.findFirst({ where: { customerId: session.uid, deviceId }, select: { id: true } })) throw new RiderError('Enable notifications on this device before going online.', 409);

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
 import { riderJobView } from "@/lib/job-privacy";
+import { offersPaused, pauseMessage } from '@/lib/rider-cancellation-policy';
 
 export async function GET(req: NextRequest) {
   const session = await getRiderSession();
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
     );
   }
   if (rider.isBanned) return NextResponse.json({ error: "Account restricted." }, { status: 403 });
+  if (offersPaused(rider.riderPresence)) return NextResponse.json({ jobs: [], upcomingJobs: [], pausedUntil: rider.riderPresence!.offerPausedUntil!.toISOString(), pauseReason: pauseMessage(rider.riderPresence!.offerPausedUntil!) }, { headers: { 'Cache-Control': 'private, no-store' } });
   if (!rider.riderPresence?.isOnline) return NextResponse.json({ jobs: [], upcomingJobs: [] }, { headers: { "Cache-Control": "private, no-store" } });
 
   await db.riderPresence.updateMany({ where: { userId: session.uid, isOnline: true }, data: { updatedAt: new Date() } });

@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
-function load(file,deps={},globals={}){const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,URL,Promise,Set,Error,AbortController,require(name){if(!(name in deps))throw Error(name);return deps[name];},...globals});return exports;}
+function load(file,deps={},globals={}){deps={'@/lib/proof-drafts':{removeProofDraft:async()=>{}},'@/lib/store':{useAppStore:{getState:()=>({user:null})}},...deps};const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,URL,Promise,Set,Error,AbortController,require(name){if(!(name in deps))throw Error(name);return deps[name];},...globals});return exports;}
 const alerts=load('src/lib/rider-alerts.ts'),workspace=load('src/lib/rider-workspace.ts');
 function workerHarness(){
  const handlers={},shown=[],visible=new Map(),opened=[],messages=[];let owner='rider-a',clients=[];

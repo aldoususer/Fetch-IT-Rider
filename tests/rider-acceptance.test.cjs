@@ -1,6 +1,7 @@
 const { test } = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
 function load(file, imports = {}, globals = {}) {
+  imports = {'./rider-cancellation-policy':require('./helpers/cancellation-policy.cjs'),'./rider-cancellation':{},...imports};
   imports = { "./booking-client-timing": { startBookingTiming: () => ({ headers: {}, response() {}, finish() {} }) }, "./booking-mutation-client": { savedMutation: async () => null }, ...imports };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,

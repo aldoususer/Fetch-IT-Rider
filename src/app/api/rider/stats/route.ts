@@ -8,6 +8,8 @@ import { dispatchPaymentWhere } from "@/lib/dispatch";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
+import { offersPaused, pauseMessage } from '@/lib/rider-cancellation-policy';
+import { riderCancellationSummary } from '@/lib/rider-cancellation';
 
 export async function GET() {
   const session = await getRiderSession();
@@ -29,7 +31,8 @@ export async function GET() {
   });
   const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
   let available = 0;
-  const matchingReady = !!rider?.riderPresence?.isOnline && usableMatchingLocation(rider.riderPresence) && !!await db.customerPushSubscription.findFirst({where:{customerId:session.uid},select:{id:true}});
+  const cancellationPaused = offersPaused(rider?.riderPresence);
+  const matchingReady = !cancellationPaused && !!rider?.riderPresence?.isOnline && usableMatchingLocation(rider.riderPresence) && !!await db.customerPushSubscription.findFirst({where:{customerId:session.uid},select:{id:true}});
   if (matchingReady && rider?.riderPresence?.isOnline && !rider.isBanned && rider.riderProfile?.vehicleClass) {
     const approvals = await db.riderServiceApproval.findMany({ where: { userId: session.uid, vehicleClass: rider.riderProfile.vehicleClass, ...liveApprovalWhere() } });
     const candidates = await db.booking.findMany({
@@ -52,7 +55,8 @@ export async function GET() {
     offeredJobs: await db.booking.count({ where: { riderId: session.uid, status: 'MATCHED', OR: [{ assignmentExpiresAt: null }, { assignmentExpiresAt: { gt: new Date() } }] } }),
     trackingRequired: !!await db.booking.findFirst({ where: { riderId: session.uid, status: { in: ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'] } }, select: { id: true } }),
     matchingReady,
-    matchingPauseReason: !usableMatchingLocation(rider?.riderPresence) ? 'New offers paused. Open Rider and refresh your location.' : !matchingReady ? 'New offers paused. Enable notifications on this device.' : null,
+    matchingPauseReason: cancellationPaused ? pauseMessage(rider!.riderPresence!.offerPausedUntil!) : !usableMatchingLocation(rider?.riderPresence) ? 'New offers paused. Open Rider and refresh your location.' : !matchingReady ? 'New offers paused. Enable notifications on this device.' : null,
+    cancellation: await riderCancellationSummary(db, session.uid, new Date(), rider?.riderPresence ?? null),
     completedJobs: delivered,
     availableJobs: available,
     rating: rider?.riderProfile?.rating ?? 5.0,

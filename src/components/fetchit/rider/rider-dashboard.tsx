@@ -90,9 +90,12 @@ import { JobPreview } from './job-preview';
 import { availabilityLabel, filterHistoryJobs, isHistoryJob, jobTiming, nextJobStop, pickupCodeFeedback, mergeRiderJob, type RiderJob } from '@/lib/rider-workspace';
 import { ArrowLeft } from 'lucide-react';
 import { HistoryFilters } from './history-filters';
+import { CancellationNotice } from './cancellation-notice';
+import type { CancellationSummary } from '@/lib/rider-cancellation-policy';
 import "./rider-workspace.css";
 
 interface RiderStats {
+  cancellation?: CancellationSummary;
   activeJobs: number;
   offeredJobs?: number;
   completedJobs: number;
@@ -237,6 +240,11 @@ export function RiderDashboard() {
   }, [user?.id, stats?.rating, stats?.completedJobs]);
 
   async function toggleOnline(next: boolean, location?: RiderFix, inlineFeedback = false) {
+    if (next && stats?.cancellation?.pausedUntil) {
+      const message = stats.cancellation.message;
+      if (inlineFeedback) throw new Error(message);
+      toast({ title: 'New offers temporarily paused', description: message }); return;
+    }
     if (statusLock.current || statusPending || !stats || (next && statsError) || !connected) {
       if (location || inlineFeedback) throw new Error('Couldn’t update availability. Check your connection and retry.');
       return;
@@ -354,13 +362,14 @@ export function RiderDashboard() {
   function closeJob() { navigation.close(); }
   const deviceNotificationsReady = alerts.browserEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted';
   const matchingReady = stats?.matchingReady === true && deviceNotificationsReady && connected && !statsError;
-  const paused = !!stats?.isOnline && !matchingReady && !stats.activeJobs && !stats.offeredJobs;
-  const pauseReason = !connected ? 'Reconnect to receive new offers.' : statsError || (!alerts.settingsLoading && !deviceNotificationsReady ? 'Enable notifications on this device to receive new offers.' : stats?.matchingPauseReason) || 'Refresh your location to receive new offers.';
+  const cancellationPaused = !!stats?.cancellation?.pausedUntil;
+  const paused = cancellationPaused || !!stats?.isOnline && !matchingReady && !stats.activeJobs && !stats.offeredJobs;
+  const pauseReason = cancellationPaused ? stats!.cancellation!.message : !connected ? 'Reconnect to receive new offers.' : statsError || (!alerts.settingsLoading && !deviceNotificationsReady ? 'Enable notifications on this device to receive new offers.' : stats?.matchingPauseReason) || 'Refresh your location to receive new offers.';
   return <div className="rd">
     <header className="rd-header"><div className="rd-header-inner">
       <button type="button" onClick={goHome} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Go to dashboard"><FetchItLogo/></button>
       <div className="rd-account">
-        <OnlineToggle pending={statusPending} matchingReady={matchingReady} activeJobs={stats?.activeJobs ?? 0} offeredJobs={stats?.offeredJobs ?? 0} onResume={()=>setOnlineSetupOpen(true)} isOnline={stats ? stats.isOnline : null} disabled={!connected || (!!statsError && !stats?.isOnline)} onToggle={v=>void toggleOnline(v)}/>
+        <OnlineToggle pending={statusPending} matchingReady={matchingReady} activeJobs={stats?.activeJobs ?? 0} offeredJobs={stats?.offeredJobs ?? 0} onResume={()=>{if(cancellationPaused)toast({title:'New offers temporarily paused',description:pauseReason});else setOnlineSetupOpen(true);}} isOnline={stats ? stats.isOnline : null} disabled={!connected || (!!statsError && !stats?.isOnline)} onToggle={v=>void toggleOnline(v)}/>
         <RiderNotifications alerts={alerts} onOpen={openNotification}/>
         <ProfileMenu name={user?.name} email={user?.email} roleLabel="Rider" onViewProfile={()=>setProfileOpen(true)} onLogout={()=>void logout()}/>
       </div>
@@ -368,7 +377,8 @@ export function RiderDashboard() {
     <main className="rd-main">
       <section className="rd-board-heading"><div><h1 ref={workspaceHeading} tabIndex={-1}>Your jobs</h1><p>{vehicleText}{serviceText ? ' · '+serviceText : ''}</p></div><Button variant="outline" size="sm" disabled={refreshing || !connected} onClick={()=>void refreshBoard()} aria-label="Refresh jobs"><RefreshCw size={18} className={refreshing?'animate-spin':''}/><span>Refresh</span></Button></section>
       {boardIssue && <div className="rd-notice" role="status"><p>{boardIssue}</p><Button variant="outline" disabled={!connected || refreshing} onClick={()=>void refreshBoard()}>Retry connection</Button></div>}
-      {tab === 'available' && paused && (loading || jobs.length > 0) && <div className="rd-notice" role="status"><p>{pauseReason}</p><Button variant="outline" onClick={()=>setOnlineSetupOpen(true)}>Resume receiving jobs</Button></div>}
+      {tab === 'available' && paused && !cancellationPaused && (loading || jobs.length > 0) && <div className="rd-notice" role="status"><p>{pauseReason}</p><Button variant="outline" onClick={()=>setOnlineSetupOpen(true)}>Resume receiving jobs</Button></div>}
+      {tab === 'available' && !cancellationPaused && stats?.cancellation && <CancellationNotice compact summary={stats.cancellation}/>}
       {user && <div hidden={tab === 'history'}><BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || !!stats?.trackingRequired} availabilityKnown={!!stats}/></div>}
       {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>navigation.navigate('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
       <Tabs value={tab} onValueChange={v=>navigation.navigate(v as JobTab)}><TabsList className="rd-tabs">
@@ -378,12 +388,12 @@ export function RiderDashboard() {
       </TabsList></Tabs>
       {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected && !reconnecting ? 'Updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Last confirmed '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})+' · Updates paused'}</p>}
       {tab==='history' && <HistoryFilters query={historyQuery} status={historyFilter} date={historyDate} open={historyFiltersOpen} onQuery={setHistoryQuery} onStatus={setHistoryFilter} onDate={setHistoryDate} onToggle={()=>setHistoryFiltersOpen(value=>!value)} onClear={clearHistoryFilters}/>}
-      {loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
+      {tab==='available' && cancellationPaused ? <CancellationNotice summary={stats!.cancellation!}/> : loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
         : jobLists[listKey]===undefined ? null
         : jobs.length===0 && !(tab==='history' && (historyDate || historyQuery || historyFilter!=='ALL')) ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
         : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice"><p>No bookings match this date or search. Try another date, address or status, or clear your filters.</p><Button variant="outline" className="min-h-12" onClick={clearHistoryFilters}>Clear filters</Button></div>}{jobs.length===100 && <p className="rd-help">{historyDate ? 'Showing the 100 most recent bookings on this date.' : 'Searching your 100 most recent bookings.'}</p>}</section>
         : tab==='available' ? <>{jobs.some(job=>job.status==='MATCHED') && <section className="rd-offers" aria-labelledby="rider-offers-heading"><h2 id="rider-offers-heading">Offered to you</h2><p>Exclusive offers. Accept or decline before the timer ends.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='MATCHED').map(job=><div key={job.id}><OfferCountdown expiresAt={job.assignmentExpiresAt}/><JobCard job={job} isAvailable onOpen={()=>openJob(job)}/></div>)}</div></section>}{jobs.some(job=>job.status==='PENDING') && <section className="rd-open-requests" aria-labelledby="open-requests-heading"><h2 id="open-requests-heading">Open requests</h2><p>Choose a request that fits your trip.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='PENDING').map(job=><JobCard key={job.id} job={job} isAvailable onOpen={()=>openJob(job)}/>)}</div></section>}</> : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={false} onOpen={()=>openJob(job)}/>)}</div>}
-      {tab==='available' && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
+      {tab==='available' && !cancellationPaused && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
       <details id="rider-activity" tabIndex={-1} className="rd-day-summary"><summary><Activity size={18} aria-hidden="true"/>Your activity<ChevronDown size={18} aria-hidden="true"/></summary><div className="rd-stats">
         <StatCard icon={<Activity size={20}/>} label="Active jobs" value={stats?.activeJobs??0} loading={!stats}/>
         <StatCard icon={<CheckCircle2 size={20}/>} label="Completed" value={stats?.completedJobs??0} loading={!stats}/>

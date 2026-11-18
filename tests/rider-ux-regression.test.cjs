@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
 function load(file, imports, globals = {}) {
+  imports = {'./rider-cancellation-policy':require('./helpers/cancellation-policy.cjs'),'./rider-cancellation':{cancellationReason:async(_tx,_b,_r,_code,reason)=>({counted:false,reason})},...imports};
   imports = { '@/lib/booking-client-timing': { startBookingTiming: () => ({ headers: {}, response() {}, finish() {} }) }, '@/lib/booking-mutation-client': { savedMutation: async () => null }, '@/lib/proof-drafts': { readProofDraft: async () => null, saveProofDraft: async () => true, removeProofDraft: async () => {} }, '../shared/slow-request-feedback': { SlowRequestFeedback: 'slow-feedback' }, '@/lib/eta-policy': { travelTimeRange: seconds => `${Math.ceil(seconds/60)}–${Math.ceil(seconds/60)+2}` }, ...imports };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText,

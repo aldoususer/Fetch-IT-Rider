@@ -7,6 +7,8 @@ import { isDemoPayment } from "./payment-policy";
 import { recordBookingEvent } from "./booking-events";
 import { schedulePushDelivery } from "./push-delivery";
 import { defaultPlatformSettings, validatePlatformSettings } from "./platform-policy";
+import { offersPaused, pauseMessage } from './rider-cancellation-policy';
+import { applyCancellationPause, cancellationReason } from './rider-cancellation';
 export const dispatchPaymentWhere: Prisma.BookingWhereInput = { OR: [{ paymentMethod: "CASH" }, { paymentMethod: { in: ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"] }, paymentStatus: "PAID" }] };
 export const OFFER_TTL_MS = 2 * 60_000;
 const activeStatuses = ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] as const;
@@ -26,6 +28,7 @@ async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: 
     await tx.riderPresence.updateMany({ where: { userId: riderId, isOnline: true, OR: [{ locationAt: null }, { locationAt: { lte: acceptance.location.locationAt } }] }, data: acceptance.location });
   }
   const rider = await tx.user.findUnique({ where: { id: riderId }, include: { riderProfile: true, riderPresence: true } });
+  if (offersPaused(rider?.riderPresence, now)) throw new DispatchError(pauseMessage(rider!.riderPresence!.offerPausedUntil!));
   if (!rider || rider.role !== "RIDER" || rider.isBanned || rider.riderProfile?.vehicleClass !== booking.vehicleClass || !rider.riderPresence?.isOnline || rider.riderPresence.updatedAt.getTime() < now.getTime() - 5 * 60_000) return false;
   if (!usableMatchingLocation(rider.riderPresence, now.getTime(), automatic ? MATCH_LOCATION_MAX_MS : ACCEPT_LOCATION_MAX_MS)) return false;
   if (!await tx.customerPushSubscription.findFirst({ where: { customerId: riderId, ...(acceptance ? { deviceId: acceptance.deviceId } : {}), ...(rider.authInvalidBefore ? { updatedAt: { gt: rider.authInvalidBefore } } : {}) }, select: { id: true } })) return false;
@@ -74,7 +77,7 @@ async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: 
   return updated;
 }
 
-export async function assignRider(db: PrismaClient, id: string, actor: Actor, reason: unknown, riderId?: unknown, offerOnly = false) {
+export async function assignRider(db: PrismaClient, id: string, actor: Actor, reason: unknown, riderId?: unknown, offerOnly = false, reasonCode?: unknown) {
   if (typeof reason !== "string" || !reason.trim() || reason.length > 500) throw new DispatchError("Add a reason of up to 500 characters.", 400);
   if (actor.role !== "RIDER" && (typeof riderId !== "string" || !riderId || riderId.length > 100)) throw new DispatchError("Choose a rider.", 400);
   return db.$transaction(async tx => {
@@ -83,7 +86,15 @@ export async function assignRider(db: PrismaClient, id: string, actor: Actor, re
     if (!booking) throw new DispatchError("Booking not found.", 404);
     if (actor.role === "RIDER" && booking.riderId !== actor.uid) throw new DispatchError("This booking is no longer assigned to you.", 403);
     if (offerOnly && (actor.role !== "RIDER" || booking.status !== "MATCHED" || (booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()))) throw new DispatchError("This offer is no longer available. Refresh jobs to check its status.");
-    return offerNext(tx, booking, actor, reason.trim(), actor.role !== "RIDER" ? riderId as string : undefined);
+    let recordedReason = reason.trim(), counted = false;
+    if (actor.role === 'RIDER' && booking.status === 'ACCEPTED') {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${actor.uid} FOR UPDATE`;
+      try { const decision = await cancellationReason(tx, booking, actor.uid, reasonCode, reason.trim()); recordedReason = decision.reason; counted = decision.counted; }
+      catch (error) { throw new DispatchError(error instanceof Error ? error.message : 'Choose a valid cancellation reason.', 400); }
+    }
+    const updated = await offerNext(tx, booking, actor, recordedReason, actor.role !== "RIDER" ? riderId as string : undefined);
+    if (counted) await applyCancellationPause(tx, actor.uid);
+    return updated;
   }, { maxWait: 10000, timeout: 20000 });
 }
 

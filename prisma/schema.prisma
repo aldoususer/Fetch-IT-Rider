@@ -729,6 +729,7 @@ model AutoDispatch {
 }
 
 model RiderPresence {
+  offerPausedUntil DateTime?
   locationAccuracy Float?
   onlineAt DateTime?
   lastOfferAt DateTime?
@@ -760,6 +761,7 @@ model BookingEvent {
   actor      User?              @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([bookingId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model DeliveryChallenge {

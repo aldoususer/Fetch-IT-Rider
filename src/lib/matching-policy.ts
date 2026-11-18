@@ -14,7 +14,7 @@ export function usableMatchingLocation(fix: MatchingFix | null | undefined, now 
     fix.locationAt.getTime() <= now + 5000 && fix.locationAccuracy !== null && Number.isFinite(fix.locationAccuracy) && fix.locationAccuracy >= 0 && fix.locationAccuracy <= MATCH_ACCURACY_METERS;
 }
 export function freshPresenceWhere(now = new Date()): Prisma.RiderPresenceWhereInput {
-  return { isOnline: true, lat: { not: null }, lng: { not: null }, locationAt: { gte: new Date(now.getTime() - MATCH_LOCATION_MAX_MS), lte: new Date(now.getTime() + 5000) }, locationAccuracy: { gte: 0, lte: MATCH_ACCURACY_METERS } };
+  return { isOnline: true, OR: [{ offerPausedUntil: null }, { offerPausedUntil: { lte: now } }], lat: { not: null }, lng: { not: null }, locationAt: { gte: new Date(now.getTime() - MATCH_LOCATION_MAX_MS), lte: new Date(now.getTime() + 5000) }, locationAccuracy: { gte: 0, lte: MATCH_ACCURACY_METERS } };
 }
 export function onlineLocationInput(value: unknown, now = Date.now()) {
   const fix = value as { lat: number; lng: number; accuracy: number; capturedAt: number } | null;
