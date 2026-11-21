@@ -4,7 +4,6 @@ import { distanceMeters, validRoutePoint, type RoutePoint } from './road-routing
 export const MATCH_LOCATION_MAX_MS = 120_000;
 export const ACCEPT_LOCATION_MAX_MS = 30_000;
 export const MATCH_ACCURACY_METERS = 100;
-export const activeRiderStatuses = ['MATCHED', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'] as const;
 export const dispatchSelect = { phase: true, attempts: true, pickupEtaSeconds: true, ranking: true } as const;
 // Older bookings have no dispatch row and retain their existing open-list flow.
 export const openDispatchWhere: Prisma.BookingWhereInput = { OR: [{ dispatch: null }, { dispatch: { phase: 'OPEN' } }] };
@@ -45,9 +44,17 @@ export function rankRiders(riders: RankedRider[], now = Date.now()) {
   });
 }
 
+export function scheduledRequestIsDue(scheduledAt: Date | null, now: Date) {
+  return scheduledAt !== null && scheduledAt <= now;
+}
+
+export function claimableRequestWhere(now: Date): Prisma.BookingWhereInput {
+  return { OR: [openDispatchWhere, { scheduledAt: { lte: now }, dispatch: { phase: 'SEARCHING' } }] };
+}
+
 export function availableRequestWhere(riderId: string, now = new Date()): Prisma.BookingWhereInput {
   return { OR: [
-    { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: riderId } }, AND: [{ OR: [openDispatchWhere, { scheduledAt: { gt: now } }] }] },
+    { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: riderId } }, AND: [{ OR: [claimableRequestWhere(now), { scheduledAt: { gt: now } }] }] },
     { status: 'MATCHED', riderId, OR: [{ assignmentExpiresAt: null }, { assignmentExpiresAt: { gt: now } }] },
   ] };
 }

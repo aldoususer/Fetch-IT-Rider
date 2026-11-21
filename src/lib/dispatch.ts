@@ -1,4 +1,4 @@
-import { onlineLocationInput, usableMatchingLocation, ACCEPT_LOCATION_MAX_MS, MATCH_LOCATION_MAX_MS } from "./matching-policy";
+import { onlineLocationInput, usableMatchingLocation, ACCEPT_LOCATION_MAX_MS, MATCH_LOCATION_MAX_MS, scheduledRequestIsDue } from "./matching-policy";
 import { requestHasExpired, staleRequestWhere, REQUEST_EXPIRED_REASON } from "./job-expiry";
 import { cancelDemoPayment } from "./demo-payments";
 import { riderCanTakeBooking } from "./rider-eligibility";
@@ -9,19 +9,27 @@ import { schedulePushDelivery } from "./push-delivery";
 import { defaultPlatformSettings, validatePlatformSettings } from "./platform-policy";
 import { offersPaused, pauseMessage } from './rider-cancellation-policy';
 import { applyCancellationPause, cancellationReason } from './rider-cancellation';
+import { riderOccupancyWhere } from "./rider-occupancy";
 export const dispatchPaymentWhere: Prisma.BookingWhereInput = { OR: [{ paymentMethod: "CASH" }, { paymentMethod: { in: ["DEMO_GCASH", "DEMO_MAYA", "DEMO_BANK"] }, paymentStatus: "PAID" }] };
 export const OFFER_TTL_MS = 2 * 60_000;
-const activeStatuses = ["MATCHED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"] as const;
+
 type Actor = { uid: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" };
 export class DispatchError extends Error {
   constructor(message: string, public status = 409) { super(message); }
 }
 
+export class RiderReservationBusyError extends DispatchError {}
+
 type AcceptanceInput = { deviceId: string; location?: ReturnType<typeof onlineLocationInput> };
-async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date, automatic = false, acceptance?: AcceptanceInput) {
+async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date, automatic = false, acceptance?: AcceptanceInput, skipBusy = false) {
   // Serialize every reservation/acceptance for a rider, preventing two jobs
   // from reserving the same available rider concurrently.
-  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${riderId} FOR UPDATE`;
+  if (skipBusy) {
+    const locked = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "User" WHERE "id" = ${riderId} FOR UPDATE SKIP LOCKED`;
+    if (!locked.length) throw new RiderReservationBusyError("Rider availability is being updated.");
+  } else {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${riderId} FOR UPDATE`;
+  }
   if (acceptance?.location) {
     if (automatic || !usableMatchingLocation(acceptance.location, Date.now(), ACCEPT_LOCATION_MAX_MS)) throw new DispatchError("Share a fresh, accurate location before accepting.");
     // Do not take an offline rider online, or overwrite a newer watch update.
@@ -33,19 +41,22 @@ async function eligible(tx: Prisma.TransactionClient, riderId: string, booking: 
   if (!usableMatchingLocation(rider.riderPresence, now.getTime(), automatic ? MATCH_LOCATION_MAX_MS : ACCEPT_LOCATION_MAX_MS)) return false;
   if (!await tx.customerPushSubscription.findFirst({ where: { customerId: riderId, ...(acceptance ? { deviceId: acceptance.deviceId } : {}), ...(rider.authInvalidBefore ? { updatedAt: { gt: rider.authInvalidBefore } } : {}) }, select: { id: true } })) return false;
   if (!await riderCanTakeBooking(tx, riderId, booking)) return false;
-  return await tx.booking.count({ where: { id: { not: booking.id }, riderId, status: { in: [...activeStatuses] } } }) === 0;
+  return await tx.booking.count({ where: { id: { not: booking.id }, riderId, ...riderOccupancyWhere(now) } }) === 0;
 }
 
-export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date, automatic = false, acceptance?: AcceptanceInput) {
+export async function reserveAvailableRider(tx: Prisma.TransactionClient, riderId: string, booking: Booking, now: Date, automatic = false, acceptance?: AcceptanceInput, skipBusy = false) {
   if (requestHasExpired(booking, now)) throw new DispatchError("This request has expired. Refresh jobs for current requests.");
   const dispatch = await tx.autoDispatch.findUnique({ where: { bookingId: booking.id } });
-  if (booking.status === 'PENDING' && dispatch && dispatch.phase !== 'OPEN' && (acceptance || dispatch.phase !== 'SEARCHING')) throw new DispatchError('This request is being offered to another rider. Refresh jobs.');
+  // Due scheduled trips stay claimable while the matcher is recovering.
+  const searchable = dispatch?.phase === 'SEARCHING';
+  const dueScheduled = scheduledRequestIsDue(booking.scheduledAt, now);
+  if (booking.status === 'PENDING' && dispatch && dispatch.phase !== 'OPEN' && (!searchable || (acceptance && !dueScheduled)))
+    throw new DispatchError('This request is being offered to another rider. Refresh jobs.');
   if (isDemoPayment(booking.paymentMethod) && booking.paymentStatus !== "PAID") throw new DispatchError("Complete online payment before assigning or accepting this booking.");
-  if (!await eligible(tx, riderId, booking, now, automatic, acceptance)) throw new DispatchError("Choose an online rider with a matching vehicle, recent GPS, enabled notifications and no active booking.");
+  if (!await eligible(tx, riderId, booking, now, automatic, acceptance, skipBusy)) throw new DispatchError("Choose an online rider with a matching vehicle, recent GPS, enabled notifications and no active booking.");
 }
 
-async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" }, reason: string, requested?: string) {
-  const now = new Date();
+async function offerNext(tx: Prisma.TransactionClient, booking: Booking, actor: { uid?: string; name: string; role: "ADMIN" | "SUPERADMIN" | "RIDER" }, reason: string, requested?: string, now = new Date()) {
   if (requestHasExpired(booking, now)) throw new DispatchError("This request has expired. Ask the customer to book again.");
   const config=await tx.platformConfig.findUnique({where:{id:"platform"}});
   const settings=config?validatePlatformSettings(config.settings):defaultPlatformSettings();
@@ -110,8 +121,9 @@ export async function expireRiderOffers(db: PrismaClient) {
       const locked = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Booking" WHERE "id" = ${row.id} FOR UPDATE SKIP LOCKED`;
       if (!locked.length) return false;
       const booking = await tx.booking.findUnique({ where: { id: row.id } });
-      if (!booking || booking.status !== "MATCHED" || !booking.assignmentExpiresAt || booking.assignmentExpiresAt > now) return false;
-      await offerNext(tx, booking, { name: "Offer expiry", role: "ADMIN" }, "Offer expired without rider acceptance; returned to available jobs");
+      const checkedAt = new Date();
+      if (!booking || booking.status !== "MATCHED" || !booking.assignmentExpiresAt || booking.assignmentExpiresAt > checkedAt || requestHasExpired(booking, checkedAt)) return false;
+      await offerNext(tx, booking, { name: "Offer expiry", role: "ADMIN" }, "Offer expired without rider acceptance; returned to available jobs", undefined, checkedAt);
       return true;
     }, { maxWait: 10000, timeout: 20000 });
     if (changed) expired++;

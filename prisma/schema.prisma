@@ -348,6 +348,8 @@ model Booking {
   pickedUpAt          DateTime?
   customerPickupConfirmedAt DateTime?
   customerDropoffConfirmedAt DateTime?
+  riderDropoffReportedAt      DateTime?
+  rideDropoffIssueReportedAt  DateTime?
   deliveredAt         DateTime?
   cancelledAt         DateTime?
   cancellationReason  String?
@@ -782,14 +784,15 @@ model DeliveryChallenge {
 
 // One latest native location per booking; history is sampled separately.
 model BookingLocation {
-  bookingId String   @id
-  riderId   String
-  lat       Float
-  lng       Float
-  speedKph  Float?
-  heading   Float?
-  createdAt DateTime @default(now())
-  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId  String    @id
+  riderId    String
+  lat        Float
+  lng        Float
+  speedKph   Float?
+  heading    Float?
+  createdAt  DateTime  @default(now())
+  capturedAt DateTime?
+  booking    Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 }
 
 // Shared, server-only VAPID identity. Only the public key is exposed to devices.

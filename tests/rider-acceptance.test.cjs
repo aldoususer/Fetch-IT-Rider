@@ -52,15 +52,15 @@ test('notification refusal prevents location acquisition and acceptance', async 
 });
 
 const roads = load('src/lib/road-routing.ts'), policy = load('src/lib/matching-policy.ts', { './road-routing': roads });
-function reservation({ online = true, subscription = true, approved = true, vehicle = 'SEDAN', active = 0, newer = false, phase = null } = {}) {
+function reservation({ online = true, subscription = true, approved = true, vehicle = 'SEDAN', active = 0, newer = false, phase = null, scheduledAt = null } = {}) {
   let presence = { isOnline: online, lat: 16, lng: 120, locationAt: new Date(Date.now() - (newer ? 0 : 60000)), locationAccuracy: 10, updatedAt: new Date() }, writes = 0; const sequence = [];
   const tx = { $queryRaw: async () => sequence.push('user lock'), autoDispatch: { findUnique: async () => phase ? { phase } : null },
     riderPresence: { updateMany: async ({ where, data }) => { assert.equal(sequence[0], 'user lock'); assert.equal(where.userId, 'r'); assert.equal(where.isOnline, true); if (presence.isOnline && data.locationAt >= presence.locationAt) { presence = { ...presence, ...data, updatedAt: new Date() }; writes++; } } },
     user: { findUnique: async () => ({ role: 'RIDER', isBanned: false, riderProfile: { vehicleClass: vehicle }, riderPresence: presence }) },
     customerPushSubscription: { findFirst: async ({ where }) => { assert.equal(where.deviceId, 'current-device'); return subscription ? { id: 'sub' } : null; } }, booking: { count: async () => active },
   };
-  const api = load('src/lib/dispatch.ts', { './matching-policy': policy, './job-expiry': { requestHasExpired: () => false }, './demo-payments': {}, './rider-eligibility': { riderCanTakeBooking: async () => approved }, './payment-policy': { isDemoPayment: () => false }, './booking-events': {}, './push-delivery': {}, './platform-policy': {} });
-  return { run: value => api.reserveAvailableRider(tx, 'r', { id: 'b', status: 'PENDING', vehicleClass: 'SEDAN', paymentMethod: 'CASH' }, new Date(), false, { deviceId: 'current-device', location: value }), get presence() { return presence; }, get writes() { return writes; } };
+  const api = load('src/lib/dispatch.ts', { './matching-policy': policy, './rider-occupancy': load('src/lib/rider-occupancy.ts'), './job-expiry': { requestHasExpired: () => false }, './demo-payments': {}, './rider-eligibility': { riderCanTakeBooking: async () => approved }, './payment-policy': { isDemoPayment: () => false }, './booking-events': {}, './push-delivery': {}, './platform-policy': {} });
+  return { run: value => api.reserveAvailableRider(tx, 'r', { id: 'b', status: 'PENDING', vehicleClass: 'SEDAN', paymentMethod: 'CASH', scheduledAt }, new Date(), false, { deviceId: 'current-device', location: value }), get presence() { return presence; }, get writes() { return writes; } };
 }
 test('acceptance location is checked under the rider lock and cannot replace a newer fix', async () => {
   const location = policy.onlineLocationInput(fix(2000)); const h = reservation(); await h.run(location); assert.equal(h.writes, 1); assert.equal(h.presence.locationAt.getTime(), location.locationAt.getTime());
@@ -73,4 +73,5 @@ test('combined acceptance retains online, device subscription, approval, vehicle
 test('combined acceptance still rejects open-list claims while dispatch is searching or offering', async () => {
   for (const phase of ['SEARCHING', 'OFFERED', 'DONE']) await assert.rejects(reservation({ phase }).run(policy.onlineLocationInput(fix())), /offered/);
   await reservation({ phase: 'OPEN' }).run(policy.onlineLocationInput(fix()));
+  await reservation({ phase: 'SEARCHING', scheduledAt: new Date(Date.now() - 1000) }).run(policy.onlineLocationInput(fix()));
 });

@@ -96,6 +96,7 @@ import { CancellationNotice } from './cancellation-notice';
 import type { CancellationSummary } from '@/lib/rider-cancellation-policy';
 import { riderNextAction } from '@/lib/rider-next-action';
 import { CustomerConfirmationChecklist } from './customer-confirmation-checklist';
+import { RIDE_DROPOFF_GRACE_MS } from '@/lib/rider-occupancy';
 import "./rider-workspace.css";
 
 interface RiderStats {
@@ -209,7 +210,9 @@ export function RiderDashboard() {
         if (user?.id && latest.length < 100) void retainActiveProofDrafts(user.id, latest).catch(() => {});
         // The active feed is fresher than a slower stats request. Update the
         // count with the cards and discard any older stats response in flight.
-        const count = latest.filter(job => ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(job.status)).length;
+        const checkedAt = Date.parse(data.checkedAt ?? '') || Date.now();
+        const count = latest.filter((job: Job) => ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(job.status) &&
+          (!job.riderDropoffReportedAt || Date.parse(job.riderDropoffReportedAt) + RIDE_DROPOFF_GRACE_MS > checkedAt)).length;
         if (statsActiveCount.current !== null && statsActiveCount.current !== count) {
           statsRequest.current++; statsActiveCount.current = count;
           setStats(previous => previous ? { ...previous, activeJobs: count } : previous);
@@ -586,11 +589,11 @@ function compactAddress(value: string) { return value.split(',').map(part=>part.
 function JobCard({ job, isAvailable, upcoming = false, onOpen }: { job: Job; isAvailable: boolean; upcoming?: boolean; onOpen: () => void }) {
   const timing=jobTiming(job), stop=nextJobStop(job);
   return <Card className="rd-job-card">
-    <CardHeader><div className="rd-card-meta"><JobTypeBadge type={job.type}/><span>{job.refCode}</span>{upcoming?<Badge variant="outline">Scheduled</Badge>:job.status==='PENDING'?<Badge variant="outline">New request</Badge>:<StatusBadge status={job.status} type={job.type==='RIDE'?'RIDE':'DELIVERY'} label={job.type==='RIDE' && job.status==='PICKED_UP' ? 'Pickup code verified' : undefined}/>}</div></CardHeader>
+    <CardHeader><div className="rd-card-meta"><JobTypeBadge type={job.type}/><span>{job.refCode}</span>{upcoming?<Badge variant="outline">Scheduled</Badge>:job.status==='PENDING'?<Badge variant="outline">New request</Badge>:<StatusBadge status={job.status} type={job.type==='RIDE'?'RIDE':'DELIVERY'} label={job.type === 'RIDE' && job.status === 'IN_TRANSIT' && job.riderDropoffReportedAt ? 'Drop-off reported' : job.type==='RIDE' && job.status==='PICKED_UP' ? 'Pickup code verified' : undefined}/>}</div></CardHeader>
     <CardContent><dl className="rd-itinerary rd-card-route"><div><dt>Pickup</dt><dd>{compactAddress(job.pickupLabel)}</dd></div><div><dt>Drop-off</dt><dd>{compactAddress(job.dropoffLabel)}</dd></div></dl>
       <div className="rd-card-facts rd-card-fare"><strong>₱{riderShare(job).toFixed(2)}<small>Your transport fare</small></strong>{job.paymentMethod === 'CASH' && <span className="rd-collect-total">{job.paymentStatus === 'PAID' ? 'Cash confirmed' : 'Cash total'}: ₱{job.totalFare.toFixed(2)}</span>}<span>{job.distanceKm} km</span><span>{job.type==='RIDE'?(job.passengers??1)+((job.passengers??1)===1?' passenger':' passengers'):job.cargoWeightKg+' kg'}</span></div>
       {isAvailable && <p className={'rd-timing is-'+timing.kind}><Clock size={15} aria-hidden="true"/>{timing.label}</p>}
-      {!isAvailable && <p className="rd-help">Next: {stop.label.toLowerCase()}</p>}
+      {!isAvailable && <p className="rd-help">{job.riderDropoffReportedAt ? job.customerDropoffConfirmedAt ? 'Passenger confirmed drop-off' : 'Waiting for passenger confirmation' : `Next: ${stop.label.toLowerCase()}`}</p>}
       <Button variant={upcoming?'outline':'default'} className="w-full" onClick={onOpen}><Navigation size={17} aria-hidden="true"/>{isAvailable?'View route & details':'Continue job'}</Button>
     </CardContent>
   </Card>;
@@ -811,13 +814,13 @@ function ActiveJobFlow({
 
   return (
     <div className="rd-flow" ref={flow}><div ref={jobBody} className="rd-flow-body rd-current-job">
-      <section className="rd-current-stop" aria-label="Next stop">
+      {!job.riderDropoffReportedAt && <section className="rd-current-stop" aria-label="Next stop">
         <p>Next stop · {stop.label}</p>
         <strong>{stop.address}</strong>
         {directionsUrl && <a ref={stopLink} className="rd-stop-link" target="_blank" rel="noopener noreferrer" href={directionsUrl}>Navigate to {stop.label.toLowerCase()} in Google Maps <span aria-hidden="true">↗</span></a>}
-      </section>
+      </section>}
       {isRide && status === "ACCEPTED" && <PickupProgress key={`pickup:${job.id}`} bookingId={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} />}
-      <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={pickup} dropoff={dropoff} navigation={stop.navigation}/>
+      {!job.riderDropoffReportedAt && <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={pickup} dropoff={dropoff} navigation={stop.navigation}/>}
       {/* Action buttons */}
       {isRide && status === "ACCEPTED" && (
         <Card className="border-primary/30 bg-primary/5 py-0">
@@ -831,7 +834,7 @@ function ActiveJobFlow({
         </Card>
       )}
 
-      {isRide && ['PICKED_UP', 'IN_TRANSIT'].includes(status) && <div ref={confirmationSection} tabIndex={-1}><CustomerConfirmationChecklist job={job}/></div>}
+      {isRide && ['PICKED_UP', 'IN_TRANSIT'].includes(status) && <div ref={confirmationSection} tabIndex={-1}><CustomerConfirmationChecklist job={job} disabled={!ready || updating} onUpdated={onUpdated}/></div>}
       <div ref={paymentSection} tabIndex={-1} className="rd-payment-panel">
         {status === 'IN_TRANSIT' ? <><h3 className="font-semibold">Payment</h3><PaymentCard embedded key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady} onPaymentAction={setPaymentAction}/></>
           : <details><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard embedded key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady}/></details>}

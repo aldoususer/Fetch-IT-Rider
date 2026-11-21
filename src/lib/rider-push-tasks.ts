@@ -3,10 +3,11 @@ import { createHash } from 'node:crypto';
 import type { Booking, Prisma, PrismaClient } from '@prisma/client';
 import { approvalCoversRoute, liveApprovalWhere } from './rider-eligibility';
 import { requestHasExpired } from './job-expiry';
+import { riderOccupancyWhere } from './rider-occupancy';
 
 type Kind = 'NEW_REQUEST' | 'ASSIGNED' | 'CANCELLED';
 type Task = { id: string; bookingId: string; riderId: string | null; kind: Kind; createdAt: Date; attempts: number; cursor: string | null };
-const active = ['MATCHED', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'] as const;
+
 export async function queueRiderPushTask(tx: Prisma.TransactionClient, bookingId: string, kind: Kind, source: string, riderId: string | null = null) {
   const id = createHash('sha256').update(JSON.stringify([kind, source])).digest('hex');
   // One small durable insert, in the booking transaction; recipient fanout and
@@ -36,7 +37,7 @@ function recipientWhere(booking: Booking, kind: Kind, now = new Date()): Prisma.
   return { role: 'RIDER', isBanned: false, ...(kind === 'CANCELLED' ? { id: booking.riderId! } : {
     riderProfile: { vehicleClass: booking.vehicleClass }, riderPresence: { ...freshPresenceWhere(now), lat: { gte: -90, lte: 90 }, lng: { gte: -180, lte: 180 } },
     riderApprovals: { some: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } },
-    ...(kind === 'NEW_REQUEST' ? { bookingsAsRider: { none: { id: { not: booking.id }, status: { in: [...active] } } } } : { id: booking.riderId! }),
+    ...(kind === 'NEW_REQUEST' ? { bookingsAsRider: { none: { id: { not: booking.id }, ...riderOccupancyWhere(now) } } } : { id: booking.riderId! }),
   }) };
 }
 function approvalSelection(booking: Booking, now = new Date()) {

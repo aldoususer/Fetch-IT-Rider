@@ -7,6 +7,7 @@ import { getSession } from '@/lib/session';
 import { requireRider, RiderError, riderErrorResponse } from '@/lib/rider-access';
 import { riderCanTakeBooking, approvalCoversRoute, liveApprovalWhere } from '@/lib/rider-eligibility';
 import { requestHasExpired } from '@/lib/job-expiry';
+import { scheduledRequestIsDue } from '@/lib/matching-policy';
 import { limitRequests, withRequestLog } from '@/lib/request-guard';
 import { roadRoute } from '@/lib/road-routing-service';
 import { RoutingError } from '@/lib/road-routing';
@@ -27,14 +28,14 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     if (booking.status === 'MATCHED' && booking.assignmentExpiresAt && booking.assignmentExpiresAt <= new Date()) throw new RiderError('This offer expired. Refresh available jobs.', 409);
     if (booking.status === 'PENDING') {
       const dispatch = await db.autoDispatch.findUnique({ where: { bookingId: id }, select: { phase: true } });
-      if (dispatch && dispatch.phase !== 'OPEN') throw new RiderError('This request is being offered to a nearby rider. Choose an open request.', 403);
+      if (dispatch && dispatch.phase !== 'OPEN' && !(dispatch.phase === 'SEARCHING' && scheduledRequestIsDue(booking.scheduledAt, new Date()))) throw new RiderError('This request is being offered to a nearby rider. Choose an open request.', 403);
     }
     if (booking.riderId !== session.uid) {
       if (booking.riderId || !preview || requestHasExpired(booking, new Date()) || booking.excludedRiderIds.includes(session.uid)) throw new RiderError('This route is unavailable to you.', 403);
       const rider = await db.user.findUnique({ where: { id: session.uid }, include: { riderProfile: true, riderPresence: true } });
       if (!rider?.riderPresence?.isOnline || rider.riderProfile?.vehicleClass !== booking.vehicleClass || !await riderCanTakeBooking(db, session.uid, booking)) throw new RiderError('This route is unavailable to you.', 403);
     }
-    if (!preview && !['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(booking.status)) throw new RiderError('Navigation is available only for current jobs.', 409);
+    if (!preview && (booking.riderDropoffReportedAt || !['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(booking.status))) throw new RiderError('Navigation is available only for current jobs.', 409);
     await limitRequests('rider:road-route', session.uid, 15, 60000);
     let start = { lat: booking.pickupLat, lng: booking.pickupLng };
     let finish = { lat: booking.dropoffLat, lng: booking.dropoffLng };
@@ -53,8 +54,8 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     // Check assignment/status again after the external call. A cancellation,
     // reassignment or stage change must not return obsolete navigation.
-    const current = await db.booking.findUnique({ where: { id }, select: { status: true, riderId: true } });
-    if (!current || current.status !== booking.status || current.riderId !== booking.riderId || (preview && requestHasExpired(booking, new Date()))) throw new RiderError('Booking changed. Refresh the job before loading directions.', 409);
+    const current = await db.booking.findUnique({ where: { id }, select: { status: true, riderId: true, riderDropoffReportedAt: true } });
+    if (!current || current.riderDropoffReportedAt || current.status !== booking.status || current.riderId !== booking.riderId || (preview && requestHasExpired(booking, new Date()))) throw new RiderError('Booking changed. Refresh the job before loading directions.', 409);
     return NextResponse.json({ route, destination: preview ? 'preview' : booking.status === 'ACCEPTED' ? 'pickup' : 'dropoff', approximate: true });
   } catch (error) {
     if (error instanceof RoutingError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });

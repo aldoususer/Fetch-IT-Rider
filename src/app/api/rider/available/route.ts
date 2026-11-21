@@ -1,4 +1,4 @@
-import { availableRequestWhere, dispatchSelect, openDispatchWhere, usableMatchingLocation } from '@/lib/matching-policy';
+import { availableRequestWhere, claimableRequestWhere, dispatchSelect, usableMatchingLocation } from '@/lib/matching-policy';
 import { staleRequestWhere } from "@/lib/job-expiry";
 import { liveApprovalWhere, approvalCoversRoute } from "@/lib/rider-eligibility";
 import { expireRiderOffers, dispatchPaymentWhere } from "@/lib/dispatch";
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
   const due = { OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }] };
   const where: Prisma.BookingWhereInput = {
     vehicleClass: rider.riderProfile.vehicleClass,
-    AND: [due, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }, includeMatched ? availableRequestWhere(session.uid, now) : { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, AND: [openDispatchWhere] }],
+    AND: [due, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }, includeMatched ? availableRequestWhere(session.uid, now) : { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: session.uid } }, AND: [claimableRequestWhere(now)] }],
   };
 
   const include = { dispatch: { select: dispatchSelect },
@@ -59,12 +59,38 @@ export async function GET(req: NextRequest) {
   } as const;
   // Show scheduled requests now without making them claimable before pickup.
   // Separate queries keep future bookings from displacing jobs available now.
-  const [jobs, upcoming] = await Promise.all([
-    db.booking.findMany({ where: { ...where, type: { in: services } }, orderBy: { createdAt: "asc" }, take: 50, include }),
-    db.booking.findMany({ where: { ...where, type: { in: services }, AND: [{ scheduledAt: { gt: now } }, dispatchPaymentWhere, { NOT: staleRequestWhere(now) }, { status: 'PENDING', riderId: null, NOT: { excludedRiderIds: { has: session.uid } } }] }, orderBy: { scheduledAt: "asc" }, take: 50, include }),
+  async function eligibleJobs(where: Prisma.BookingWhereInput, order: "createdAt" | "scheduledAt") {
+    const limit = 50;
+    const eligible: ReturnType<typeof riderJobView>[] = [];
+    let cursor: string | undefined;
+    // The tricycle operating zone is evaluated in memory. Page past rejected
+    // routes before applying the rider-facing limit.
+    for (;;) {
+      const page = await db.booking.findMany({
+        where: { ...where, type: { in: services } },
+        orderBy: [{ [order]: "asc" }, { id: "asc" }],
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        take: limit,
+        include,
+      });
+      for (const job of page) {
+        if (approvals.some(approval => approval.service === job.type && approvalCoversRoute(approval, job))) {
+          eligible.push(riderJobView(bookingView(job)));
+          if (eligible.length === limit) return eligible;
+        }
+      }
+      if (page.length < limit) return eligible;
+      cursor = page[page.length - 1].id;
+    }
+  }
+
+  const [jobs, upcomingJobs] = await Promise.all([
+    usableMatchingLocation(rider.riderPresence, now.getTime()) ? eligibleJobs(where, "createdAt") : [],
+    eligibleJobs({ vehicleClass: rider.riderProfile.vehicleClass, status: "PENDING", riderId: null,
+      scheduledAt: { gt: now }, NOT: { excludedRiderIds: { has: session.uid } },
+      AND: [dispatchPaymentWhere, { NOT: staleRequestWhere(now) }],
+    }, "scheduledAt"),
   ]);
 
-  const visible = (rows: typeof jobs) => rows.filter(job => (job.scheduledAt && job.scheduledAt > now || usableMatchingLocation(rider.riderPresence, now.getTime())) && approvals.some(a => a.service === job.type && approvalCoversRoute(a, job))).map(job => riderJobView(bookingView(job)));
-
-  return NextResponse.json({ jobs: visible(jobs), upcomingJobs: visible(upcoming), checkedAt: now.toISOString() }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ jobs, upcomingJobs, checkedAt: now.toISOString() }, { headers: { "Cache-Control": "private, no-store" } });
 }

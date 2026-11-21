@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
   const bookings = await db.booking.findMany({
     where: { ...where, ...statusFilter, ...dateWhere },
-    orderBy: { createdAt: "desc" },
+    orderBy: filter === "active" ? [{ riderDropoffReportedAt: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }] : { createdAt: "desc" },
     include: { dispatch: { select: dispatchSelect },
       customer: { select: { id: true, name: true, phone: true } },
       rider: { select: riderSelect },
@@ -58,5 +58,5 @@ export async function GET(req: NextRequest) {
     return riderJobView({ ...bookingView(b), ticket: snapshot ? encodeTicket(snapshot) : null });
   });
 
-  return NextResponse.json({ bookings: withTickets });
+  return NextResponse.json({ checkedAt: new Date().toISOString(), bookings: withTickets });
 }

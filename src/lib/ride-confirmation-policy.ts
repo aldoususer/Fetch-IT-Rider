@@ -2,6 +2,8 @@ export type RideConfirmationAction = "PICKUP" | "DROPOFF";
 export type RideConfirmations = {
   customerPickupConfirmedAt?: unknown;
   customerDropoffConfirmedAt?: unknown;
+  riderDropoffReportedAt?: unknown;
+  rideDropoffIssueReportedAt?: unknown;
 };
 
 /** Customer acknowledgements are separate from pickup-code and payment checks. */

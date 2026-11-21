@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
-function load(file, deps = {}, globals = {}) { deps={'./rider-cancellation-policy':require('./helpers/cancellation-policy.cjs'),'./rider-cancellation':{},...deps}; const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, Date, Set, Object, Number, Error, AbortController, require(name) { if (!(name in deps)) throw Error('Unexpected import ' + name); return deps[name]; }, ...globals }); return exports; }
+function load(file, deps = {}, globals = {}) { deps={'./rider-cancellation-policy':require('./helpers/cancellation-policy.cjs'),'./rider-cancellation':{},'./rider-occupancy':{},...deps}; const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, Date, Set, Object, Number, Error, AbortController, require(name) { if (!(name in deps)) throw Error('Unexpected import ' + name); return deps[name]; }, ...globals }); return exports; }
 const expiry = load('src/lib/job-expiry.ts'), alerts = load('src/lib/rider-alerts.ts');
 const now = new Date('2026-10-30T04:00:00Z');
 const request = extra => ({ id: 'booking', customerId: 'customer', riderId: null, type: 'RIDE', status: 'PENDING', createdAt: new Date(now - 600000), scheduledAt: null, paymentMethod: 'CASH', paymentStatus: 'UNPAID', ...extra });

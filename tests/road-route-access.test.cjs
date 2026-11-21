@@ -14,6 +14,7 @@ function handler(booking,current=booking){let providerCalls=0,reads=0;const impo
  '@/lib/rider-access':{requireRider:async session=>session,RiderError,riderErrorResponse:error=>Response.json({error:error.message},{status:error.status||500})},
  '@/lib/rider-eligibility':{riderCanTakeBooking:async()=>true,approvalCoversRoute:()=>true,liveApprovalWhere:()=>({})},
  '@/lib/job-expiry':expiry,
+ '@/lib/matching-policy':compile('src/lib/matching-policy.ts', {'./road-routing':{}}),
  '@/lib/request-guard':{limitRequests:async()=>{},withRequestLog:(_,fn)=>fn},
  '@/lib/road-routing-service':{roadRoute:async()=>{providerCalls++;return{source:'openrouteservice',coordinates:[]};}},
  '@/lib/road-routing':{RoutingError},

@@ -2,12 +2,13 @@ import { planningTravelSeconds } from "./eta-policy";
 import { distanceMeters } from './road-routing';
 import { randomUUID } from 'node:crypto';
 import type { Booking, Prisma, PrismaClient } from '@prisma/client';
-import { activeRiderStatuses, freshPresenceWhere, shortlistRiders, rankRiders, usableMatchingLocation, type RankedRider } from './matching-policy';
+import { freshPresenceWhere, shortlistRiders, rankRiders, usableMatchingLocation, type RankedRider } from './matching-policy';
 import { liveApprovalWhere, approvalCoversRoute } from './rider-eligibility';
 import { defaultPlatformSettings, validatePlatformSettings } from './platform-policy';
 import { requestHasExpired } from './job-expiry';
 import { roadRoute, routingEnabled } from './road-routing-service';
-import { reserveAvailableRider } from './dispatch';
+import { reserveAvailableRider, RiderReservationBusyError } from './dispatch';
+import { riderOccupancyWhere } from './rider-occupancy';
 import { recordBookingEvent } from './booking-events';
 import { queueRiderPushTask } from './rider-push-tasks';
 
@@ -33,7 +34,7 @@ async function chooseRiders(db: PrismaClient, booking: Booking, radiusKm: number
   const latitudeRange = radiusKm / 110, longitudeRange = latitudeRange / Math.max(.01, Math.cos(booking.pickupLat * Math.PI / 180));
   const riders = await db.user.findMany({ where: { role: 'RIDER', isBanned: false, id: { notIn: booking.excludedRiderIds },
     riderProfile: { vehicleClass: booking.vehicleClass }, riderPresence: { ...freshPresenceWhere(now), lat: { gte: booking.pickupLat - latitudeRange, lte: booking.pickupLat + latitudeRange }, lng: { gte: booking.pickupLng - longitudeRange, lte: booking.pickupLng + longitudeRange } },
-    bookingsAsRider: { none: { status: { in: [...activeRiderStatuses] } } },
+    bookingsAsRider: { none: riderOccupancyWhere(now) },
     riderApprovals: { some: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } },
     pushSubscriptions: { some: {} },
   }, select: { id: true, authInvalidBefore: true, pushSubscriptions: { select: { updatedAt: true } }, riderPresence: true, riderApprovals: { where: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } } } });
@@ -93,8 +94,15 @@ export async function advanceAutomaticMatching(db: PrismaClient, bookingId: stri
     await tx.$queryRaw`SELECT "id" FROM "Booking" WHERE "id" = ${bookingId} FOR UPDATE`;
     const booking = await tx.booking.findUnique({ where: { id: bookingId } }), dispatch = await tx.autoDispatch.findUnique({ where: { bookingId } }), now = new Date();
     if (!booking || booking.status !== 'PENDING' || booking.riderId || !dispatch || dispatch.workerToken !== token || !dispatch.workerUntil || dispatch.workerUntil <= now || dispatch.phase !== 'SEARCHING' || requestHasExpired(booking, now)) return;
+    let retryBusyRiders = false;
     for (const candidate of candidates) {
-      try { await reserveAvailableRider(tx, candidate.id, booking, now, true); } catch (error) { if ((error as { status?: number }).status) continue; throw error; }
+      try {
+        await reserveAvailableRider(tx, candidate.id, booking, now, true, undefined, true);
+      } catch (error) {
+        if (error instanceof RiderReservationBusyError) retryBusyRiders = true;
+        else if (!(error as { status?: number }).status) throw error;
+        continue;
+      }
       const presence = await tx.riderPresence.findUnique({ where: { userId: candidate.id } });
       // A rider may move while ORS was loading. Re-rank on a later recovery
       // instead of offering a job using an obsolete candidate snapshot.
@@ -105,6 +113,10 @@ export async function advanceAutomaticMatching(db: PrismaClient, bookingId: stri
       const ranking = candidates.every(rider => rider.pickupEtaSeconds !== null) ? 'ROAD_ETA' : 'DISTANCE';
       await tx.autoDispatch.update({ where: { bookingId }, data: { phase: 'OFFERED', attempts: { increment: 1 }, nextAt: until, pickupEtaSeconds: ranking === 'ROAD_ETA' ? candidate.pickupEtaSeconds : null, ranking, lastReason: ranking === 'ROAD_ETA' ? 'Ranked by pickup road ETA, location freshness and waiting time.' : 'Ranked by nearby distance, location freshness and waiting time; road ETA unavailable.' } });
       await recordBookingEvent(tx, bookingId, actor, { action: dispatch.attempts ? 'REASSIGNED' : 'ASSIGNED', fromStatus: 'PENDING', toStatus: 'MATCHED', riderId: candidate.id, reason: 'Exclusive nearby-rider offer. Rider acceptance is still required.' });
+      return;
+    }
+    if (retryBusyRiders) {
+      await tx.autoDispatch.update({ where: { bookingId }, data: { nextAt: new Date(now.getTime() + 3000) } });
       return;
     }
     await openRequest(tx, booking, 'No nearby rider with recent location and background alerts. Open requests remain available.');

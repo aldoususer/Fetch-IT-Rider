@@ -6,6 +6,7 @@ import { dispatchPaymentWhere } from "@/lib/dispatch";
 // Aggregated stats for the rider dashboard header.
 
 import { NextResponse } from "next/server";
+import { riderWorkInProgressWhere } from "@/lib/rider-occupancy";
 import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
 import { offersPaused, pauseMessage } from '@/lib/rider-cancellation-policy';
@@ -24,7 +25,7 @@ export async function GET() {
   }
 
   const active = await db.booking.count({
-    where: { riderId: session.uid, status: { in: ["ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } },
+    where: { riderId: session.uid, ...riderWorkInProgressWhere() },
   });
   const delivered = await db.booking.count({
     where: { riderId: session.uid, status: "DELIVERED" },
@@ -53,7 +54,7 @@ export async function GET() {
   return NextResponse.json({
     activeJobs: active,
     offeredJobs: await db.booking.count({ where: { riderId: session.uid, status: 'MATCHED', OR: [{ assignmentExpiresAt: null }, { assignmentExpiresAt: { gt: new Date() } }] } }),
-    trackingRequired: !!await db.booking.findFirst({ where: { riderId: session.uid, status: { in: ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'] } }, select: { id: true } }),
+    trackingRequired: !!await db.booking.findFirst({ where: { riderId: session.uid, status: { in: ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'] }, riderDropoffReportedAt: null }, select: { id: true } }),
     matchingReady,
     matchingPauseReason: cancellationPaused ? pauseMessage(rider!.riderPresence!.offerPausedUntil!) : !usableMatchingLocation(rider?.riderPresence) ? 'New offers paused. Open Rider and refresh your location.' : !matchingReady ? 'New offers paused. Enable notifications on this device.' : null,
     cancellation: await riderCancellationSummary(db, session.uid, new Date(), rider?.riderPresence ?? null),

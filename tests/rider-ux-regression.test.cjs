@@ -73,7 +73,7 @@ test('accept and decline cannot run together even before React rerenders', async
 function dispatchHarness(record) {
   let writes = 0, locks = 0;
   const api = load('src/lib/dispatch.ts', {
-    './matching-policy': {}, './job-expiry': { requestHasExpired: () => false }, './demo-payments': {}, './rider-eligibility': {},
+    './matching-policy': {}, './rider-occupancy': {}, './job-expiry': { requestHasExpired: () => false }, './demo-payments': {}, './rider-eligibility': {},
     './payment-policy': { isDemoPayment: () => false }, './booking-events': { recordBookingEvent: async () => {} }, './push-delivery': {},
     './platform-policy': { defaultPlatformSettings: () => ({ maxReassignments: 10 }), validatePlatformSettings: value => value },
   });

@@ -18,18 +18,32 @@ function matches(row, where) {
     if(key==='AND') return value.every(v=>matches(row,v));
     if(key==='OR') return value.some(v=>matches(row,v));
     if(key==='NOT') return !matches(row,value);
-    if(value && typeof value==='object' && !(value instanceof Date)) return Object.entries(value).every(([op,v])=>op==='in'?v.includes(row[key]):op==='lte'?row[key]!==null&&row[key]<=v:op==='gt'?row[key]!==null&&row[key]>v:op==='has'?row[key].includes(v):false);
+    if (value && typeof value === 'object' && !(value instanceof Date)) {
+      if (key === 'dispatch') return !!row.dispatch && matches(row.dispatch, value);
+      return Object.entries(value).every(([op,v]) => op === 'in' ? v.includes(row[key])
+        : op === 'lte' ? row[key] != null && row[key] <= v
+        : op === 'gt' ? row[key] != null && row[key] > v
+        : op === 'has' ? row[key].includes(v)
+        : op === 'not' ? row[key] !== v : false);
+    }
     return row[key]===value;
   });
 }
 const zone = [[120.18,15.95],[120.40,15.95],[120.40,16.10],[120.18,16.10],[120.18,15.95]];
-function booking(id, scheduledAt=null, extra={}) {return {id,refCode:id,status:'PENDING',riderId:null,vehicleClass:'TRICYCLE',type:'DELIVERY',paymentMethod:'CASH',paymentStatus:'UNPAID',excludedRiderIds:[],pickupLat:16.02,pickupLng:120.23,dropoffLat:16.03,dropoffLng:120.27,customerId:'private-customer',customer:{name:'Private name',phone:'private-number'},scheduledAt:scheduledAt?new Date(scheduledAt):null,...extra};}
+function booking(id, scheduledAt=null, extra={}) {return {id,refCode:id,status:'PENDING',riderId:null,vehicleClass:'TRICYCLE',type:'DELIVERY',dispatch:null,createdAt:now,pickedUpAt:null,customerPaidAt:null,riderReceivedAt:null,paymentMethod:'CASH',paymentStatus:'UNPAID',excludedRiderIds:[],pickupLat:16.02,pickupLng:120.23,dropoffLat:16.03,dropoffLng:120.27,customerId:'private-customer',customer:{name:'Private name',phone:'private-number'},scheduledAt:scheduledAt?new Date(scheduledAt):null,...extra};}
 function harness({online=true,services=['DELIVERY','RIDE'],rows=[],authorized=true,banned=false,clock=now}={}) {
   const queries=[];let writes=0;
   const approvals=services.map(service=>({service,source:'OWNER_PERSONA',operatingZone:zone}));
-  const db={user:{findUnique:async()=>({isBanned:banned,riderProfile:{vehicleClass:'TRICYCLE'},riderPresence:{isOnline:online}})},riderPresence:{updateMany:async()=>{writes++;}},riderServiceApproval:{findMany:async()=>approvals},booking:{findMany:async query=>{queries.push(query);return rows.filter(row=>matches(row,query.where));}}};
+  const db={user:{findUnique:async()=>({isBanned:banned,riderProfile:{vehicleClass:'TRICYCLE'},riderPresence:{isOnline:online}})},riderPresence:{updateMany:async()=>{writes++;}},riderServiceApproval:{findMany:async()=>approvals},booking:{findMany:async query=>{
+    queries.push(query);
+    const result = rows.filter(row => matches(row,query.where));
+    const start = query.cursor ? result.findIndex(row => row.id === query.cursor.id) + query.skip : 0;
+    return result.slice(start, start + query.take);
+  }}};
   class Clock extends Date {constructor(...args){super(...(args.length?args:[clock]));}}
   const route=load('src/app/api/rider/available/route.ts',{
+    '@/lib/matching-policy': { ...load('src/lib/matching-policy.ts', {'./road-routing': {}}), usableMatchingLocation: () => true },
+    '@/lib/rider-cancellation-policy': { offersPaused: () => false },
     '@/lib/job-expiry':load('src/lib/job-expiry.ts',{}),'@/lib/rider-eligibility':eligibility,'@/lib/dispatch':{expireRiderOffers:async()=>{},dispatchPaymentWhere:{OR:[{paymentMethod:'CASH'},{paymentMethod:{in:['DEMO_GCASH','DEMO_MAYA','DEMO_BANK']},paymentStatus:'PAID'}]}},
     '@/lib/db-data':views,'next/server':{NextResponse:{json:(data,init={})=>({data,status:init.status??200,headers:init.headers})}},'@/lib/db':{db},'@/lib/rider-access':{getRiderSession:async()=>authorized?{uid:'persona',role:'RIDER'}:null},'@/lib/job-privacy':privacy,
   },{Date:Clock});
@@ -50,8 +64,15 @@ test('future requests still enforce service approvals and tricycle route boundar
   assert.deepEqual(Array.from((await zoned.run()).data.upcomingJobs,j=>j.id),['inside']);
 });
 test('a scheduled booking moves to available exactly at pickup time without duplicate listing',async()=>{
-  const h=harness({clock:new Date('2026-10-29T06:21:00Z'),rows:[booking('today','2026-10-29T06:21:00Z')]});
+  const h=harness({clock:new Date('2026-10-29T06:21:00Z'),rows:[booking('today','2026-10-29T06:21:00Z',{dispatch:{phase:'SEARCHING'}})]});
   const {data}=await h.run();assert.deepEqual(Array.from(data.jobs,j=>j.id),['today']);assert.equal(data.upcomingJobs.length,0);
+});
+test('route-ineligible jobs do not hide an eligible job on the next database page', async () => {
+  const outside = Array.from({ length: 50 }, (_, i) => booking('outside-' + i, null, {type:'RIDE', dropoffLng:121}));
+  const h = harness({ rows: [...outside, booking('eligible', null, {type:'RIDE'})] });
+  const {data} = await h.run();
+  assert.deepEqual(Array.from(data.jobs, job => job.id), ['eligible']);
+  assert(h.queries.some(query => query.cursor?.id === 'outside-49'));
 });
 test('offline personas receive empty lists and no presence write or booking query',async()=>{
   const h=harness({online:false,rows:[booking('future','2026-10-29T21:00:00Z')]});const {data}=await h.run();assert.equal(data.jobs.length,0);assert.equal(data.upcomingJobs.length,0);assert.equal(h.queries.length,0);assert.equal(h.writes,0);
