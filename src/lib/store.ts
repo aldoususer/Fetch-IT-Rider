@@ -60,6 +60,7 @@ function isAllowedRole(role: AuthUser["role"] | undefined): boolean {
 interface AppState {
   user: AuthUser | null;
   bootstrapped: boolean;
+  startup: "idle" | "checking" | "unavailable";
   // Top-level navigation; dashboards handle their own sub-views internally.
   view: AppView;
   // Login form prefills role so the UI can show a tailored form.
@@ -76,6 +77,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set, get) => ({
   user: null,
   bootstrapped: false,
+  startup: "idle",
   view: "landing",
   pendingRole: null,
   setView: (v) => set({ view: v }),
@@ -87,22 +89,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       user: isAllowedRole(u?.role) ? u : null,
       view: isAllowedRole(u?.role) ? "rider-dashboard" : "landing",
+      bootstrapped: true,
+      startup: "idle",
     });
   },
   bootstrap: async () => {
+    if (get().bootstrapped || get().startup === "checking") return;
     const epoch = sessionEpoch;
+    set({ startup: "checking" });
     try {
+      const signal = AbortSignal.timeout(8000);
       if (hasPendingLogout()) {
-        const response = await fetch("/api/auth/logout", { method: "POST" });
+        const response = await fetch("/api/auth/logout", { method: "POST", signal });
         if (!response.ok) throw new Error("Sign-out is waiting for a connection.");
         if (epoch !== sessionEpoch) return;
         setPendingLogout(false);
       }
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      const res = await fetch("/api/auth/me", { cache: "no-store", signal });
       if (epoch !== sessionEpoch) return;
       if (!res.ok) {
-        if (res.status === 401 || res.status === 403) setProofDraftOwner(null);
-        set({ user: null, view: guestView(get().view), bootstrapped: true });
+        if (res.status !== 401 && res.status !== 403) throw new Error("Session check unavailable");
+        setProofDraftOwner(null);
+        set({ user: null, view: guestView(get().view), bootstrapped: true, startup: "idle" });
         return;
       }
       const data = (await res.json()) as { user: AuthUser | null };
@@ -113,9 +121,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         user: allowed ? data.user : null,
         view: allowed ? "rider-dashboard" : guestView(get().view),
         bootstrapped: true,
+        startup: "idle",
       });
     } catch {
-      if (epoch === sessionEpoch) set({ bootstrapped: true });
+      if (epoch === sessionEpoch) set({ startup: "unavailable" });
     }
   },
   logout: async () => {
@@ -124,7 +133,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     setProofDraftOwner(null);
     void setRiderPushAccount(null).catch(() => {});
     setPendingLogout(true);
-    set({ user: null, view: "landing", pendingRole: null });
+    set({ user: null, view: "landing", pendingRole: null, bootstrapped: true, startup: "idle" });
     try {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (response.ok && epoch === sessionEpoch) setPendingLogout(false);

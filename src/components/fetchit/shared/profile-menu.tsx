@@ -37,7 +37,8 @@ export function ProfileMenu({
   onLogout: () => void;
   onViewProfile?: () => void;
 }) {
-  const { canInstall, install } = useInstallPrompt();
+  const { canInstall, install, standalone } = useInstallPrompt();
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const initial = name?.[0]?.toUpperCase() ?? "?";
@@ -71,8 +72,11 @@ export function ProfileMenu({
           <DropdownMenuItem className="min-h-12" onClick={() => setSettingsOpen(true)}>
             <Settings className="h-4 w-4" /> Account details
           </DropdownMenuItem>
-          {canInstall && (
-            <DropdownMenuItem className="min-h-12" onClick={install}>
+          {!standalone && (
+            <DropdownMenuItem className="min-h-12" onSelect={() => {
+              if (canInstall) void install().catch(() => setInstallHelpOpen(true));
+              else setInstallHelpOpen(true);
+            }}>
               <Download className="h-4 w-4" /> Install app
             </DropdownMenuItem>
           )}
@@ -82,6 +86,20 @@ export function ProfileMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <Dialog open={installHelpOpen} onOpenChange={setInstallHelpOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="pr-10 text-left">
+            <DialogTitle>Install Fetch-It Rider</DialogTitle>
+            <DialogDescription>Add Rider to your Home Screen for quick access to jobs.</DialogDescription>
+          </DialogHeader>
+          <dl className="space-y-4 text-sm leading-relaxed">
+            <div><dt className="font-semibold">iPhone or iPad</dt><dd>Open Rider in Safari. Tap Share, then Add to Home Screen.</dd></div>
+            <div><dt className="font-semibold">Android</dt><dd>Open the browser menu and choose Install app or Add to Home screen.</dd></div>
+            <div><dt className="font-semibold">Desktop</dt><dd>Look for Install in the address bar or browser menu.</dd></div>
+          </dl>
+        </DialogContent>
+      </Dialog>
 
       {/* Settings */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>

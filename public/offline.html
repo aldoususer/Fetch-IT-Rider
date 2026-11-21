@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Fetch-It Rider</title>
+  <style>
+    html { color-scheme: light; background: #fff; color: #173c32; font: 16px/1.5 system-ui, sans-serif; }
+    body { box-sizing: border-box; min-height: 100dvh; margin: 0; padding: 24px; display: grid; place-items: center; }
+    main { max-width: 24rem; text-align: center; }
+    h1 { font-size: 1.5rem; margin: 12px 0; }
+    p { color: #4d6358; margin: 0 0 20px; }
+    button { min-height: 48px; padding: 0 24px; border-radius: 12px; border: 0; background: #a63f15; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  </style>
+  <main>
+    <img src="/rider-icon-192.png" width="56" height="56" alt="Fetch-It Rider">
+    <h1>Can’t connect to Fetch-It</h1>
+    <p>Check your internet connection and try again to open your rider workspace.</p>
+    <button type="button" id="retry">Try again</button>
+  </main>
+  <script>
+    const retry = () => location.pathname === "/offline.html" ? location.replace("/") : location.reload();
+    document.getElementById("retry").addEventListener("click", retry);
+    window.addEventListener("online", retry);
+  </script>
+</html>

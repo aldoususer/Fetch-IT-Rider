@@ -20,6 +20,7 @@ import { SlowRequestFeedback } from "../shared/slow-request-feedback";
 import { ProofCapture, type ProofState } from "./proof-capture";
 import { riderEarningsForBooking } from "@/lib/fare-policy";
 import { rideConfirmationError } from "@/lib/ride-confirmation-policy";
+import { validRoutePoint } from "@/lib/road-routing";
 
 // Rider dashboard — stats header, available jobs feed, active job tracker
 // with ride pickup OTP verification and delivery e-POD (signature + photo).
@@ -90,7 +91,7 @@ import { JobHistoryRow, JobHistorySummary } from './job-history';
 import { JobPreview } from './job-preview';
 import { availabilityLabel, filterHistoryJobs, isHistoryJob, jobTiming, nextJobStop, pickupCodeFeedback, mergeRiderJob, type RiderJob } from '@/lib/rider-workspace';
 import { ArrowLeft } from 'lucide-react';
-import { HistoryFilters } from './history-filters';
+import { EMPTY_HISTORY_FILTERS, HistoryFilters, type RiderHistoryFilters } from './history-filters';
 import { CancellationNotice } from './cancellation-notice';
 import type { CancellationSummary } from '@/lib/rider-cancellation-policy';
 import { riderNextAction } from '@/lib/rider-next-action';
@@ -142,7 +143,6 @@ export function RiderDashboard() {
   const [historyFilter, setHistoryFilter] = useState('ALL');
   const [historyDate, setHistoryDate] = useState('');
   const [historyDateBasis, setHistoryDateBasis] = useState<'created' | 'finished'>('created');
-  const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
   const detailDirty = useRef(false);
   const navigationRequest = useRef(0);
   const knownJobs = useRef(new Map<string, Job>());
@@ -173,7 +173,10 @@ export function RiderDashboard() {
   const requestedHistoryDate = tab === 'history' ? historyDate : '';
   const listKey = tab === 'history' ? `history:${historyDateBasis}:${requestedHistoryDate}` : tab;
   const jobs = jobLists[listKey] ?? [];
-  function clearHistoryFilters() { setHistoryFilter('ALL'); setHistoryQuery(''); setHistoryDate(''); setHistoryDateBasis('created'); }
+  function applyHistoryFilters(filters: RiderHistoryFilters) {
+    setHistoryFilter(filters.status); setHistoryDate(filters.date); setHistoryDateBasis(filters.basis);
+  }
+  function clearHistoryFilters() { applyHistoryFilters(EMPTY_HISTORY_FILTERS); setHistoryQuery(''); }
   // Only a tab's first load uses skeletons. Refreshes preserve its existing
   // cards and their mounted state, including any open job actions.
   const loading = jobLists[listKey] === undefined && !jobErrors[listKey];
@@ -370,6 +373,20 @@ export function RiderDashboard() {
   const cancellationPaused = !!stats?.cancellation?.pausedUntil;
   const paused = cancellationPaused || !!stats?.isOnline && !matchingReady && !stats.activeJobs && !stats.offeredJobs;
   const pauseReason = cancellationPaused ? stats!.cancellation!.message : !connected ? 'Reconnect to receive new offers.' : statsError || (!alerts.settingsLoading && !deviceNotificationsReady ? 'Enable notifications on this device to receive new offers.' : stats?.matchingPauseReason) || 'Refresh your location to receive new offers.';
+  useEffect(() => {
+    if (!stats || statsError || !connected || alerts.settingsLoading) return;
+    const url = new URL(window.location.href);
+    const source = url.searchParams.get('source');
+    if (source !== 'pwa-shortcut-online' && source !== 'pwa-shortcut-jobs') return;
+    url.searchParams.delete('source');
+    window.history.replaceState(window.history.state, '', url);
+    if (source !== 'pwa-shortcut-online') return;
+    if (cancellationPaused) {
+      toast({ title: 'New offers temporarily paused', description: pauseReason });
+    } else if (!stats.isOnline || paused) {
+      queueMicrotask(() => setOnlineSetupOpen(true));
+    }
+  }, [stats, statsError, connected, cancellationPaused, paused, pauseReason, alerts.settingsLoading, toast]);
   return <div className="rd">
     <header className="rd-header"><div className="rd-header-inner">
       <button type="button" onClick={goHome} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Go to dashboard"><FetchItLogo/></button>
@@ -385,14 +402,14 @@ export function RiderDashboard() {
       {tab === 'available' && paused && !cancellationPaused && (loading || jobs.length > 0) && <div className="rd-notice" role="status"><p>{pauseReason}</p><Button variant="outline" onClick={()=>setOnlineSetupOpen(true)}>Resume receiving jobs</Button></div>}
       {tab === 'available' && !cancellationPaused && stats?.cancellation && <CancellationNotice compact summary={stats.cancellation}/>}
       {user && <div hidden={tab === 'history'}><BrowserLocation key={user.id} userId={user.id} needed={!!stats?.isOnline || !!stats?.trackingRequired} availabilityKnown={!!stats}/></div>}
-      {!!stats?.activeJobs && tab!=='active' && <button className="rd-resume" onClick={()=>navigation.navigate('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
+      {!!stats?.activeJobs && tab==='available' && <button className="rd-resume" onClick={()=>navigation.navigate('active')}><Navigation size={20} aria-hidden="true"/><span><strong>Continue your active job{stats.activeJobs>1?'s':''}</strong><small>{stats.activeJobs} booking{stats.activeJobs===1?'':'s'} in progress</small></span><ArrowLeft className="rotate-180" size={18} aria-hidden="true"/></button>}
       <Tabs value={tab} onValueChange={v=>navigation.navigate(v as JobTab)}><TabsList className="rd-tabs">
         <TabsTrigger value="available"><Package size={20}/><span className="rd-tab-label">Available <span className="rd-tab-count">{jobLists.available?.length??stats?.availableJobs??'—'}</span></span></TabsTrigger>
         <TabsTrigger value="active"><CircleDot size={20}/><span className="rd-tab-label">Active <span className="rd-tab-count">{stats?.activeJobs??'—'}</span></span></TabsTrigger>
         <TabsTrigger value="history"><Clock size={20}/><span className="rd-tab-label">History</span></TabsTrigger>
       </TabsList></Tabs>
       {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected && !reconnecting ? 'Jobs updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Jobs last confirmed '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})+' · Updates paused'}</p>}
-      {tab==='history' && <HistoryFilters query={historyQuery} status={historyFilter} date={historyDate} basis={historyDateBasis} onBasis={setHistoryDateBasis} open={historyFiltersOpen} onQuery={setHistoryQuery} onStatus={setHistoryFilter} onDate={setHistoryDate} onToggle={()=>setHistoryFiltersOpen(value=>!value)} onClear={clearHistoryFilters}/>}
+      {tab==='history' && <HistoryFilters query={historyQuery} filters={{status:historyFilter,date:historyDate,basis:historyDateBasis}} onQuery={setHistoryQuery} onApply={applyHistoryFilters}/>}
       {tab==='available' && cancellationPaused ? <CancellationNotice summary={stats!.cancellation!}/> : loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
         : jobLists[listKey]===undefined ? null
         : tab==='available' && !!stats?.activeJobs && jobs.length===0 ? null : jobs.length===0 && !(tab==='history' && (historyDate || historyQuery || historyFilter!=='ALL')) ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
@@ -409,9 +426,9 @@ export function RiderDashboard() {
     {onlineSetupOpen && <GoOnlineDialog open onOpenChange={setOnlineSetupOpen} isOnline={!!stats?.isOnline} onGoOffline={()=>toggleOnline(false, undefined, true)} notificationsReady={deviceNotificationsReady} enableNotifications={alerts.enableBrowser} onReady={async fix=>{await toggleOnline(true,fix);void loadStats();}}/>}
     <RiderAccountProfile showReviews open={profileOpen} onOpenChange={setProfileOpen}/>
     <Dialog open={!!activeJob} onOpenChange={open=>{if(!open)closeJob();}}><DialogContent fullScreenOnMobile className="rd-job-screen" showCloseButton={false} onCloseAutoFocus={event=>{event.preventDefault();if(earningsRequested.current)return;(lastJobTrigger.current?.isConnected?lastJobTrigger.current:workspaceHeading.current)?.focus({preventScroll:true});}}>
-      {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} · {activeJob.refCode}</DialogTitle><DialogDescription>{activeJob.status === 'PENDING' ? 'New request' : activeJob.type==='RIDE' && activeJob.status==='PICKED_UP' ? 'Pickup code verified' : statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
+      {activeJob && <><div className="rd-job-screen-heading"><Button variant="ghost" onClick={closeJob} aria-label="Back to jobs"><ArrowLeft size={20}/><span>Back</span></Button><DialogHeader><DialogTitle>{isHistoryJob(activeJob)?'Booking summary': ['PENDING','MATCHED'].includes(activeJob.status)?'Review request':'Current job'} <span className="rd-job-reference">· {activeJob.refCode}</span></DialogTitle><DialogDescription>{activeJob.status === 'PENDING' ? 'New request' : activeJob.type==='RIDE' && activeJob.status==='PICKED_UP' ? 'Pickup code verified' : statusLabel(activeJob.status,activeJob.type==='RIDE'?'RIDE':'DELIVERY')}</DialogDescription></DialogHeader></div>
         {isHistoryJob(activeJob)?<JobHistorySummary key={activeJob.id} job={activeJob} offline={!connected} onBack={closeJob} onEarnings={()=>{earningsRequested.current=true;navigation.navigate(tab,null,true);}}/>:['PENDING','MATCHED'].includes(activeJob.status)?<JobPreview key={activeJob.id} job={activeJob} acceptanceBlock={!connected ? "Reconnect to accept this request." : boardConnection.status !== "connected" ? "Checking current job availability. Wait for the connection to recover." : !stats || statsError ? "Check your availability before accepting." : activeJob.status === "PENDING" && (stats.offeredJobs??0)>0 ? "Accept or decline your exclusive offer before choosing another request." : activeJob.status === "PENDING" && stats.activeJobs > 0 ? "Finish your active booking before accepting another request." : undefined} onAccept={onPhase=>accept(activeJob,onPhase)} onReleased={()=>{navigation.navigate(tab,null,true);void refreshBoard();}}/>
-          : <ActiveJobFlow key={activeJob.id} job={activeJob} connectionReady={connected && boardConnection.status === "connected"} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?mergeRiderJob(previous,{...previous,...updated}):previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
+          : <ActiveJobFlow key={activeJob.id} job={activeJob} connected={connected} connectionReady={connected && boardConnection.status === "connected"} onDraftChange={dirty=>{detailDirty.current=dirty;}} onUpdated={updated=>{setActiveJob(previous=>previous?mergeRiderJob(previous,{...previous,...updated}):previous);void loadJobs().catch(()=>{});void loadStats();}} onClose={closeJob}/>}</>}
     </DialogContent></Dialog>
   </div>;
 }
@@ -627,12 +644,14 @@ const NEXT_STATUS: Record<BookingStatus, BookingStatus | null> = {
 
 function ActiveJobFlow({
   job,
+  connected,
   connectionReady,
   onUpdated,
   onClose,
   onDraftChange,
 }: {
   job: Job;
+  connected: boolean;
   connectionReady: boolean;
   onUpdated: (u: Partial<Job>) => void;
   onClose: () => void;
@@ -652,6 +671,10 @@ function ActiveJobFlow({
   const [paymentReady, setPaymentReady] = useState(false);
   const [paymentAction, setPaymentAction] = useState<PaymentAction | null>(null);
   const [proofState, setProofState] = useState<ProofState>({ busy: false, preparing: false, hasSignature: false, hasPhoto: false });
+  const flow = useRef<HTMLDivElement>(null);
+  const jobBody = useRef<HTMLDivElement>(null);
+  const stopLink = useRef<HTMLAnchorElement>(null);
+  const [showNavigationShortcut, setShowNavigationShortcut] = useState(false);
   const confirmationSection=useRef<HTMLDivElement>(null), paymentSection=useRef<HTMLDivElement>(null), proofSection=useRef<HTMLDivElement>(null), pickupInput=useRef<HTMLInputElement>(null);
   const draftCallback=useRef(onDraftChange);
   useEffect(()=>{draftCallback.current=onDraftChange;},[onDraftChange]);
@@ -744,45 +767,57 @@ function ActiveJobFlow({
     : null;
 
   const isDelivered = status === "DELIVERED";
+  const stop = nextJobStop(job);
+  const pickup = { lat: job.pickupLat, lng: job.pickupLng };
+  const dropoff = { lat: job.dropoffLat, lng: job.dropoffLng };
+  const destination = stop.navigation === 'pickup' ? pickup : dropoff;
+  const googleMaps = 'https://www.google.com/maps/dir/?api=1';
+  const directionsUrl = validRoutePoint(destination) ? `${googleMaps}&destination=${destination.lat},${destination.lng}&travelmode=driving` : null;
+  const fullRouteUrl = validRoutePoint(pickup) && validRoutePoint(dropoff) ? `${googleMaps}&origin=${pickup.lat},${pickup.lng}&destination=${dropoff.lat},${dropoff.lng}&travelmode=driving` : null;
+  useEffect(() => {
+    if (!stopLink.current || !jobBody.current || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => setShowNavigationShortcut(!entry.isIntersecting), { root: jobBody.current });
+    observer.observe(stopLink.current);
+    return () => observer.disconnect();
+  }, [directionsUrl]);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const screen = flow.current?.closest<HTMLElement>('.rd-job-screen');
+    if (!viewport || !screen) return;
+    const resize = () => {
+      if (viewport.scale !== 1) return;
+      screen.style.setProperty('--rd-visible-height', `${viewport.height}px`);
+      screen.style.setProperty('--rd-viewport-top', `${viewport.offsetTop}px`);
+    };
+    resize();
+    viewport.addEventListener('resize', resize);
+    viewport.addEventListener('scroll', resize);
+    return () => {
+      viewport.removeEventListener('resize', resize);
+      viewport.removeEventListener('scroll', resize);
+      screen.style.removeProperty('--rd-visible-height');
+      screen.style.removeProperty('--rd-viewport-top');
+    };
+  }, []);
   const action = riderNextAction({ ...job, pickupCode: pickupOtp, paymentReady, proofOpen: showProof });
+  const feedback = actionPhase || (!connected ? 'You’re offline. Job details may be outdated. Your entries are kept here.'
+    : recovery.error || (!ready ? 'Checking the latest job status…'
+    : action.kind === 'payment' && paymentAction ? paymentAction.busy ? 'Saving your payment update…' : paymentAction.label === 'I’m at drop-off' ? 'Confirm arrival when you reach the destination.' : 'Confirm only after collecting the cash fare.'
+    : action.hint || (showProof ? `${proofState.hasSignature ? 'Signature ready' : 'Signature needed'} · ${proofState.hasPhoto ? 'Photo ready' : 'Photo needed'}` : '')));
   function reviewSection(section: HTMLDivElement | null) {
     section?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     section?.focus({ preventScroll: true });
   }
 
   return (
-    <div className="rd-flow"><div className="rd-flow-body rd-current-job">
-      {recovery.error && <section className="rd-notice" role="status"><p>{recovery.error}</p><Button variant="outline" disabled={!connectionReady} onClick={()=>void recovery.recheck()}>Retry booking check</Button></section>}
-      {actionPhase && <div className="space-y-2"><p className="rd-proof-status" role="status"><Loader2 size={20} className="animate-spin" aria-hidden="true"/>{actionPhase}</p><SlowRequestFeedback message="This update is taking longer than usual. Keep this job open while we check its status; avoid sending it again."/></div>}
-      {/* Stepper */}
-      <div className="flex items-center justify-between gap-2">
-        {STATUS_STEPS.map((s) => {
-          const idx = STATUS_STEPS.indexOf(s);
-          const currentIdx = STATUS_STEPS.indexOf(status);
-          const active = idx <= currentIdx;
-          return (
-            <div key={s} className="flex-1 min-w-0 flex flex-col items-center text-center">
-              <div
-                className={cn(
-                  "h-9 w-9 rounded-full grid place-items-center border-2",
-                  active
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card text-muted-foreground border-border",
-                )}
-              >
-                {active ? <CheckCircle2 className="h-4 w-4" /> : idx + 1}
-              </div>
-              <div className={cn("text-xs mt-1.5", active ? "text-foreground font-medium" : "text-muted-foreground")}>
-                {isRide && s === "PICKED_UP" ? "Code verified" : statusLabel(s, isRide ? "RIDE" : "DELIVERY")}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="rd-current-stop"><p>Next stop · {nextJobStop(job).label}</p><strong>{nextJobStop(job).address}</strong></div>
+    <div className="rd-flow" ref={flow}><div ref={jobBody} className="rd-flow-body rd-current-job">
+      <section className="rd-current-stop" aria-label="Next stop">
+        <p>Next stop · {stop.label}</p>
+        <strong>{stop.address}</strong>
+        {directionsUrl && <a ref={stopLink} className="rd-stop-link" target="_blank" rel="noopener noreferrer" href={directionsUrl}>Navigate to {stop.label.toLowerCase()} in Google Maps <span aria-hidden="true">↗</span></a>}
+      </section>
       {isRide && status === "ACCEPTED" && <PickupProgress key={`pickup:${job.id}`} bookingId={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} />}
-      <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
+      <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={pickup} dropoff={dropoff} navigation={stop.navigation}/>
       {/* Action buttons */}
       {isRide && status === "ACCEPTED" && (
         <Card className="border-primary/30 bg-primary/5 py-0">
@@ -802,6 +837,16 @@ function ActiveJobFlow({
           : <details><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard embedded key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady}/></details>}
       </div>
       <details className="rd-details rd-trip-details"><summary>Trip details<ChevronDown size={16} aria-hidden="true"/></summary>
+      <ol className="rd-job-timeline" aria-label="Trip progress">
+        {STATUS_STEPS.map((step, index) => {
+          const reached = index <= STATUS_STEPS.indexOf(status);
+          return <li key={step} aria-current={step === status ? 'step' : undefined}>
+            {reached ? <CheckCircle2 size={16} aria-hidden="true"/> : <CircleDot size={16} aria-hidden="true"/>}
+            {isRide && step === "PICKED_UP" ? "Pickup code verified" : statusLabel(step, isRide ? "RIDE" : "DELIVERY")}
+          </li>;
+        })}
+      </ol>
+      {fullRouteUrl && <a className="rd-stop-link" target="_blank" rel="noopener noreferrer" href={fullRouteUrl}>View full route in Google Maps <span aria-hidden="true">↗</span></a>}
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
         <div className="flex items-start gap-2">
@@ -879,13 +924,18 @@ function ActiveJobFlow({
       </div>
             {!isDelivered ? (
         <div className="rd-flow-actions rd-next-action">
-          <p className="rd-help" role="status">{!ready ? 'Checking the latest job status…' : action.kind === 'payment' && paymentAction ? paymentAction.busy ? 'Saving your payment update…' : paymentAction.label === 'I’m at drop-off' ? 'Confirm arrival when you reach the destination.' : 'Confirm only after collecting the cash fare.' : action.hint || (showProof ? `${proofState.hasSignature ? 'Signature ready' : 'Signature needed'} · ${proofState.hasPhoto ? 'Photo ready' : 'Photo needed'}` : 'Ready for your next step.')}</p>
+          <p className="rd-help rd-action-feedback" role="status">{feedback}</p>
+          {actionPhase && <SlowRequestFeedback message="Still checking your update. Keep this job open."/>}
+          {connected && connectionReady && recovery.error && !updating && <Button variant="outline" onClick={()=>void recovery.recheck()}>Retry booking check</Button>}
+          <div className="rd-action-row">
           {action.kind === 'pickup' ? <Button disabled={!ready || updating} onClick={()=>{pickupInput.current?.scrollIntoView({block:'center'});pickupInput.current?.focus({preventScroll:true});}}>{action.label}</Button>
             : action.kind === 'confirmation' ? <Button disabled={!ready || updating} onClick={()=>reviewSection(confirmationSection.current)}>{action.label}</Button>
             : action.kind === 'payment' ? paymentAction ? <Button type="submit" form={paymentAction.formId} disabled={!ready || updating || paymentAction.disabled}>{paymentAction.label}</Button> : <Button disabled={!ready || updating} onClick={()=>reviewSection(paymentSection.current)}>{action.label}</Button>
             : action.kind === 'proof' ? <Button disabled={!ready || updating || !paymentReady} onClick={()=>setShowProof(true)}><ShieldCheck size={18}/>{action.label}</Button>
             : action.kind === 'submit-proof' ? <Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || !paymentReady || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button>
             : canAdvance && <Button size="lg" onClick={()=>advance(nextStatus!)} disabled={!ready || updating || !!customerConfirmationMessage || (nextStatus === 'DELIVERED' && !paymentReady)}>{updating ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} {nextLabel}</Button>}
+          {showNavigationShortcut && directionsUrl && <a className="rd-navigation-shortcut" target="_blank" rel="noopener noreferrer" href={directionsUrl} aria-label={`Navigate to ${stop.label.toLowerCase()} in Google Maps`} title="Open Google Maps"><Navigation size={20} aria-hidden="true"/></a>}
+          </div>
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">

@@ -2,12 +2,15 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 function authFixture(respond=async()=>Response.json({user:null}),confirm=true){
  let state;const owners=[],cache=new Map();const exports={};
  const create=init=>{state=init(value=>{state={...state,...value};},()=>state);const hook=fn=>fn(state);hook.getState=()=>state;return hook;};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/store.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:respond,window:{confirm:()=>confirm},localStorage:{getItem:k=>cache.get(k),setItem:(k,v)=>cache.set(k,v),removeItem:k=>cache.delete(k)},require:name=>name==='zustand'?{create}:name==='./proof-drafts'?{setProofDraftOwner:owner=>owners.push(owner)}:{setRiderPushAccount:async()=>{}}});
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/store.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,AbortSignal,fetch:respond,window:{confirm:()=>confirm},localStorage:{getItem:k=>cache.get(k),setItem:(k,v)=>cache.set(k,v),removeItem:k=>cache.delete(k)},require:name=>name==='zustand'?{create}:name==='./proof-drafts'?{setProofDraftOwner:owner=>owners.push(owner)}:{setRiderPushAccount:async()=>{}}});
  return {get state(){return state;},owners,cache};
 }
 const rider={id:'rider-a',role:'RIDER',name:'Rider'};
-test('a temporary auth outage does not erase a saved proof draft during startup',async()=>{
- const h=authFixture(async()=>Response.json({error:'Unavailable'},{status:503}));await h.state.bootstrap();assert.equal(h.state.bootstrapped,true);assert.deepEqual(h.owners,[]);
+test('a temporary auth outage preserves proof ownership and resumes the same session on retry',async()=>{
+ let online=false;
+ const h=authFixture(async()=>online?Response.json({user:rider}):Response.json({error:'Unavailable'},{status:503}));
+ await h.state.bootstrap();assert.equal(h.state.bootstrapped,false);assert.equal(h.state.startup,'unavailable');assert.deepEqual(h.owners,[]);
+ online=true;await h.state.bootstrap();assert.equal(h.state.bootstrapped,true);assert.equal(h.state.user.id,rider.id);assert.deepEqual(h.owners,[rider.id]);
 });
 test('cancelling logout retains the rider and proof; confirmed logout clears its cache owner',async()=>{
  const cancelled=authFixture(undefined,false);cancelled.state.setUser(rider);await cancelled.state.logout();assert.equal(cancelled.state.user.id,rider.id);assert.deepEqual(cancelled.owners,[rider.id]);

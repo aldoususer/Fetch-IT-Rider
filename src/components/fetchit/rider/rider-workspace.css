@@ -45,7 +45,7 @@
 /* Mobile workspace: positioning is owned here, without desktop translate utilities. */
 .rd-job-screen,.rd-alert-dialog{top:50%;left:50%;transform:translate(-50%,-50%);translate:none}
 .rd-header-inner{padding-top:max(10px,env(safe-area-inset-top));padding-bottom:10px}
-.rd-header-inner>[aria-label="Go to dashboard"]{min-height:48px;display:flex;align-items:center}
+.rd-header-inner>[aria-label="Go to dashboard"]{min-height:48px;min-width:48px;display:flex;align-items:center;justify-content:center}
 .rd-account>button:last-child,.rd .rd-online-toggle,.rd .rd-board-heading button{min-width:48px;min-height:48px}
 .rd-notification-bell{width:48px!important;height:48px!important}
 .rd-notification-bell>span{top:1px;right:0}
@@ -123,9 +123,35 @@
 .rd-current-job>*+* { margin-top: 0; }
 .rd-current-job>section,.rd-current-job>div { flex-shrink: 0; }
 .rd-collect-total { flex-basis: 100%; color: var(--rd-muted); font-size: 14px; }
-.rd-external-heading { font-size: 14px; font-weight: 600; line-height: 1.5; }
-.rd-external-heading span { font-size: 13px; font-weight: 400; color: var(--rd-muted); }
 .rd .rd-history-row:focus-visible,.rd-job-screen summary:focus-visible { outline: 2px solid #173c32; outline-offset: 3px; }
 .rd-job-screen button:active,.rd-history-row:active { transform: translateY(1px); }
 .rd-job-screen button:disabled { cursor: not-allowed; }
 @media(prefers-reduced-motion:reduce){.rd-job-screen button:active,.rd-history-row:active{transform:none}}
+
+.rd-job-reference { color: var(--rd-muted); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.rd-stop-link { display: flex; align-items: center; gap: 8px; min-height: 48px; width: fit-content; max-width: 100%; margin-top: 8px; padding: 8px 12px; border: 1px solid var(--rd-border); border-radius: 10px; background: white; color: var(--rd-ink); font-size: 14px; font-weight: 600; }
+.rd-stop-link:focus-visible,.rd-navigation-shortcut:focus-visible { outline: 2px solid var(--rd-ink); outline-offset: 2px; }
+.rd-stop-link:hover,.rd-navigation-shortcut:hover { background: var(--rd-soft); }
+.rd-action-row { display: flex; align-items: stretch; gap: 8px; }
+.rd-action-row button { flex: 1; min-width: 0; min-height: 48px; border-radius: 12px; font-size: 15px; white-space: normal; }
+.rd-navigation-shortcut { display: none; }
+.rd-action-feedback:empty { display: none; }
+.rd-job-timeline { display: grid; gap: 8px; padding: 4px 0 12px; font-size: 14px; color: var(--rd-muted); }
+.rd-job-timeline li { display: flex; align-items: center; gap: 8px; }
+.rd-job-timeline li[aria-current="step"] { color: var(--rd-ink); font-weight: 650; }
+
+.rd-filter-sheet { top: 50%; left: 50%; translate: -50% -50%; display: flex; flex-direction: column; max-width: 440px; gap: 0; padding: 0; overflow: hidden; background: white; color: #173c32; color-scheme: light; }
+.rd-filter-sheet [data-slot="dialog-header"] { flex-shrink: 0; padding: 22px 64px 16px 18px; text-align: left; }
+.rd-filter-sheet form { display: flex; flex-direction: column; min-height: 0; }
+.rd-history-fields { display: grid; gap: 16px; padding: 4px 18px 20px; overflow-y: auto; overscroll-behavior: contain; }
+.rd-history-fields label { display: grid; min-width: 0; gap: 6px; font-size: 14px; font-weight: 500; }
+.rd-history-fields input,.rd-history-fields select { width: 100%; min-width: 0; min-height: 48px; padding: 8px 12px; border: 1px solid #cad7c4; border-radius: 10px; background: white; font-size: 16px; }
+.rd-filter-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; padding: 12px 18px; border-top: 1px solid #d4ded5; }
+.rd-filter-actions button { min-height: 48px; }
+
+@media (max-width: 600px) {
+  .rd-job-screen { top: var(--rd-viewport-top, 0px) !important; height: var(--rd-visible-height, 100dvh); max-height: var(--rd-visible-height, 100dvh); }
+  .rd-navigation-shortcut { display: grid; place-items: center; flex: 0 0 48px; min-height: 48px; border: 1px solid var(--rd-border); border-radius: 12px; color: var(--rd-ink); }
+  .rd-filter-sheet { top: auto; bottom: 0; left: 0; translate: none; width: 100%; max-width: none; max-height: calc(100dvh - 16px - env(safe-area-inset-top)); border-radius: 20px 20px 0 0; }
+  .rd-filter-actions { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+}

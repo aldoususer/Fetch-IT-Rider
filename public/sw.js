@@ -1,11 +1,9 @@
-// Fetch-It service worker — minimal app-shell caching for installability.
-// Intentionally network-first for HTML and stale-while-revalidate for static
-// assets, so the user always gets fresh content when online but can still
-// load the app shell offline.
+// Keep a public offline page and static assets available without storing session
+// responses or job data in the service worker cache.
 
-const CACHE_VERSION = "fetchit-rider-background-v6";
+const CACHE_VERSION = "fetchit-rider-background-v7";
 const APP_SHELL = [
-  "/",
+  "/offline.html",
   "/manifest.webmanifest",
   "/rider-logo.png",
   "/rider-icon-192.png",
@@ -16,7 +14,7 @@ const APP_SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(APP_SHELL)).catch(() => {})
+    caches.open(CACHE_VERSION).then((cache) => cache.addAll(APP_SHELL))
   );
   self.skipWaiting();
 });
@@ -24,7 +22,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k.startsWith("fetchit-rider-background-") && k !== CACHE_VERSION).map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
@@ -35,25 +33,20 @@ self.addEventListener("fetch", (event) => {
   // Only handle GETs.
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/socket.io/")) return;
 
-  // Network-first for HTML / navigations so users always see fresh UI.
-  if (req.mode === "navigate" || (req.headers.get("accept") || "").includes("text/html")) {
+  if (req.mode === "navigate") {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
     event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_VERSION).then((c) => c.put(req, copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match("/")))
+      fetch(req, { signal: controller.signal })
+        .catch(async () => (await (await caches.open(CACHE_VERSION)).match("/offline.html")) || Response.error())
+        .finally(() => clearTimeout(timeout))
     );
     return;
   }
 
-  // Bypass for API calls & WebSocket upgrades — never cache these.
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/socket.io/")) {
-    return;
-  }
+  if (!["style", "script", "image", "font", "manifest"].includes(req.destination)) return;
 
   // Stale-while-revalidate for static assets.
   event.respondWith(

@@ -8,7 +8,7 @@ import { AuthView } from "@/components/fetchit/shared/auth-view";
 import { RiderApplicationBoundary } from "@/components/fetchit/rider/rider-application";
 
 export default function Home() {
-  const { view, bootstrapped, bootstrap, user } = useAppStore();
+  const { view, bootstrapped, bootstrap, startup, user } = useAppStore();
 
   useEffect(() => {
     void bootstrap();
@@ -24,7 +24,11 @@ export default function Home() {
   }, [bootstrapped, user?.id]);
 
   useEffect(() => {
-    const refresh = () => { void useAppStore.getState().refreshUser(); };
+    const refresh = () => {
+      const state = useAppStore.getState();
+      if (state.bootstrapped) void state.refreshUser();
+      else void state.bootstrap();
+    };
     window.addEventListener("online", refresh);
     window.addEventListener("focus", refresh);
     return () => {
@@ -34,6 +38,15 @@ export default function Home() {
   }, []);
 
   if (!bootstrapped) {
+    if (startup === "unavailable") return (
+      <main className="grid min-h-dvh place-items-center bg-white p-6 text-center text-[#173c32]">
+        <div className="max-w-sm space-y-4">
+          <h1 className="text-2xl font-semibold">Can’t connect to Fetch-It</h1>
+          <p className="text-base text-[#4d6358]">Check your internet connection and try again to open your rider workspace.</p>
+          <button type="button" className="min-h-12 rounded-xl bg-primary px-6 font-medium text-primary-foreground" onClick={() => void bootstrap()}>Try again</button>
+        </div>
+      </main>
+    );
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-muted-foreground">
@@ -51,7 +64,7 @@ export default function Home() {
               opacity="0.95"
             />
           </svg>
-          <p className="text-sm">Loading Fetch-It…</p>
+          <p className="text-sm" role="status">Checking your session…</p>
         </div>
       </div>
     );

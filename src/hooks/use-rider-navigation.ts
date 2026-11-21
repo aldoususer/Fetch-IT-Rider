@@ -26,13 +26,16 @@ export function useRiderNavigation(owner: string, onNavigate: (state: RiderNavig
   useEffect(() => {
     if (!owner) return;
     const url = new URL(window.location.href);
-    automaticDefault.current = !url.searchParams.has('tab') && !url.searchParams.has('job');
+    const source = url.searchParams.get('source');
+    const shortcut = source === 'pwa-shortcut-online' || source === 'pwa-shortcut-jobs';
+    const requestedTab = url.searchParams.get('tab');
+    automaticDefault.current = !shortcut && !requestedTab && !url.searchParams.has('job');
     let saved: { tab?: unknown; scrolls?: Partial<Record<RiderTab, number>> } = {};
     try { saved = JSON.parse(sessionStorage.getItem('fetchit:rider-view:' + owner) || '{}'); } catch {}
     for (const tab of ['available', 'active', 'history'] as const) {
       const value = saved?.scrolls?.[tab]; if (typeof value === 'number' && Number.isFinite(value)) scrolls.current[tab] = Math.max(0, value);
     }
-    const tab = validTab(url.searchParams.get('tab')) ? url.searchParams.get('tab') as RiderTab : validTab(saved?.tab) ? saved.tab : 'available';
+    const tab = validTab(requestedTab) ? requestedTab : !shortcut && validTab(saved?.tab) ? saved.tab : 'available';
     const job = url.searchParams.get('job');
     commit({ tab, jobId: null, scrollY: scrolls.current[tab] ?? 0 }, true);
     if (job && job.length <= 100) commit({ tab, jobId: job, scrollY: 0, detailEntry: true });

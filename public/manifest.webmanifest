@@ -31,12 +31,12 @@
     {
       "name": "Available jobs",
       "short_name": "Jobs",
-      "url": "/?source=pwa-shortcut-jobs"
+      "url": "/?source=pwa-shortcut-jobs&tab=available"
     },
     {
       "name": "Go online",
       "short_name": "Online",
-      "url": "/?source=pwa-shortcut-online"
+      "url": "/?source=pwa-shortcut-online&tab=available"
     }
   ]
 }

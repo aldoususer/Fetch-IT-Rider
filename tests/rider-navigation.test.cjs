@@ -27,3 +27,11 @@ test('active-job preference preserves explicit tabs, direct job links and delibe
  }
  const h=harness();h.api.navigate('history');h.api.preferActive(true);assert.equal(h.states.at(-1).tab,'history');
 });
+test('existing Home Screen shortcuts open Available even when History was last used',()=>{
+ for (const source of ['pwa-shortcut-jobs','pwa-shortcut-online']) {
+  const h=harness('https://rider.test/?source='+source,{tab:'history'});
+  h.api.preferActive(true);
+  assert.equal(h.states.at(-1).tab,'available');
+  assert.equal(new URL(h.window.location.href).searchParams.get('source'),source);
+ }
+});

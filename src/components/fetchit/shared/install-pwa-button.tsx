@@ -46,14 +46,20 @@ function subscribeInstallPrompt(notify: () => void) {
   };
 }
 
+function readStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches ||
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
 function readInstallPrompt() {
-  return window.matchMedia("(display-mode: standalone)").matches ? null : window.__deferredInstallPrompt__ ?? null;
+  return readStandalone() ? null : window.__deferredInstallPrompt__ ?? null;
 }
 
 export function useInstallPrompt() {
   // All install controls share the browser's one-use prompt, including an
   // event captured before React mounted. Consuming it updates every control.
   const deferredPrompt = useSyncExternalStore(subscribeInstallPrompt, readInstallPrompt, () => null);
+  const standalone = useSyncExternalStore(subscribeInstallPrompt, readStandalone, () => true);
   const canInstall = !!deferredPrompt;
 
   async function install() {
@@ -65,7 +71,7 @@ export function useInstallPrompt() {
     await deferredPrompt.userChoice;
   }
 
-  return { canInstall, install };
+  return { canInstall, install, standalone };
 }
 
 export function InstallPwaButton({
