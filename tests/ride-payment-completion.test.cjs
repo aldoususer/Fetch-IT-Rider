@@ -3,7 +3,7 @@ const timingStub={withBookingTelemetry:(_,fn)=>fn,timeBooking:(_,fn)=>fn(),recor
 const clientTimingStub={startBookingTiming:()=>({headers:{},response(){},finish(){}})};
 const transactionStub={timedDatabase:db=>db,bookingTransaction:(db,fn)=>db.$transaction(fn)};
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
-function load(file,deps={},globals={},source=fs.readFileSync(file,'utf8')){deps={"@/lib/booking-telemetry":timingStub,"@/lib/booking-transaction":transactionStub,"@/lib/booking-client-timing":clientTimingStub,"@/lib/booking-mutation-client":{savedMutation:async()=>null},...deps};const exports={};vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require:name=>{if(name==="@/lib/ride-confirmation-policy")return require("./helpers/ride-confirmation-policy.cjs");if(name==="@/lib/fare-policy")return require("./helpers/fare-policy.cjs");if(!(name in deps))throw Error(name);return deps[name];},Date,Response,AbortController,console,...globals});return exports;}
+function load(file,deps={},globals={},source=fs.readFileSync(file,'utf8')){deps={"@/lib/booking-telemetry":timingStub,"@/lib/booking-transaction":transactionStub,"@/lib/booking-client-timing":clientTimingStub,"@/lib/booking-mutation-client":{savedMutation:async()=>null},...deps};const exports={};vm.runInNewContext(ts.transpileModule(source,{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require:name=>{if(name==="@/lib/ride-confirmation-policy")return require("./helpers/ride-confirmation-policy.cjs");if(name==="@/lib/fare-policy")return require("./helpers/fare-policy.cjs");if(!(name in deps))throw Error(name);return deps[name];},Date,Response,AbortController,AbortSignal,console,...globals});return exports;}
 const policy=load('src/lib/payment-policy.ts');
 const base={customerPickupConfirmedAt:new Date(),customerDropoffConfirmedAt:new Date(),id:'job',refCode:'LOCAL-PAYMENT',type:'RIDE',riderId:'rider',status:'IN_TRANSIT',paymentMethod:'CASH',paymentStatus:'UNPAID',totalFare:100,customerPaidAt:null,riderReceivedAt:null,customerPaidAmount:null,riderReceivedAmount:null,vehicleClass:'SEDAN',distanceKm:1};
 const paid={...base,paymentStatus:'PAID',customerPaidAt:new Date(),riderReceivedAt:new Date(),customerPaidAmount:100,riderReceivedAmount:100};
@@ -54,13 +54,13 @@ test('payment is the next action and completion only appears after saved payment
 test('shared payment policy preserves delivery cash walls and validates online readiness',()=>{
  assert.match(policy.deliveryCashCompletionError({...base,type:'DELIVERY'}),/drop-off/);assert.equal(policy.deliveryCashCompletionError({...paid,type:'DELIVERY'}),null);assert(policy.completionPaymentError({...base,paymentMethod:'DEMO_GCASH'}));assert.equal(policy.completionPaymentError({...base,paymentMethod:'DEMO_GCASH',paymentStatus:'PAID'}),null);
 });
-function card(record,role='RIDER',embedded=false){
- const slots=[],effects=new Map(),queued=[],reports=[],handlers={};let index=0,reply=()=>Response.json({booking:record}),readOnly=false;
+function card(record,role='RIDER',embedded=false,docked=false){
+ const slots=[],effects=new Map(),queued=[],reports=[],actions=[],handlers={};let index=0,reply=()=>Response.json({booking:record}),readOnly=false;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=value];},useRef(initial){const i=index++;return slots[i]??={current:initial};},useEffect(fn,deps){const i=index++,prior=effects.get(i);if(!prior||deps.some((value,n)=>!Object.is(value,prior[n]))){effects.set(i,deps);queued.push(fn);}}};
- const runtime={jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},report=value=>reports.push(value);
+ const runtime={jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},report=value=>reports.push(value),actionReport=value=>actions.push(value);
  const module=load('src/components/fetchit/shared/payment-card.tsx',{'react':hooks,'react/jsx-runtime':runtime,'@/components/ui/button':{Button:'button'},'@/lib/payment-policy':policy},{document:{hidden:false},navigator:{onLine:true},setInterval:()=>1,clearInterval(){},window:{addEventListener:(name,fn)=>handlers[name]=fn,removeEventListener(){}},fetch:async()=>reply()});
- const render=()=>{index=0;const tree=module.PaymentCard({bookingId:'job',role,readOnly,embedded,onPaymentReady:report});while(queued.length)queued.shift()();return tree;};
- return{render,reports,handlers,setReply:fn=>reply=fn,setReadOnly:value=>readOnly=value,async ready(){render();await new Promise(resolve=>setImmediate(resolve));return render();}};
+ const render=()=>{index=0;const tree=module.PaymentCard({bookingId:'job',role,readOnly,embedded,onPaymentReady:report,onPaymentAction:docked?actionReport:undefined});while(queued.length)queued.shift()();return tree;};
+ return{render,reports,actions,handlers,setReply:fn=>reply=fn,setReadOnly:value=>readOnly=value,async ready(){render();await new Promise(resolve=>setImmediate(resolve));return render();}};
 }
 test('payment card reports readiness only for matching saved confirmations or paid online checkout',async()=>{
  for(const [record,expected]of [[base,false],[{...paid,customerPaidAt:null},false],[{...paid,riderReceivedAt:null},false],[{...paid,riderReceivedAmount:99},false],[paid,true],[{...base,paymentMethod:'DEMO_GCASH'},false],[{...base,paymentMethod:'DEMO_GCASH',paymentStatus:'PAID'},true],[{...paid,type:'DELIVERY',dropoffReachedAt:null},false]]){
@@ -95,4 +95,21 @@ test('embedded payment groups participant confirmations without repeating the fa
  const h=card(base,'RIDER',true),tree=await h.ready(),copy=text(tree);
  assert.match(copy,/Cash received by you/);assert.match(copy,/Customer payment/);
  assert.equal((copy.match(/150|100\.00/g)||[]).length,1);
+});
+
+
+test('docked cash confirmation exposes one native form action and no duplicate inline submit',async()=>{
+ const h=card(base,'RIDER',true,true),tree=await h.ready(),action=h.actions.at(-1);
+ assert.equal(action.formId,'payment-action-job');assert.equal(action.label,'Confirm cash received');assert.equal(action.disabled,false);
+ const form=nodes(tree).find(n=>n.type==='form');assert.equal(form.props.id,action.formId);
+ assert(!nodes(form).some(n=>n.type==='button'&&n.props.type==='submit'));
+ let calls=0,reply;h.setReply(()=>{calls++;return new Promise(resolve=>reply=resolve);});
+ form.props.onSubmit({preventDefault(){}});form.props.onSubmit({preventDefault(){}});assert.equal(calls,1);
+ h.render();assert.equal(h.actions.at(-1).disabled,true);assert.equal(h.actions.at(-1).busy,true);
+ reply(Response.json({booking:{...base,riderReceivedAt:new Date(),riderReceivedAmount:100}}));await new Promise(resolve=>setImmediate(resolve));h.render();assert.equal(h.actions.at(-1),null);
+});
+test('delivery arrival is the docked action before cash becomes available',async()=>{
+ const h=card({...base,type:'DELIVERY',dropoffReachedAt:null},'RIDER',true,true),tree=await h.ready();
+ assert.equal(h.actions.at(-1).label,'I’m at drop-off');assert(nodes(tree).some(n=>n.type==='form'&&n.props.id==='payment-action-job'));
+ assert(!nodes(tree).some(n=>n.type==='input'));
 });

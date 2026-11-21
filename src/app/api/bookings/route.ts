@@ -12,7 +12,7 @@ import { db } from "@/lib/db";
 import { getRiderSession } from "@/lib/rider-access";
 import { buildTicketSnapshot, encodeTicket } from "@/lib/ticket";
 import { riderJobView } from "@/lib/job-privacy";
-import { riderHistoryDateRange } from '@/lib/rider-history-date';
+import { riderHistoryDateWhere } from '@/lib/rider-history-date';
 
 export async function GET(req: NextRequest) {
   const session = await getRiderSession();
@@ -21,8 +21,10 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const filter = url.searchParams.get("filter") || "active"; // active | history | all
   const date = filter === 'history' ? url.searchParams.get('date') || '' : '';
-  const dateRange = date ? riderHistoryDateRange(date) : null;
-  if (date && !dateRange) return NextResponse.json({ error: 'Choose a valid booking date.' }, { status: 400 });
+  const basis = filter === 'history' ? url.searchParams.get('dateBasis') || 'created' : 'created';
+  if (basis !== 'created' && basis !== 'finished') return NextResponse.json({ error: 'Choose booking date or completed/cancelled date.' }, { status: 400 });
+  const dateWhere = date ? riderHistoryDateWhere(date, basis) : null;
+  if (date && !dateWhere) return NextResponse.json({ error: 'Choose a valid history date.' }, { status: 400 });
   await expireRiderOffers(db);
 
   const where =
@@ -40,7 +42,7 @@ export async function GET(req: NextRequest) {
         : {};
 
   const bookings = await db.booking.findMany({
-    where: { ...where, ...statusFilter, ...(dateRange ? { createdAt: dateRange } : {}) },
+    where: { ...where, ...statusFilter, ...dateWhere },
     orderBy: { createdAt: "desc" },
     include: { dispatch: { select: dispatchSelect },
       customer: { select: { id: true, name: true, phone: true } },

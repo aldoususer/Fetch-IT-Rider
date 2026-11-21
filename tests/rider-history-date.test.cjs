@@ -8,3 +8,16 @@ test('invalid dates cause no database work; clearing date and active jobs keep e
 const jsx=(type,props)=>({type,props});function nodes(n){return !n||typeof n!=='object'?[]:Array.isArray(n)?n.flatMap(nodes):[n,...nodes(n.props?.children)];}function text(n){return typeof n==='string'?n:Array.isArray(n)?n.map(text).join(''):text(n?.props?.children||'');}
 const ui=load('src/components/fetchit/rider/history-filters.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{Search:'search-icon',SlidersHorizontal:'filter-icon'},'@/components/ui/button':{Button:'button'}});
 test('date picker stays behind Filters, combines with status and exposes a clear action',()=>{const changes=[],props={query:'',status:'ALL',date:'',open:false,onDate:d=>changes.push(d),onClear:()=>changes.push('clear')};let tree=ui.HistoryFilters(props);assert(!nodes(tree).some(n=>n.props?.type==='date'));tree=ui.HistoryFilters({...props,open:true,date:'2026-11-18',status:'DELIVERED'});const date=nodes(tree).find(n=>n.props?.type==='date');assert.equal(date.props.value,'2026-11-18');date.props.onChange({target:{value:'2026-11-17'}});assert.equal(changes[0],'2026-11-17');assert.match(text(tree),/PH time/);assert.match(text(tree),/Filters · 2/);nodes(tree).find(n=>n.type==='button'&&text(n)==='Clear filters').props.onClick();assert.equal(changes[1],'clear');});
+
+test('finished-date filtering uses completion/cancellation timestamps without widening rider access',async()=>{
+ const h=api(),r=await h.get('?filter=history&date=2026-11-21&dateBasis=finished');assert.equal(r.status,200);
+ const q=h.queries[0];assert.equal(q.where.riderId,'rider-1');assert.equal(q.where.createdAt,undefined);assert.equal(q.take,100);
+ assert.equal(q.where.OR[0].status,'DELIVERED');assert.equal(q.where.OR[0].deliveredAt.gte.toISOString(),'2026-11-20T16:00:00.000Z');
+ assert.equal(q.where.OR[1].status,'CANCELLED');assert.equal(q.where.OR[1].cancelledAt.lt.toISOString(),'2026-11-21T16:00:00.000Z');
+ const bad=api();assert.equal((await bad.get('?filter=history&date=2026-11-21&dateBasis=unknown')).status,400);assert.equal(bad.queries.length,0);
+});
+test('date basis is an explicit choice and never relabels a created-date filter as completion',()=>{
+ let selected;const tree=ui.HistoryFilters({query:'',status:'ALL',date:'2026-11-21',basis:'finished',open:true,onBasis:value=>selected=value});
+ const basis=nodes(tree).find(n=>n.type==='select'&&n.props.value==='finished');assert(basis);basis.props.onChange({target:{value:'created'}});assert.equal(selected,'created');
+ assert.match(text(tree),/Completed\/cancelled date/);assert.match(text(tree),/recorded completion or cancellation time/);
+});

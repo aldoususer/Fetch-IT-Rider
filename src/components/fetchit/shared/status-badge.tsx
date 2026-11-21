@@ -11,9 +11,9 @@ import { cn } from "@/lib/utils";
 const STATUS_CLASS: Record<BookingStatus, string> = {
   PENDING: "bg-amber-100 text-amber-800 border-amber-200",
   MATCHED: "bg-sky-100 text-sky-800 border-sky-200",
-  ACCEPTED: "bg-indigo-100 text-indigo-800 border-indigo-200",
-  PICKED_UP: "bg-violet-100 text-violet-800 border-violet-200",
-  IN_TRANSIT: "bg-orange-100 text-orange-800 border-orange-200",
+  ACCEPTED: "bg-slate-100 text-slate-800 border-slate-200",
+  PICKED_UP: "bg-sky-100 text-sky-900 border-sky-200",
+  IN_TRANSIT: "bg-sky-100 text-sky-900 border-sky-200",
   DELIVERED: "bg-emerald-100 text-emerald-800 border-emerald-200",
   CANCELLED: "bg-rose-100 text-rose-800 border-rose-200",
 };
@@ -21,9 +21,11 @@ const STATUS_CLASS: Record<BookingStatus, string> = {
 export function StatusBadge({
   status,
   type = "DELIVERY",
+  label,
 }: {
   status: BookingStatus;
   type?: "DELIVERY" | "RIDE";
+  label?: string;
 }) {
   const cls = STATUS_CLASS[status] ?? "";
   return (
@@ -34,7 +36,7 @@ export function StatusBadge({
         cls,
       )}
     >
-      {statusLabel(status, type) ?? status}
+      {label ?? statusLabel(status, type) ?? status}
     </Badge>
   );
 }

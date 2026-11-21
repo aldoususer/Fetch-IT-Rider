@@ -28,7 +28,7 @@ export function JobPreview({ job, onAccept, onReleased, acceptanceBlock }: { job
       {['older','overdue'].includes(timing.kind) && <p className="rd-help">This request has been waiting. Review its original pickup time before accepting; contact support if it is no longer valid.</p>}
       <dl className="rd-itinerary"><div><dt>Pickup</dt><dd>{job.pickupLabel}</dd></div><div><dt>Drop-off</dt><dd>{job.dropoffLabel}</dd></div></dl>
       <JobRouteMap key={job.id} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={{lat:job.pickupLat,lng:job.pickupLng}} dropoff={{lat:job.dropoffLat,lng:job.dropoffLng}} navigation="none"/>
-      <div className="rd-preview-fare"><span>Your transport fare</span><strong>₱{fare.toLocaleString('en-PH')}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p>{savedFare && <p>{job.paymentMethod === 'CASH' ? 'Collect' : 'Customer total'}: ₱{savedFare.totalFare} · Includes ₱{savedFare.bookingFee} Fetch-It booking fee</p>}</div>
+      <div className="rd-preview-fare"><span>Your transport fare</span><strong>₱{fare.toLocaleString('en-PH')}</strong><p>{job.distanceKm} km · {job.type === 'RIDE' ? `${job.passengers ?? 1} passenger(s)` : `${job.cargoWeightKg} kg cargo`}</p><p>{job.paymentMethod === 'CASH' ? 'Cash to collect' : 'Customer total'}: ₱{job.totalFare.toFixed(2)}{savedFare ? ` · Includes ₱${savedFare.bookingFee} Fetch-It booking fee` : ''}</p></div>
       <p className="rd-help">Requested {formatJobTime(job.createdAt)} · PH time. Customer contact details become available after acceptance.</p>
     </div>
     <div className="rd-flow-actions">

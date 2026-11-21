@@ -1,6 +1,13 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');const ts=require('typescript');
 function load(file,deps={},globals={}){deps={'@/lib/booking-client-timing':{startBookingTiming:()=>({headers:{},response(){},finish(){}})},'@/lib/booking-mutation-client':{savedMutation:async()=>null},...deps};const exports={};const compiled=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText;vm.runInNewContext(compiled,{exports,Date,Number,Error,URL,AbortController,AbortSignal,require(name){if(name==="@/lib/fare-policy")return require("./helpers/fare-policy.cjs");if(name in deps)return deps[name];throw Error('Unexpected dependency '+name);},...globals});return exports;}
 const ui=load('src/lib/rider-workspace.ts'),policy=load('src/lib/payment-policy.ts');
+
+test('history displays the actual finished time and labels missing legacy timestamps honestly',()=>{
+ const booked={status:'DELIVERED',createdAt:'2026-11-20T15:00:00Z',deliveredAt:'2026-11-21T03:00:00Z'};
+ assert.equal(ui.historyJobTime(booked).value,booked.deliveredAt);assert.equal(ui.historyJobTime(booked).label,'Completed');
+ assert.equal(ui.historyJobTime({...booked,deliveredAt:null}).label,'Booked');
+ assert.equal(ui.historyJobTime({...booked,status:'CANCELLED',cancelledAt:'2026-11-21T02:00:00Z'}).label,'Cancelled');
+});
 const appPolicy=load('src/lib/rider-application-policy.ts'),registration=load('src/lib/rider-registration.ts',{'./rider-application-policy':appPolicy});
 function nodes(node){return !node||typeof node!=='object'?[]:Array.isArray(node)?node.flatMap(nodes):[node,...nodes(node.props?.children)];}
 function text(tree){return nodes(tree).flatMap(node=>[node.props?.children].flat().filter(value=>typeof value==='string'||typeof value==='number')).join(' ');}

@@ -1,6 +1,8 @@
 import type { BookingStatus, VehicleClass } from './constants';
 
 export interface RiderJob {
+  deliveredAt?: string | null;
+  cancelledAt?: string | null;
   hasDeliveryPhoto?: boolean;
   customerPickupConfirmedAt?: string | null;
   customerDropoffConfirmedAt?: string | null;
@@ -24,6 +26,11 @@ export const isHistoryJob = (job: Pick<RiderJob, 'status'>) => ['DELIVERED', 'CA
 export const isUpcomingJob = (job: Pick<RiderJob, 'scheduledAt'>, now = Date.now()) => !!job.scheduledAt && Date.parse(job.scheduledAt) > now;
 export function formatJobTime(value: string) {
   return Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : 'Time unavailable';
+}
+
+export function historyJobTime(job: Pick<RiderJob, 'status' | 'createdAt' | 'deliveredAt' | 'cancelledAt'>) {
+  const finished = job.status === 'DELIVERED' ? job.deliveredAt : job.status === 'CANCELLED' ? job.cancelledAt : null;
+  return { value: finished || job.createdAt, label: finished ? job.status === 'DELIVERED' ? 'Completed' : 'Cancelled' : 'Booked' };
 }
 export function nextJobStop(job: Pick<RiderJob, 'status' | 'pickupLabel' | 'dropoffLabel'>) {
   const pickup = ['PENDING', 'MATCHED', 'ACCEPTED'].includes(job.status);

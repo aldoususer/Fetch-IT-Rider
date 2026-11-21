@@ -363,7 +363,7 @@ function HeroCard() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold truncate">Closed Van · FIT-2099</p>
-              <p className="text-xs text-muted-foreground truncate">Payout ₱48.20 · 8.4 km · ★ 4.9</p>
+              <p className="text-xs text-muted-foreground truncate">Transport fare ₱48.20 · 8.4 km · ★ 4.9</p>
             </div>
             <Badge variant="outline" className="text-emerald-700 border-emerald-300 bg-emerald-50 text-xs">
               In transit

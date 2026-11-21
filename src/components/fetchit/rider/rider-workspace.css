@@ -118,3 +118,14 @@
 .rd-trip-details>div { margin-top: 12px; }
 .rd-trip-details>.rd-details { margin-top: 16px; }
 .rd-history-copy>strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.45; }
+
+.rd-current-job { display: flex; flex-direction: column; gap: 24px; }
+.rd-current-job>*+* { margin-top: 0; }
+.rd-current-job>section,.rd-current-job>div { flex-shrink: 0; }
+.rd-collect-total { flex-basis: 100%; color: var(--rd-muted); font-size: 14px; }
+.rd-external-heading { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.rd-external-heading span { font-size: 13px; font-weight: 400; color: var(--rd-muted); }
+.rd .rd-history-row:focus-visible,.rd-job-screen summary:focus-visible { outline: 2px solid #173c32; outline-offset: 3px; }
+.rd-job-screen button:active,.rd-history-row:active { transform: translateY(1px); }
+.rd-job-screen button:disabled { cursor: not-allowed; }
+@media(prefers-reduced-motion:reduce){.rd-job-screen button:active,.rd-history-row:active{transform:none}}

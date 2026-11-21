@@ -6,7 +6,8 @@ import { readFareSnapshot } from "@/lib/fare-policy";
 import { Button } from "@/components/ui/button";
 import { PAYMENT_STATUS_LABEL, PAYMENT_METHOD_LABEL, cashConfirmationAvailable, completionPaymentError, deliveryCashCompletionError, isDemoPayment, type PaymentMethod, type PaymentStatus } from "@/lib/payment-policy";
 type PaymentBooking = { fareBreakdown?: unknown; type: string; dropoffReachedAt: string | null; paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; status: string; totalFare: number; customerPaidAmount: number | null; riderReceivedAmount: number | null; customerPaidAt: string | null; riderReceivedAt: string | null; paidAt: string | null; paymentReference: string | null; demoCommissionBps: number | null; demoCommission: number | null; demoRiderEarnings: number | null; demoPayoutAt: string | null; demoPayoutReference: string | null };
-export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = false, embedded = false, actionsDisabled = false, onActionFailure, onPaymentReady }: { bookingId: string; role: "CUSTOMER" | "RIDER"; readOnly?: boolean; summaryOnly?: boolean; embedded?: boolean; actionsDisabled?: boolean; onActionFailure?: () => void; onPaymentReady?: (ready: boolean) => void }) {
+export type PaymentAction = { formId: string; label: string; disabled: boolean; busy: boolean };
+export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = false, embedded = false, actionsDisabled = false, onActionFailure, onPaymentReady, onPaymentAction }: { bookingId: string; role: "CUSTOMER" | "RIDER"; readOnly?: boolean; summaryOnly?: boolean; embedded?: boolean; actionsDisabled?: boolean; onActionFailure?: () => void; onPaymentReady?: (ready: boolean) => void; onPaymentAction?: (action: PaymentAction | null) => void }) {
   const [booking, setBooking] = useState<PaymentBooking | null>(null);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
@@ -64,7 +65,6 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
       outcome = uncertain ? "uncertain" : "failed"; onActionFailure?.();
     } finally { pending.current = false; setBusy(false); timing.finish(outcome); }
   }
-  if (readOnly) return <p className="text-xs text-muted-foreground">Reconnect to view the payment record.</p>;
   const confirmed = role === "CUSTOMER" ? booking?.customerPaidAt : booking?.riderReceivedAt;
   const savedFare = booking ? readFareSnapshot(booking.fareBreakdown, booking.totalFare) : null;
   const demo = booking && isDemoPayment(booking.paymentMethod);
@@ -73,6 +73,16 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
   const deliveryCash = booking?.type === "DELIVERY" && booking.paymentMethod === "CASH";
   const canArrive = !summaryOnly && role === "RIDER" && deliveryCash && booking.status === "IN_TRANSIT" && !booking.dropoffReachedAt;
   const mismatch = booking && booking.customerPaidAmount !== null && booking.riderReceivedAmount !== null && (booking.customerPaidAmount !== booking.riderReceivedAmount || booking.customerPaidAmount !== booking.totalFare);
+  const docked = embedded && !!onPaymentAction;
+  const formId = `payment-action-${bookingId}`;
+  const actionKind = canArrive ? 'dropoff_arrival' : canConfirm ? 'cash_payment' : null;
+  const actionLabel = canArrive ? busy ? 'Confirming arrival…' : 'I’m at drop-off' : busy ? 'Confirming cash…' : 'Confirm cash received';
+  const actionDisabled = busy || actionsDisabled || (actionKind === 'cash_payment' && !amount);
+  useEffect(() => {
+    onPaymentAction?.(docked && !readOnly && !summaryOnly && actionKind ? { formId, label: actionLabel, disabled: actionDisabled, busy } : null);
+  }, [onPaymentAction, docked, readOnly, summaryOnly, actionKind, formId, actionLabel, actionDisabled, busy]);
+  useEffect(() => () => onPaymentAction?.(null), [onPaymentAction]);
+  if (readOnly) return <p className="text-xs text-muted-foreground">Reconnect to view the payment record.</p>;
   return <section className={embedded ? "rd-payment-content space-y-3 text-sm" : "rounded-xl border p-4 space-y-3 text-sm"} aria-label="Payment" aria-busy={!booking && !error}>
     <div className="flex justify-between gap-2"><strong>{booking ? PAYMENT_METHOD_LABEL[booking.paymentMethod] : "Payment"}</strong><span role="status">{booking ? PAYMENT_STATUS_LABEL[booking.paymentStatus] : "Checking payment status…"}</span></div>
     {savedFare && <dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt>{role === "RIDER" ? "Your transport fare" : "Transport fare"}</dt><dd>₱{savedFare.transportFare}</dd></div><div className="flex justify-between gap-3"><dt>Fetch-It booking fee</dt><dd>₱{savedFare.bookingFee}</dd></div><div className="flex justify-between gap-3 font-semibold"><dt>Total fare</dt><dd>₱{savedFare.totalFare}</dd></div></dl>}
@@ -81,13 +91,13 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
     {demo && <p className="text-xs text-muted-foreground">Test payment — no money charged. {role === "RIDER" ? "Online payment: do not collect cash." : ""}</p>}
     {deliveryCash && !["IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(booking.status) && <p className="text-xs text-muted-foreground">Cash is collected at drop-off. Confirmation will appear after arrival.</p>}
     {!embedded && !summaryOnly && deliveryCash && booking.status === "IN_TRANSIT" && <><p role="status" className="rounded-lg bg-muted/40 p-3">{!booking.dropoffReachedAt ? "At the destination, confirm arrival to open cash payment." : booking.riderReceivedAt && !booking.customerPaidAt ? "Your cash confirmation is saved. Waiting for the customer to confirm payment." : deliveryCashCompletionError(booking) ?? "Cash payment confirmed by both sides. Collect the recipient signature and drop-off photo to complete delivery."}</p><ol className="rd-payment-progress" aria-label="Cash delivery checklist">{[['Arrived at drop-off', !!booking.dropoffReachedAt], ['Cash received by you', !!booking.riderReceivedAt], ['Customer confirmed payment', !!booking.customerPaidAt]].map(([label, done], index)=><li key={String(label)} className={done?'is-done':''}><span aria-hidden="true">{done?'✓':index+1}</span><span>{String(label)}<span className="sr-only">{done?' complete':' pending'}</span></span></li>)}</ol></>}
-    {canArrive && <Button type="button" size="sm" disabled={busy || actionsDisabled} onClick={() => void confirmCash("dropoff_arrival")}>{busy ? "Confirming arrival…" : "I’m at drop-off"}</Button>}
+    {canArrive && (docked ? <form id={formId} onSubmit={event => { event.preventDefault(); void confirmCash('dropoff_arrival'); }}><p>At the destination, use “I’m at drop-off” below to open cash confirmation.</p></form> : <Button type="button" size="sm" disabled={busy || actionsDisabled} onClick={() => void confirmCash("dropoff_arrival")}>{busy ? "Confirming arrival…" : "I’m at drop-off"}</Button>)}
     {embedded && booking && !demo && <>
       {!savedFare && <p className="rd-payment-total">Total cash fare <strong>₱{Number(booking.totalFare).toFixed(2)}</strong></p>}
-      {booking.status === 'IN_TRANSIT' && <ol className="rd-payment-progress" aria-label="Payment confirmation checklist">
+      {(booking.status === 'IN_TRANSIT' || summaryOnly) && <ol className="rd-payment-progress" aria-label="Payment confirmation checklist">
         {deliveryCash && <li className={booking.dropoffReachedAt ? 'is-done' : ''}><span aria-hidden="true">{booking.dropoffReachedAt ? '✓' : '1'}</span><span>Arrived at drop-off · {booking.dropoffReachedAt ? 'Done' : 'Pending'}</span></li>}
-        <li className={booking.riderReceivedAt ? 'is-done' : ''}><span aria-hidden="true">{booking.riderReceivedAt ? '✓' : '○'}</span><span>Cash received by you · {booking.riderReceivedAt ? 'Confirmed' : 'Pending'}</span></li>
-        <li className={booking.customerPaidAt ? 'is-done' : ''}><span aria-hidden="true">{booking.customerPaidAt ? '✓' : '○'}</span><span>Customer payment · {booking.customerPaidAt ? 'Confirmed' : 'Pending'}</span></li>
+        <li className={booking.riderReceivedAt ? 'is-done' : ''}><span aria-hidden="true">{booking.riderReceivedAt ? '✓' : '○'}</span><span>Cash received by you · {booking.riderReceivedAt ? `₱${Number(booking.riderReceivedAmount).toFixed(2)} confirmed` : 'Pending'}</span></li>
+        <li className={booking.customerPaidAt ? 'is-done' : ''}><span aria-hidden="true">{booking.customerPaidAt ? '✓' : '○'}</span><span>Customer payment · {booking.customerPaidAt ? `₱${Number(booking.customerPaidAmount).toFixed(2)} confirmed` : 'Pending'}</span></li>
       </ol>}
       {booking.riderReceivedAt && !booking.customerPaidAt && <p role="status">Your cash confirmation is saved. Ask the customer to confirm payment in their booking.</p>}
       {mismatch && <p role="alert" className="text-destructive">The cash confirmations do not match the fare. Contact support before completing this job.</p>}
@@ -105,7 +115,7 @@ export function PaymentCard({ bookingId, role, readOnly = false, summaryOnly = f
       } catch (error) { setError(error instanceof Error ? error.message : "Reconnect to open checkout."); }
       finally { pending.current = false; setBusy(false); }
     }}>{busy ? "Opening…" : booking.paymentStatus === "PENDING" ? "Resume payment" : "Continue to payment"}</Button>}
-    {canConfirm && <form className="space-y-2" onSubmit={event => { event.preventDefault(); void confirmCash("cash_payment"); }}><label className="block">{role === "CUSTOMER" ? "Amount you paid (₱)" : "Cash you received (₱)"}<input required type="number" min="0.01" step="0.01" max="9999999999.99" value={amount} disabled={busy || actionsDisabled} onChange={event => setAmount(event.target.value)} className="mt-1 w-full rounded-md border bg-background p-2" /></label><p className="text-xs text-muted-foreground">Confirm only after cash changes hands. Both confirmations must match the fare.</p><Button type="submit" size="sm" disabled={busy || actionsDisabled || !amount}>{busy ? "Confirming…" : role === "CUSTOMER" ? "Confirm cash paid" : "Confirm cash received"}</Button></form>}
+    {canConfirm && <form id={docked ? formId : undefined} className="space-y-2" onSubmit={event => { event.preventDefault(); void confirmCash("cash_payment"); }}><label className="block">{role === "CUSTOMER" ? "Amount you paid (₱)" : "Cash you received (₱)"}<input required type="number" min="0.01" step="0.01" max="9999999999.99" value={amount} disabled={busy || actionsDisabled} onChange={event => setAmount(event.target.value)} className="mt-1 w-full rounded-md border bg-background p-2" /></label><p className="text-xs text-muted-foreground">Confirm only after cash changes hands. Both confirmations must match the fare.</p>{!docked && <Button type="submit" size="sm" disabled={busy || actionsDisabled || !amount}>{busy ? "Confirming…" : role === "CUSTOMER" ? "Confirm cash paid" : "Confirm cash received"}</Button>}</form>}
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" className="text-destructive">{error}</p>}
   </section>;
 }
