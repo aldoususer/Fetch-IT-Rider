@@ -103,3 +103,18 @@
 
 .rd-job-screen button[title="Clear"] { width: 48px; height: 48px; }
 .rd-job-screen { overflow: clip; }
+
+/* The job has one next action; detail and payment regions own their explanations. */
+.rd-next-action { gap: 8px; }
+.rd-next-action .rd-help { margin: 0; font-size: 14px; line-height: 1.4; }
+.rd-confirmations,.rd-payment-panel { padding: 16px; border: 1px solid var(--rd-border); border-radius: 12px; display: grid; gap: 12px; background: var(--rd-surface); }
+.rd-confirmations p { margin: 0; font-size: 15px; line-height: 1.5; color: var(--rd-muted); }
+.rd-confirmations>a { display: inline-flex; align-items: center; min-height: 48px; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+.rd-payment-panel>details>summary,.rd-payment-content summary { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; font-size: 15px; }
+.rd-payment-content { font-size: 15px; line-height: 1.5; }
+.rd-payment-content input,.rd-payment-content button { min-height: 48px; font-size: 16px; }
+.rd-payment-content button { width: 100%; }
+.rd-payment-total { display: flex; justify-content: space-between; gap: 12px; }
+.rd-trip-details>div { margin-top: 12px; }
+.rd-trip-details>.rd-details { margin-top: 16px; }
+.rd-history-copy>strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.45; }

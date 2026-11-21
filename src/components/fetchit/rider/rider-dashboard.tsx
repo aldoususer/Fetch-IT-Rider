@@ -93,6 +93,8 @@ import { ArrowLeft } from 'lucide-react';
 import { HistoryFilters } from './history-filters';
 import { CancellationNotice } from './cancellation-notice';
 import type { CancellationSummary } from '@/lib/rider-cancellation-policy';
+import { riderNextAction } from '@/lib/rider-next-action';
+import { CustomerConfirmationChecklist } from './customer-confirmation-checklist';
 import "./rider-workspace.css";
 
 interface RiderStats {
@@ -360,6 +362,7 @@ export function RiderDashboard() {
     knownJobs.current.set(job.id, job);
     navigation.navigate(isHistoryJob(job) ? 'history' : ['PENDING', 'MATCHED'].includes(job.status) ? 'available' : 'active', job.id);
   }
+  useEffect(() => { if (stats && !statsError) navigation.preferActive(stats.activeJobs > 0); }, [stats, statsError, navigation.preferActive]);
   function closeJob() { navigation.close(); }
   const deviceNotificationsReady = alerts.browserEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted';
   const matchingReady = stats?.matchingReady === true && deviceNotificationsReady && connected && !statsError;
@@ -387,11 +390,11 @@ export function RiderDashboard() {
         <TabsTrigger value="active"><CircleDot size={20}/><span className="rd-tab-label">Active <span className="rd-tab-count">{stats?.activeJobs??'—'}</span></span></TabsTrigger>
         <TabsTrigger value="history"><Clock size={20}/><span className="rd-tab-label">History</span></TabsTrigger>
       </TabsList></Tabs>
-      {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected && !reconnecting ? 'Updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Last confirmed '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})+' · Updates paused'}</p>}
+      {jobsCheckedAt && <p className="rd-sync" title={jobsCheckedAt ? `Last checked ${new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila'})} · PH time` : undefined}>{connected && !reconnecting ? 'Jobs updated '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) : 'Jobs last confirmed '+new Date(jobsCheckedAt).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})+' · Updates paused'}</p>}
       {tab==='history' && <HistoryFilters query={historyQuery} status={historyFilter} date={historyDate} open={historyFiltersOpen} onQuery={setHistoryQuery} onStatus={setHistoryFilter} onDate={setHistoryDate} onToggle={()=>setHistoryFiltersOpen(value=>!value)} onClear={clearHistoryFilters}/>}
       {tab==='available' && cancellationPaused ? <CancellationNotice summary={stats!.cancellation!}/> : loading ? <div className="rd-jobs-grid" aria-label="Loading jobs">{[0,1].map(i=><Card key={i}><CardHeader><Skeleton className="h-6 w-40"/></CardHeader><CardContent><Skeleton className="h-20 w-full"/></CardContent></Card>)}</div>
         : jobLists[listKey]===undefined ? null
-        : jobs.length===0 && !(tab==='history' && (historyDate || historyQuery || historyFilter!=='ALL')) ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
+        : tab==='available' && !!stats?.activeJobs && jobs.length===0 ? null : jobs.length===0 && !(tab==='history' && (historyDate || historyQuery || historyFilter!=='ALL')) ? <EmptyJobs connected={connected} onFindJobs={()=>navigation.navigate("available")} onActiveJobs={()=>navigation.navigate("active")} tab={tab} isOnline={stats?stats.isOnline:null} paused={paused} activeJobs={stats?.activeJobs ?? 0} pauseReason={pauseReason} onGoOnline={()=>void toggleOnline(true)} onResume={()=>setOnlineSetupOpen(true)}/>
         : tab==='history' ? <section className="rd-history-list" aria-label="Booking history">{visibleHistory.map(job=><JobHistoryRow key={job.id} job={job} onOpen={()=>openJob(job)}/>)}{!visibleHistory.length && <div className="rd-notice"><p>No bookings match this date or search. Try another date, address or status, or clear your filters.</p><Button variant="outline" className="min-h-12" onClick={clearHistoryFilters}>Clear filters</Button></div>}{jobs.length===100 && <p className="rd-help">{historyDate ? 'Showing the 100 most recent bookings on this date.' : 'Searching your 100 most recent bookings.'}</p>}</section>
         : tab==='available' ? <>{jobs.some(job=>job.status==='MATCHED') && <section className="rd-offers" aria-labelledby="rider-offers-heading"><h2 id="rider-offers-heading">Offered to you</h2><p>Exclusive offers. Accept or decline before the timer ends.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='MATCHED').map(job=><div key={job.id}><OfferCountdown expiresAt={job.assignmentExpiresAt}/><JobCard job={job} isAvailable onOpen={()=>openJob(job)}/></div>)}</div></section>}{jobs.some(job=>job.status==='PENDING') && <section className="rd-open-requests" aria-labelledby="open-requests-heading"><h2 id="open-requests-heading">Open requests</h2><p>Choose a request that fits your trip.</p><div className="rd-jobs-grid">{jobs.filter(job=>job.status==='PENDING').map(job=><JobCard key={job.id} job={job} isAvailable onOpen={()=>openJob(job)}/>)}</div></section>}</> : <div className="rd-jobs-grid">{jobs.map(job=><JobCard key={job.id} job={job} isAvailable={false} onOpen={()=>openJob(job)}/>)}</div>}
       {tab==='available' && !cancellationPaused && upcomingJobs.length>0 && <section className="rd-upcoming" aria-labelledby="upcoming-jobs-heading"><h2 id="upcoming-jobs-heading">Upcoming · {upcomingJobs.length}</h2><p>Scheduled requests matching your vehicle and services. Acceptance opens when pickup is due.</p><div className="rd-jobs-grid">{upcomingJobs.map(job=><JobCard key={job.id} job={job} isAvailable upcoming onOpen={()=>openJob(job)}/>)}</div></section>}
@@ -647,7 +650,7 @@ function ActiveJobFlow({
   const [pickupOtpError, setPickupOtpError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
   const [proofState, setProofState] = useState<ProofState>({ busy: false, preparing: false, hasSignature: false, hasPhoto: false });
-  const paymentSection=useRef<HTMLDivElement>(null), proofSection=useRef<HTMLDivElement>(null), pickupInput=useRef<HTMLInputElement>(null);
+  const confirmationSection=useRef<HTMLDivElement>(null), paymentSection=useRef<HTMLDivElement>(null), proofSection=useRef<HTMLDivElement>(null), pickupInput=useRef<HTMLInputElement>(null);
   const draftCallback=useRef(onDraftChange);
   useEffect(()=>{draftCallback.current=onDraftChange;},[onDraftChange]);
   useEffect(()=>{draftCallback.current(!!pickupOtp || !!proofState.unsafe);return()=>draftCallback.current(false);},[pickupOtp,proofState.unsafe]);
@@ -739,11 +742,15 @@ function ActiveJobFlow({
     : null;
 
   const isDelivered = status === "DELIVERED";
+  const action = riderNextAction({ ...job, pickupCode: pickupOtp, paymentReady, proofOpen: showProof });
+  function reviewSection(section: HTMLDivElement | null) {
+    section?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    section?.focus({ preventScroll: true });
+  }
 
   return (
     <div className="rd-flow"><div className="rd-flow-body space-y-4">
-      {!ready && <section className="rd-notice" role="status"><p>{recovery.error || "Checking the latest booking before enabling updates. Your entered details are kept."}</p>{recovery.error && <Button variant="outline" disabled={!connectionReady} onClick={()=>void recovery.recheck()}>Retry booking check</Button>}</section>}
-      {ready && recovery.confirmedAt > 0 && <p className="rd-help" role="status">Job status confirmed at {new Date(recovery.confirmedAt).toLocaleTimeString('en-PH', {timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'})} · PH time</p>}
+      {recovery.error && <section className="rd-notice" role="status"><p>{recovery.error}</p><Button variant="outline" disabled={!connectionReady} onClick={()=>void recovery.recheck()}>Retry booking check</Button></section>}
       {actionPhase && <div className="space-y-2"><p className="rd-proof-status" role="status"><Loader2 size={20} className="animate-spin" aria-hidden="true"/>{actionPhase}</p><SlowRequestFeedback message="This update is taking longer than usual. Keep this job open while we check its status; avoid sending it again."/></div>}
       {/* Stepper */}
       <div className="flex items-center justify-between gap-2">
@@ -764,7 +771,7 @@ function ActiveJobFlow({
                 {active ? <CheckCircle2 className="h-4 w-4" /> : idx + 1}
               </div>
               <div className={cn("text-xs mt-1.5", active ? "text-foreground font-medium" : "text-muted-foreground")}>
-                {statusLabel(s, isRide ? "RIDE" : "DELIVERY")}
+                {isRide && s === "PICKED_UP" ? "Code verified" : statusLabel(s, isRide ? "RIDE" : "DELIVERY")}
               </div>
             </div>
           );
@@ -774,6 +781,12 @@ function ActiveJobFlow({
       <div className="rd-current-stop"><p>Next stop · {nextJobStop(job).label}</p><strong>{nextJobStop(job).address}</strong></div>
       {isRide && status === "ACCEPTED" && <PickupProgress key={`pickup:${job.id}`} bookingId={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} />}
       <JobRouteMap key={`map:${job.id}`} bookingId={job.id} stage={job.status} vehicleClass={job.vehicleClass} pickup={{ lat: job.pickupLat, lng: job.pickupLng }} dropoff={{ lat: job.dropoffLat, lng: job.dropoffLng }} navigation={nextJobStop(job).navigation}/>
+      {isRide && ['PICKED_UP', 'IN_TRANSIT'].includes(status) && <div ref={confirmationSection} tabIndex={-1}><CustomerConfirmationChecklist job={job}/></div>}
+      <div ref={paymentSection} tabIndex={-1} className="rd-payment-panel">
+        {status === 'IN_TRANSIT' ? <><h3 className="font-semibold">Payment</h3><PaymentCard embedded key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady}/></>
+          : <details><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard embedded key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady}/></details>}
+      </div>
+      <details className="rd-details rd-trip-details"><summary>Trip details<ChevronDown size={16} aria-hidden="true"/></summary>
       {/* Itinerary */}
       <div className="space-y-2 text-sm">
         <div className="flex items-start gap-2">
@@ -813,11 +826,9 @@ function ActiveJobFlow({
         )}
       </div>
 
-      <div ref={paymentSection} tabIndex={-1}><details className="rd-details" open={status === 'IN_TRANSIT'}><summary>Payment details<ChevronDown size={16} aria-hidden="true"/></summary><PaymentCard key={`${job.id}:${status}`} bookingId={job.id} role="RIDER" actionsDisabled={!ready} onActionFailure={()=>void recovery.recheck()} onPaymentReady={setPaymentReady} /></details></div>
-      {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} onReleased={() => { onClose(); onUpdated({}); }} />}
-
-      {/* Native-app tracking ticket */}
       {job.ticketId && <details className="rd-details"><summary>Optional tracking ticket<ChevronDown size={16} aria-hidden="true"/></summary><TrackingTicketCard job={job}/></details>}
+      </details>
+      {["MATCHED", "ACCEPTED"].includes(status) && <ReleaseBooking id={job.id} disabled={!ready} onActionFailure={()=>void recovery.recheck()} onReleased={() => { onClose(); onUpdated({}); }} />}
 
       {/* Customer contact */}
       <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
@@ -838,7 +849,7 @@ function ActiveJobFlow({
         <Card className="border-primary/30 bg-primary/5 py-0">
           <CardContent className="space-y-3 p-4">
             <Label htmlFor={`pickup-otp-${job.id}`} className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Passenger pickup code</Label>
-            <p className="text-sm text-muted-foreground">At pickup, scan the passenger’s QR or enter their six-digit code. Verify it below to confirm the passenger is on board.</p>
+            <p className="text-sm text-muted-foreground">At pickup, scan the passenger’s QR or enter their six-digit code. Verify the code, then ask the customer to confirm boarding in their ride screen.</p>
             <PickupQrScanner bookingId={job.id} disabled={!ready || updating} onScan={code => { setPickupOtp(code); setPickupOtpError(null); }} />
             <Input ref={pickupInput} id={`pickup-otp-${job.id}`} inputMode="numeric" autoComplete="off" maxLength={6} placeholder="6-digit code" value={pickupOtp} disabled={updating} onChange={event => { setPickupOtp(event.target.value.replace(/\D/g, "").slice(0, 6)); setPickupOtpError(null); }} aria-invalid={!!pickupOtpError} className="font-mono text-lg tracking-widest" />
             {pickupOtpError && <p role="alert" className="text-sm text-destructive">{pickupOtpError}</p>}
@@ -847,7 +858,7 @@ function ActiveJobFlow({
       )}
 
       {showProof && (
-        <div ref={proofSection}><ProofCapture
+        <div ref={proofSection}><div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Delivery proof</h3><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(!proofState.unsafe || window.confirm("Some proof details have not finished saving. Close anyway?"))setShowProof(false);}}>Close proof capture</Button></div><ProofCapture
           disabled={!ready || !paymentReady}
           onActionFailure={()=>void recovery.recheck()}
           bookingId={job.id}
@@ -864,33 +875,14 @@ function ActiveJobFlow({
 
       </div>
             {!isDelivered ? (
-        <div className="rd-flow-actions">
-          {isRide && status === 'ACCEPTED' && !pickupOtp && <Button variant="outline" onClick={()=>{pickupInput.current?.scrollIntoView({block:'center'});pickupInput.current?.focus({preventScroll:true});}}>Enter passenger pickup code</Button>}
-          {canAdvance && (
-            <Button
-              size="lg"
-              onClick={() => advance(nextStatus!)}
-              disabled={!ready || updating || !!customerConfirmationMessage || (nextStatus === 'DELIVERED' && !paymentReady) || (isRide && nextStatus === "PICKED_UP" && !/^\d{6}$/.test(pickupOtp))}
-              className="w-full"
-            >
-              {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              {nextLabel}
-            </Button>
-          )}
-          {customerConfirmationMessage && <p role="status" className="rd-help">{customerConfirmationMessage}</p>}
-          {isRide && job.customerPickupConfirmedAt && <p className="rd-help">Customer confirmed pickup{job.customerDropoffConfirmedAt ? " and arrival at drop-off" : ""}.</p>}
-          {status === 'IN_TRANSIT' && isRide && !paymentReady && <><p className="rd-help">Payment must be confirmed before completing this ride.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment</Button></>}
-          {status === 'IN_TRANSIT' && !isRide && job.paymentMethod === 'CASH' && !paymentReady && <><p className="rd-help">Confirm arrival and cash payment before collecting delivery proof.</p><Button variant="outline" onClick={()=>{paymentSection.current?.scrollIntoView({block:'start',behavior:'smooth'});paymentSection.current?.focus({preventScroll:true});}}>Review payment steps</Button></>}
-          {status === "IN_TRANSIT" && !isRide && !showProof && (
-            <Button
-              size="lg"
-              onClick={() => setShowProof(true)}
-              disabled={!ready || updating || !paymentReady}
-            >
-              <ShieldCheck className="h-4 w-4" /> Capture signature & photo
-            </Button>
-          )}
-          {showProof && <><p className="rd-proof-checklist" role="status"><span className={proofState.hasSignature ? 'is-ready' : ''}>{proofState.hasSignature ? '✓ Signature ready' : '○ Signature needed'}</span><span className={proofState.hasPhoto ? 'is-ready' : ''}>{proofState.hasPhoto ? '✓ Photo ready' : '○ Photo needed'}</span></p><Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || !paymentReady || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button><Button variant="ghost" disabled={proofState.busy} onClick={()=>{if(!proofState.unsafe || window.confirm("Some proof details have not finished saving. Close anyway?"))setShowProof(false);}}>Close proof capture</Button></>}
+        <div className="rd-flow-actions rd-next-action">
+          <p className="rd-help" role="status">{!ready ? 'Checking the latest job status…' : action.hint || (showProof ? `${proofState.hasSignature ? 'Signature ready' : 'Signature needed'} · ${proofState.hasPhoto ? 'Photo ready' : 'Photo needed'}` : 'Ready for your next step.')}</p>
+          {action.kind === 'pickup' ? <Button disabled={!ready || updating} onClick={()=>{pickupInput.current?.scrollIntoView({block:'center'});pickupInput.current?.focus({preventScroll:true});}}>{action.label}</Button>
+            : action.kind === 'confirmation' ? <Button disabled={!ready || updating} onClick={()=>reviewSection(confirmationSection.current)}>{action.label}</Button>
+            : action.kind === 'payment' ? <Button disabled={!ready || updating} onClick={()=>reviewSection(paymentSection.current)}>{action.label}</Button>
+            : action.kind === 'proof' ? <Button disabled={!ready || updating || !paymentReady} onClick={()=>setShowProof(true)}><ShieldCheck size={18}/>{action.label}</Button>
+            : action.kind === 'submit-proof' ? <Button type="submit" form={`delivery-proof-${job.id}`} disabled={!ready || !paymentReady || proofState.busy || updating || !proofState.hasSignature || !proofState.hasPhoto}>{proofState.preparing ? 'Preparing photo…' : proofState.busy ? 'Confirming delivery…' : 'Complete delivery'}</Button>
+            : canAdvance && <Button size="lg" onClick={()=>advance(nextStatus!)} disabled={!ready || updating || !!customerConfirmationMessage || (nextStatus === 'DELIVERED' && !paymentReady)}>{updating ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} {nextLabel}</Button>}
         </div>
       ) : (
         <Card className="border-emerald-300 bg-emerald-50/40">

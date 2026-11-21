@@ -8,6 +8,7 @@ const validTab = (value: unknown): value is RiderTab => ['available', 'active', 
 // Keep job details in browser history so device Back closes the job first.
 // Only view preferences are stored; booking content and form inputs stay private.
 export function useRiderNavigation(owner: string, onNavigate: (state: RiderNavigation) => void, canLeave: () => boolean) {
+  const automaticDefault = useRef(false);
   const current = useRef<RiderNavigation>({ tab: 'available', jobId: null, scrollY: 0 });
   const callbacks = useRef({ onNavigate, canLeave });
   const scrolls = useRef<Partial<Record<RiderTab, number>>>({});
@@ -25,6 +26,7 @@ export function useRiderNavigation(owner: string, onNavigate: (state: RiderNavig
   useEffect(() => {
     if (!owner) return;
     const url = new URL(window.location.href);
+    automaticDefault.current = !url.searchParams.has('tab') && !url.searchParams.has('job');
     let saved: { tab?: unknown; scrolls?: Partial<Record<RiderTab, number>> } = {};
     try { saved = JSON.parse(sessionStorage.getItem('fetchit:rider-view:' + owner) || '{}'); } catch {}
     for (const tab of ['available', 'active', 'history'] as const) {
@@ -46,6 +48,7 @@ export function useRiderNavigation(owner: string, onNavigate: (state: RiderNavig
     return () => window.removeEventListener('popstate', pop);
   }, [owner, commit]);
   const navigate = useCallback((tab: RiderTab, jobId: string | null = null, replace = false) => {
+    automaticDefault.current = false;
     const previous = current.current;
     if (previous.jobId !== jobId && !callbacks.current.canLeave()) return;
     if (!previous.jobId) {
@@ -59,5 +62,11 @@ export function useRiderNavigation(owner: string, onNavigate: (state: RiderNavig
     if (current.current.detailEntry) window.history.back();
     else commit({ tab: current.current.tab, jobId: null, scrollY: scrolls.current[current.current.tab] ?? 0 }, true);
   }, [commit]);
-  return { navigate, close };
+  const preferActive = useCallback((hasActiveJob: boolean) => {
+    if (!automaticDefault.current) return;
+    automaticDefault.current = false;
+    if (hasActiveJob && current.current.tab === 'available' && !current.current.jobId)
+      commit({ tab: 'active', jobId: null, scrollY: scrolls.current.active ?? 0 }, true);
+  }, [commit]);
+  return { navigate, close, preferActive };
 }

@@ -62,8 +62,12 @@ export function BrowserLocation({ userId, needed, availabilityKnown = true }: { 
       document.removeEventListener("visibilitychange", resume); window.removeEventListener("online", resume); };
   }, [enabled, needed, retry, userId]);
   const fresh = needed && enabled && fix && Math.max(now, Date.now()) - fix.at <= 30_000;
+  const issueLabel = /permission denied/i.test(error) ? 'Location permission blocked'
+    : /timed out/i.test(error) ? 'Location timed out'
+    : /approximate/i.test(error) ? 'Location too approximate'
+    : /determine/i.test(error) ? 'GPS unavailable' : 'Location could not be shared';
   return <details className="rd-location" aria-label="Browser location sharing">
-    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location…' : error ? 'Location needs attention' : !needed ? 'Location inactive' : !enabled ? 'Location sharing off' : fresh && sentAt ? 'Location shared' : 'Finding your location…'}</strong><span className="rd-location-expand">Details</span></summary>
+    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location…' : error ? issueLabel : !needed ? 'Location inactive' : !enabled ? 'Location sharing off' : fresh && sentAt ? 'Location shared' : 'Finding your location…'}</strong><span className="rd-location-expand">Details</span></summary>
     <div className="rd-location-body space-y-3">
     <div><h2 className="font-semibold">Your location</h2><p className="text-xs text-muted-foreground">Used for nearby job offers while online, and shared with your assigned customer during a job. Go offline to stop receiving offers.</p></div>
     <p className="text-sm" role="status">{!availabilityKnown ? 'Checking your availability.' : !needed ? 'Share your location when you go online.' : error || (!fix ? 'Finding your location…' : !fresh ? 'Location needs a refresh. New offers pause when your saved location is over two minutes old.' : sentAt ? 'Location shared' : 'Sharing location…')}</p>

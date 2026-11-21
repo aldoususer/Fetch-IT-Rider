@@ -39,27 +39,27 @@ const text=node=>typeof node==='string'?node:Array.isArray(node)?node.map(text).
 function flow(record=base){const file='src/components/fetchit/rider/rider-dashboard.tsx',source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),fn=ast.statements.find(s=>ts.isFunctionDeclaration(s)&&s.name.text==='ActiveJobFlow');
  const constants=ast.statements.filter(s=>ts.isVariableStatement(s)&&s.declarationList.declarations.some(d=>['STATUS_STEPS','NEXT_STATUS'].includes(d.name.text))).map(s=>s.getText(ast)).join('\n');
  const slots=[];let index=0,requests=0,resolve;const effects=[];const hooks={useRef(initial){const i=index++;return slots[i]??={current:initial};},useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],v=>slots[i]=v];},useEffect(fn){index++;effects.push(fn);}};
- const runtime={jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};const globals={rideConfirmationError:require("./helpers/ride-confirmation-policy.cjs").rideConfirmationError,...hooks,useAppStore: fn=>fn({user:{id:'rider'}}),SlowRequestFeedback:'SlowRequestFeedback',...clientTimingStub,savedMutation:async()=>null,AbortSignal,useToast:()=>({toast(){}}),useBookingRecovery:()=>({ready:true,recheck:async()=>{}}),cn:()=>'',statusLabel:s=>s,nextJobStop:()=>({label:'Drop-off',address:'Local test',navigation:'dropoff'}),riderShare:j=>j.totalFare,
+ const runtime={jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};const globals={riderNextAction:require("./helpers/rider-next-action.cjs").riderNextAction,CustomerConfirmationChecklist:"CustomerConfirmationChecklist",rideConfirmationError:require("./helpers/ride-confirmation-policy.cjs").rideConfirmationError,...hooks,useAppStore: fn=>fn({user:{id:'rider'}}),SlowRequestFeedback:'SlowRequestFeedback',...clientTimingStub,savedMutation:async()=>null,AbortSignal,useToast:()=>({toast(){}}),useBookingRecovery:()=>({ready:true,recheck:async()=>{}}),cn:()=>'',statusLabel:s=>s,nextJobStop:()=>({label:'Drop-off',address:'Local test',navigation:'dropoff'}),riderShare:j=>j.totalFare,
  fetch:async()=>{requests++;return new Promise(done=>resolve=()=>done(Response.json({booking:{...paid,status:'DELIVERED'}})));},loadStatsThroughReload:async()=>{}};
  for(const name of ['Button','Card','CardContent','Stat','CheckCircle2','Users','Package','Navigation','Wallet','ChevronDown','PaymentCard','JobRouteMap','ReleaseBooking','PickupProgress','TrackingTicketCard','Phone','Label','KeyRound','Input','ProofCapture','ShieldCheck','Loader2'])globals[name]=name;
  const module=load(file,{'react/jsx-runtime':runtime},globals,constants+'\nexport '+fn.getText(ast));
  const render=()=>{index=0;return module.ActiveJobFlow({job:record,connectionReady:true,onUpdated(){},onClose(){},onDraftChange(){}});};
  return{render,find:(type,label)=>nodes(render()).find(n=>n.type===type&&(!label||text(n).trim()===label)),complete:()=>nodes(render()).find(n=>n.type==='Button'&&text(n).trim()==='Complete ride'),payment:()=>nodes(render()).find(n=>n.type==='PaymentCard'),get requests(){return requests;},finish(){resolve();}};
 }
-test('Complete ride stays disabled until the payment card verifies readiness; direct clicks also stay blocked',async()=>{
- const h=flow();assert.equal(h.complete().props.disabled,true);await h.complete().props.onClick();assert.equal(h.requests,0);assert(nodes(h.render()).some(n=>n.type==='Button'&&text(n)==='Review payment'));
+test('payment is the next action and completion only appears after saved payment is ready',async()=>{
+ const h=flow();assert.equal(h.complete(),undefined);assert.equal(h.requests,0);assert(nodes(h.render()).some(n=>n.type==='Button'&&text(n)==='Review payment'));
  h.payment().props.onPaymentReady(true);assert.equal(h.complete().props.disabled,false);const button=h.complete(),first=button.props.onClick(),second=button.props.onClick();assert.equal(h.requests,1);h.finish();await Promise.all([first,second]);
- h.payment().props.onPaymentReady(false);assert.equal(h.complete().props.disabled,true);
+ h.payment().props.onPaymentReady(false);assert.equal(h.complete(),undefined);assert(h.find('Button','Review payment'));
 });
 test('shared payment policy preserves delivery cash walls and validates online readiness',()=>{
  assert.match(policy.deliveryCashCompletionError({...base,type:'DELIVERY'}),/drop-off/);assert.equal(policy.deliveryCashCompletionError({...paid,type:'DELIVERY'}),null);assert(policy.completionPaymentError({...base,paymentMethod:'DEMO_GCASH'}));assert.equal(policy.completionPaymentError({...base,paymentMethod:'DEMO_GCASH',paymentStatus:'PAID'}),null);
 });
-function card(record,role='RIDER'){
+function card(record,role='RIDER',embedded=false){
  const slots=[],effects=new Map(),queued=[],reports=[],handlers={};let index=0,reply=()=>Response.json({booking:record}),readOnly=false;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=value];},useRef(initial){const i=index++;return slots[i]??={current:initial};},useEffect(fn,deps){const i=index++,prior=effects.get(i);if(!prior||deps.some((value,n)=>!Object.is(value,prior[n]))){effects.set(i,deps);queued.push(fn);}}};
  const runtime={jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},report=value=>reports.push(value);
  const module=load('src/components/fetchit/shared/payment-card.tsx',{'react':hooks,'react/jsx-runtime':runtime,'@/components/ui/button':{Button:'button'},'@/lib/payment-policy':policy},{document:{hidden:false},navigator:{onLine:true},setInterval:()=>1,clearInterval(){},window:{addEventListener:(name,fn)=>handlers[name]=fn,removeEventListener(){}},fetch:async()=>reply()});
- const render=()=>{index=0;const tree=module.PaymentCard({bookingId:'job',role,readOnly,onPaymentReady:report});while(queued.length)queued.shift()();return tree;};
+ const render=()=>{index=0;const tree=module.PaymentCard({bookingId:'job',role,readOnly,embedded,onPaymentReady:report});while(queued.length)queued.shift()();return tree;};
  return{render,reports,handlers,setReply:fn=>reply=fn,setReadOnly:value=>readOnly=value,async ready(){render();await new Promise(resolve=>setImmediate(resolve));return render();}};
 }
 test('payment card reports readiness only for matching saved confirmations or paid online checkout',async()=>{
@@ -80,5 +80,19 @@ test('ride feedback identifies the missing participant for customer and rider',a
 test('a failed payment recheck keeps entered delivery proof mounted while blocking submission',()=>{
  const h=flow({...base,type:'DELIVERY'});h.payment().props.onPaymentReady(true);h.find('Button','Capture signature & photo').props.onClick();assert(h.find('ProofCapture'));
  h.find('ProofCapture').props.onProofState({busy:false,preparing:false,hasSignature:true,hasPhoto:true});assert.equal(h.find('Button','Complete delivery').props.disabled,false);
- h.payment().props.onPaymentReady(false);assert(h.find('ProofCapture'));assert.equal(h.find('ProofCapture').props.disabled,true);assert.equal(h.find('Button','Complete delivery').props.disabled,true);
+ h.payment().props.onPaymentReady(false);assert(h.find('ProofCapture'));assert.equal(h.find('ProofCapture').props.disabled,true);assert.equal(h.find('Button','Complete delivery'),undefined);assert(h.find('Button','Review payment'));
+});
+
+
+test('embedded Rider cash controls stay hidden before the drop-off stage',async()=>{
+ for(const status of ['ACCEPTED','PICKED_UP']){
+  const rider=card({...base,status},'RIDER',true);assert(!nodes(await rider.ready()).some(n=>n.type==='form'));
+ }
+ const transit=card(base,'RIDER',true);assert(nodes(await transit.ready()).some(n=>n.type==='form'));
+ const customer=card({...base,status:'ACCEPTED'},'CUSTOMER');assert(nodes(await customer.ready()).some(n=>n.type==='form'));
+});
+test('embedded payment groups participant confirmations without repeating the fare',async()=>{
+ const h=card(base,'RIDER',true),tree=await h.ready(),copy=text(tree);
+ assert.match(copy,/Cash received by you/);assert.match(copy,/Customer payment/);
+ assert.equal((copy.match(/150|100\.00/g)||[]).length,1);
 });

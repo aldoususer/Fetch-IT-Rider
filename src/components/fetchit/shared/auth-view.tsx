@@ -1,4 +1,5 @@
 "use client";
+import "./rider-auth.css";
 
 // Auth view for the Fetch-It RIDER app.
 // Riders only — customers book deliveries from the separate Fetch-It
@@ -122,7 +123,7 @@ export function AuthView({ initialMode, initialEmail = "", signInNotice, onSigne
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="rider-auth min-h-screen flex flex-col bg-background">
       <header className="border-b">
         <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between">
           <button
@@ -170,7 +171,7 @@ export function AuthView({ initialMode, initialEmail = "", signInNotice, onSigne
                   <label className="ra-demo-option"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Enable autofill shortcuts. Submission and approval use the normal application process.</label>
                 </details>}
                 <TabsList className="grid grid-cols-2 w-full mb-4">
-                  <TabsTrigger value="login">Login</TabsTrigger>
+                  <TabsTrigger value="login">Sign in</TabsTrigger>
                   <TabsTrigger value="signup" disabled={!!onSignedIn}>Sign up</TabsTrigger>
                 </TabsList>
 
@@ -198,12 +199,12 @@ export function AuthView({ initialMode, initialEmail = "", signInNotice, onSigne
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         maxLength={128}
-                          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
+                          placeholder="Enter your password"
                       />
                     </div>
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-                      Sign in as rider
+                      Sign in
                     </Button>
                   </form>
                   {!lab.enabled && (process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true") && <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">

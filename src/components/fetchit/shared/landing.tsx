@@ -121,10 +121,10 @@ export function LandingView() {
           </nav>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => pickRole("RIDER", "login")}>
-              Login
+              Sign in
             </Button>
             <Button size="sm" onClick={() => pickRole("RIDER", "signup")}>
-              Become a rider
+              Apply as a rider
             </Button>
           </div>
         </div>
@@ -155,10 +155,10 @@ export function LandingView() {
               </p>
               <div className="flex flex-wrap gap-3">
                 <Button size="lg" onClick={() => pickRole("RIDER", "signup")}>
-                  Start driving <ArrowRight className="h-4 w-4" />
+                  Apply as a rider <ArrowRight className="h-4 w-4" />
                 </Button>
                 <Button size="lg" variant="outline" onClick={() => pickRole("RIDER", "login")}>
-                  Rider login
+                  Sign in
                 </Button>
               </div>
               <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground pt-2">
@@ -188,7 +188,7 @@ export function LandingView() {
         <div className="text-center mb-10 max-w-2xl mx-auto">
           <h2 className="text-3xl font-bold tracking-tight">Everything you need to earn</h2>
           <p className="text-muted-foreground mt-3">
-            One app for the whole job: claim deliveries, navigate, capture proof, and watch your payouts grow.
+            One app for the whole job: claim deliveries, navigate, capture proof, and review your completed fares.
           </p>
         </div>
         <div className="max-w-2xl mx-auto">
@@ -219,18 +219,6 @@ export function LandingView() {
                   </li>
                 ))}
               </ul>
-              <div className="flex flex-wrap gap-2 pt-2">
-                <Button className="flex-1 min-w-[140px]" onClick={() => pickRole("RIDER", "login")}>
-                  Rider login
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1 min-w-[140px]"
-                  onClick={() => pickRole("RIDER", "signup")}
-                >
-                  Sign up as rider
-                </Button>
-              </div>
               {demoEnabled && <Button
                 variant="ghost"
                 size="sm"
@@ -252,7 +240,7 @@ export function LandingView() {
           <div className="text-center mb-10 max-w-2xl mx-auto">
             <h2 className="text-3xl font-bold tracking-tight">Built for drivers on the road</h2>
             <p className="text-muted-foreground mt-3">
-              Every tool you need between accepting a job and cashing out.
+              The tools you need from accepting a job to recording the completed fare.
             </p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -276,7 +264,7 @@ export function LandingView() {
       {/* How it works */}
       <section id="how-it-works" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 w-full">
         <div className="text-center mb-10 max-w-2xl mx-auto">
-          <h2 className="text-3xl font-bold tracking-tight">From going online to cashing out</h2>
+          <h2 className="text-3xl font-bold tracking-tight">From application to your first completed job</h2>
         </div>
         <div className="grid md:grid-cols-4 gap-5">
           {STEPS.map((s) => (

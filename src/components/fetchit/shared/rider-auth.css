@@ -1,0 +1,7 @@
+.rider-auth { min-height: 100dvh; background: #fff; }
+.rider-auth header button { min-width: 48px; min-height: 48px; }
+.rider-auth [data-slot=tabs-list] { height: auto; padding: 4px; }
+.rider-auth [data-slot=tabs-trigger], .rider-auth input:not([type=checkbox]), .rider-auth button[type=submit] { min-height: 48px; font-size: 16px; }
+.rider-auth [data-slot=tabs-trigger] { padding: 10px 12px; }
+.rider-auth [data-slot=card] { border-width: 1px; box-shadow: none; }
+.rider-auth [data-slot=card-description] { line-height: 1.5; }

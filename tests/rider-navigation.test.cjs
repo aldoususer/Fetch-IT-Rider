@@ -16,3 +16,14 @@ test('cancelling an unsaved-work warning preserves the mounted job and does not 
 test('Forward restores the same job and acceptance can replace the current detail entry',()=>{const h=harness();h.api.navigate('available','job-a');const length=h.entries.length;h.api.navigate('active','job-a',true);assert.equal(h.entries.length,length);h.history.back();assert.equal(h.states.at(-1).jobId,null);h.history.forward();assert.equal(h.states.at(-1).tab,'active');assert.equal(h.states.at(-1).jobId,'job-a');});
 test('tab changes restore their own scroll and store only view preferences',()=>{const h=harness();h.window.scrollY=280;h.api.navigate('history');h.window.scrollY=75;h.api.navigate('available');assert.equal(h.states.at(-1).scrollY,280);const saved=JSON.parse(h.storage.get('fetchit:rider-view:rider-a'));assert.equal(saved.scrolls.history,75);assert.deepEqual(Object.keys(saved).sort(),['scrolls','tab']);});
 test('invalid URL preferences fall back safely and a saved tab can be reopened',()=>{const h=harness('https://rider.test/?tab=unknown',{tab:'history',scrolls:{history:140}});assert.equal(h.states.at(-1).tab,'history');assert.equal(h.states.at(-1).scrollY,140);});
+
+test('an active job becomes the default only once when no view was explicitly requested',()=>{
+ const h=harness();h.api.preferActive(true);assert.equal(h.states.at(-1).tab,'active');
+ h.api.navigate('available');h.api.preferActive(true);assert.equal(h.states.at(-1).tab,'available');
+});
+test('active-job preference preserves explicit tabs, direct job links and deliberate navigation',()=>{
+ for(const url of ['https://rider.test/?tab=history','https://rider.test/?tab=available','https://rider.test/?tab=active&job=job-a']){
+  const h=harness(url),before=JSON.stringify(h.states.at(-1));h.api.preferActive(true);assert.equal(JSON.stringify(h.states.at(-1)),before);
+ }
+ const h=harness();h.api.navigate('history');h.api.preferActive(true);assert.equal(h.states.at(-1).tab,'history');
+});
