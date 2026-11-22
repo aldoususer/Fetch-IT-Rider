@@ -36,10 +36,21 @@ async function chooseRiders(db: PrismaClient, booking: Booking, radiusKm: number
     bookingsAsRider: { none: { status: { in: [...activeRiderStatuses] } } },
     riderApprovals: { some: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } },
     pushSubscriptions: { some: {} },
-  }, select: { id: true, authInvalidBefore: true, pushSubscriptions: { select: { updatedAt: true } }, riderPresence: true, riderApprovals: { where: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } } } });
+  }, select: {
+    id: true,
+    authInvalidBefore: true,
+    pushSubscriptions: { select: { updatedAt: true } },
+    riderPresence: true,
+    riderApprovals: { where: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } },
+    _count: { select: { bookingsAsRider: { where: { status: 'DELIVERED' } } } },
+  } });
   const eligible = riders.filter(rider => (!rider.authInvalidBefore || rider.pushSubscriptions.some(subscription => subscription.updatedAt > rider.authInvalidBefore!)) && rider.riderApprovals.some(approval => approvalCoversRoute(approval, booking)));
   const pickup = { lat: booking.pickupLat, lng: booking.pickupLng };
-  const candidates = shortlistRiders(eligible, pickup, radiusKm);
+  const candidates = shortlistRiders(eligible.map(rider => ({
+    id: rider.id,
+    riderPresence: rider.riderPresence,
+    completedBookings: rider._count.bookingsAsRider,
+  })), pickup, radiusKm);
   if (routingEnabled()) {
     // Three bounded calls at most, outside database locks. The routing service
     // shares the existing ORS quota and cache; no extra paid API is introduced.
@@ -103,7 +114,13 @@ export async function advanceAutomaticMatching(db: PrismaClient, bookingId: stri
       await tx.booking.update({ where: { id: bookingId }, data: { status: 'MATCHED', riderId: candidate.id, matchedAt: now, assignmentExpiresAt: until } });
       await tx.riderPresence.update({ where: { userId: candidate.id }, data: { lastOfferAt: now } });
       const ranking = candidates.every(rider => rider.pickupEtaSeconds !== null) ? 'ROAD_ETA' : 'DISTANCE';
-      await tx.autoDispatch.update({ where: { bookingId }, data: { phase: 'OFFERED', attempts: { increment: 1 }, nextAt: until, pickupEtaSeconds: ranking === 'ROAD_ETA' ? candidate.pickupEtaSeconds : null, ranking, lastReason: ranking === 'ROAD_ETA' ? 'Ranked by pickup road ETA, location freshness and waiting time.' : 'Ranked by nearby distance, location freshness and waiting time; road ETA unavailable.' } });
+      await tx.autoDispatch.update({ where: { bookingId }, data: {
+        phase: 'OFFERED', attempts: { increment: 1 }, nextAt: until,
+        pickupEtaSeconds: ranking === 'ROAD_ETA' ? candidate.pickupEtaSeconds : null, ranking,
+        lastReason: ranking === 'ROAD_ETA'
+          ? 'Prioritized fewer completed bookings, then location freshness, pickup road ETA and waiting time.'
+          : 'Prioritized fewer completed bookings, then location freshness, pickup distance and waiting time.',
+      } });
       await recordBookingEvent(tx, bookingId, actor, { action: dispatch.attempts ? 'REASSIGNED' : 'ASSIGNED', fromStatus: 'PENDING', toStatus: 'MATCHED', riderId: candidate.id, reason: 'Exclusive nearby-rider offer. Rider acceptance is still required.' });
       return;
     }

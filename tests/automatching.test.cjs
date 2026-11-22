@@ -4,8 +4,25 @@ const roads=load('src/lib/road-routing.ts'),policy=load('src/lib/matching-policy
 const now=Date.now(),fix=(age=0,accuracy=10)=>({lat:16.0206,lng:120.2321,locationAt:new Date(now-age),locationAccuracy:accuracy});
 test('old, imprecise, missing and future GPS cannot enter matching',()=>{for(const value of [null,fix(120001),fix(0,101),fix(0,-1),fix(-6000),{...fix(),lat:999},{...fix(),locationAt:null}])assert.equal(policy.usableMatchingLocation(value,now),false);assert.equal(policy.usableMatchingLocation(fix(119000),now),true);assert.equal(policy.usableMatchingLocation(fix(31000),now,30000),false);});
 test('online and acceptance require actual capture time and accurate coordinates',()=>{for(const value of [{}, {...fix(),accuracy:10}, {lat:16,lng:120,accuracy:500,capturedAt:now},{lat:16,lng:120,accuracy:10,capturedAt:now-31000}])assert.throws(()=>policy.onlineLocationInput(value,now));assert.equal(policy.onlineLocationInput({lat:16,lng:120,accuracy:10,capturedAt:now-1000},now).locationAt.getTime(),now-1000);});
-test('pickup shortlist excludes stale GPS and riders beyond the configured radius',()=>{const rider=(id,delta,age=0)=>({id,riderPresence:{...fix(age),lng:120.2321+delta,onlineAt:new Date(now-60000),lastOfferAt:null}});const result=policy.shortlistRiders([rider('far',1),rider('stale',0,180000),rider('near',.001),rider('next',.002)],{lat:16.0206,lng:120.2321},5,now);assert.deepEqual(Array.from(result,x=>x.id),['near','next']);});
-const candidate=(id,distance,eta,age=0,wait=60000)=>({id,lat:16,lng:120,locationAt:new Date(now-age),waitingSince:new Date(now-wait),distanceMeters:distance,pickupEtaSeconds:eta});
+const nearby=(id,longitudeOffset,completedBookings=0,age=0)=>({id,completedBookings,riderPresence:{...fix(age),lng:120.2321+longitudeOffset,onlineAt:new Date(now-60000),lastOfferAt:null}});
+test('pickup shortlist excludes stale GPS and riders beyond the configured radius',()=>{
+ const result=policy.shortlistRiders([nearby('far',1),nearby('stale',0,0,180000),nearby('near',.001),nearby('next',.002)],fix(),5,now);
+ assert.deepEqual(Array.from(result,rider=>rider.id),['near','next']);
+});
+test('a rider with fewer completed bookings gets shortlisted ahead of three closer riders',()=>{
+ const result=policy.shortlistRiders([
+  nearby('busy-history-a',.001,5),nearby('busy-history-b',.002,5),nearby('busy-history-c',.003,5),
+  nearby('new-rider',.02),nearby('out-of-range',.1),nearby('stale',0,0,180000),
+ ],fix(),5,now);
+ assert.deepEqual(Array.from(result,rider=>rider.id),['new-rider','busy-history-a','busy-history-b']);
+});
+const candidate=(id,distance,eta,age=0,wait=60000,completedBookings=0)=>({id,lat:16,lng:120,locationAt:new Date(now-age),waitingSince:new Date(now-wait),distanceMeters:distance,pickupEtaSeconds:eta,completedBookings});
+test('completed bookings are the first ranking rule with a road ETA or distance fallback',()=>{
+ for(const eta of [420,null]){
+  const result=policy.rankRiders([candidate('five-jobs',500,60,0,60000,5),candidate('zero-jobs',1500,eta,90000,1000,0)],now);
+  assert.equal(result[0].id,'zero-jobs');
+ }
+});
 test('road ETA can correctly prefer a farther rider with a direct road',()=>{const result=policy.rankRiders([candidate('across-river',500,900),candidate('direct-road',1500,180)],now);assert.equal(result[0].id,'direct-road');});
 test('routing outage uses comparable distance units for every rider',()=>{const result=policy.rankRiders([candidate('partial-route',1500,10),candidate('near-no-route',500,null)],now);assert.equal(result[0].id,'near-no-route');});
 test('fresh GPS takes priority and similar pickup times favour the longest-waiting rider',()=>{assert.equal(policy.rankRiders([candidate('older',100,10,90000),candidate('fresh',500,60)],now)[0].id,'fresh');assert.equal(policy.rankRiders([candidate('recent-offer',500,100,0,1000),candidate('waiting',550,105,0,60000)],now)[0].id,'waiting');});

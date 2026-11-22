@@ -22,14 +22,39 @@ export function onlineLocationInput(value: unknown, now = Date.now()) {
       !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > MATCH_ACCURACY_METERS) throw new Error('Share a fresh, accurate location to continue. Turn on device location and try again outdoors.');
   return { lat: fix.lat, lng: fix.lng, locationAt: new Date(fix.capturedAt), locationAccuracy: fix.accuracy };
 }
-export type RankedRider = { id: string; lat: number; lng: number; locationAt: Date; waitingSince: Date; distanceMeters: number; pickupEtaSeconds: number | null };
-export function shortlistRiders(riders: { id: string; riderPresence: (MatchingFix & { onlineAt: Date | null; lastOfferAt: Date | null }) | null }[], pickup: RoutePoint, radiusKm: number, now = Date.now()): RankedRider[] {
+export type RankedRider = {
+  id: string;
+  lat: number;
+  lng: number;
+  locationAt: Date;
+  waitingSince: Date;
+  distanceMeters: number;
+  pickupEtaSeconds: number | null;
+  completedBookings: number;
+};
+
+type NearbyRider = {
+  id: string;
+  completedBookings: number;
+  riderPresence: (MatchingFix & { onlineAt: Date | null; lastOfferAt: Date | null }) | null;
+};
+
+export function shortlistRiders(riders: NearbyRider[], pickup: RoutePoint, radiusKm: number, now = Date.now()): RankedRider[] {
   return riders.flatMap(rider => {
     const fix = rider.riderPresence;
     if (!usableMatchingLocation(fix, now)) return [];
     const point = { lat: fix!.lat!, lng: fix!.lng! }, distance = distanceMeters(point, pickup);
-    return distance <= radiusKm * 1000 ? [{ id: rider.id, ...point, locationAt: fix!.locationAt!, waitingSince: fix!.lastOfferAt ?? fix!.onlineAt ?? new Date(0), distanceMeters: distance, pickupEtaSeconds: null }] : [];
-  }).sort((a, b) => a.distanceMeters - b.distanceMeters || a.waitingSince.getTime() - b.waitingSince.getTime() || a.id.localeCompare(b.id)).slice(0, 3);
+    return distance <= radiusKm * 1000 ? [{
+      id: rider.id, ...point, locationAt: fix!.locationAt!,
+      waitingSince: fix!.lastOfferAt ?? fix!.onlineAt ?? new Date(0),
+      distanceMeters: distance, pickupEtaSeconds: null, completedBookings: rider.completedBookings,
+    }] : [];
+  }).sort((a, b) =>
+    a.completedBookings - b.completedBookings ||
+    a.distanceMeters - b.distanceMeters ||
+    a.waitingSince.getTime() - b.waitingSince.getTime() ||
+    a.id.localeCompare(b.id)
+  ).slice(0, 3);
 }
 export function rankRiders(riders: RankedRider[], now = Date.now()) {
   // Compare road ETA only when every remaining candidate has a route. Never
@@ -40,8 +65,11 @@ export function rankRiders(riders: RankedRider[], now = Date.now()) {
   const minimum = [0, 1].map(value => Math.min(...riders.filter(rider => tier(rider) === value).map(metric)));
   const bucket = (rider: RankedRider) => Math.floor((metric(rider) - minimum[tier(rider)]) / (byRoad ? 30 : 100));
   return [...riders].sort((a, b) => {
-    const freshness = Number(now - a.locationAt.getTime() > 60_000) - Number(now - b.locationAt.getTime() > 60_000);
-    return freshness || bucket(a) - bucket(b) || a.waitingSince.getTime() - b.waitingSince.getTime() || a.id.localeCompare(b.id);
+    return a.completedBookings - b.completedBookings ||
+      tier(a) - tier(b) ||
+      bucket(a) - bucket(b) ||
+      a.waitingSince.getTime() - b.waitingSince.getTime() ||
+      a.id.localeCompare(b.id);
   });
 }
 
