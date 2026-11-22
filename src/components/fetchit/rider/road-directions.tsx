@@ -57,6 +57,6 @@ export function RoadDirections({ bookingId, stage, vehicleClass = 'SEDAN', onRou
       <p className="rd-help">Road guidance uses a car profile; motorcycle and tricycle access rules may differ. Follow road signs and your approved operating area.</p>
       <a className="rd-routing-credit" href="https://openrouteservice.org/" target="_blank" rel="noreferrer">Directions © openrouteservice / HeiGIT</a>
     </>}
-    {!route && !busy && !error && <p className="rd-help">Load your route and nearby traffic, where available. Your fare stays unchanged.</p>}
+    {!route && !busy && !error && <p className="rd-help">Traffic shown where available.</p>}
   </section>;
 }

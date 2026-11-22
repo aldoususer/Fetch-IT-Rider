@@ -138,7 +138,7 @@ export function AuthView({ initialMode, initialEmail = "", signInNotice, onSigne
 
       <main className={`flex-1 px-4 py-8 ${mode === "signup" ? "ra ra-auth" : "flex items-center justify-center"}`}>
         <div className={`w-full mx-auto ${mode === "signup" ? "max-w-2xl" : "max-w-md"}`}>
-          {mode === "signup" && <><div className="ra-intro"><p className="ra-eyebrow">BECOME A FETCH-IT RIDER</p><h1>Your road<br/>starts here.</h1><p>One application, from your first detail to your final review. Save your progress and come back anytime.</p></div><RegistrationProgress step={0}/></>}
+          {mode === "signup" && <RegistrationProgress step={0}/>}
           {lab.enabled && <aside className="ra-card" style={{ borderColor: '#c87338' }}><strong>LOCAL DEMO LAB</strong><p>Fictional test accounts and Lingayen–Dagupan data. Documents and emails stay in this isolated lab.</p><Button type="button" disabled={loading} onClick={() => void createDemoAccount()}>Use demo · new random rider</Button><p><a href={lab.adminUrl} target="_blank" rel="noreferrer">Open connected demo Admin ↗</a></p></aside>}
           <Card className="border-2 shadow-sm">
             <CardHeader>
@@ -148,13 +148,9 @@ export function AuthView({ initialMode, initialEmail = "", signInNotice, onSigne
                 </div>
                 <div>
                   <CardTitle className="text-xl">
-                    {mode === "login" ? "Welcome back, rider" : "Step 1 · Create your account"}
+                    {mode === "login" ? "Sign in to Rider" : "Create your account"}
                   </CardTitle>
-                  <CardDescription>
-                    {mode === "login"
-                      ? "Sign in to go online and start earning."
-                      : "Start with your name and email. Verify your email next, then choose your vehicle and services."}
-                  </CardDescription>
+                  {mode === "signup" && <CardDescription>Use an email you can access.</CardDescription>}
                 </div>
               </div>
             </CardHeader>
@@ -166,9 +162,9 @@ export function AuthView({ initialMode, initialEmail = "", signInNotice, onSigne
               >
                 {!lab.enabled && mode === 'signup' && <details className="ra-demo-options">
                   <summary>Autofill application steps</summary>
-                  <p className="text-sm">Fill steps faster with generated Lingayen–Dagupan details and sample documents. Use your own email for verification and application updates.</p>
+                  <p className="text-sm">Autofill uses sample details and documents. Enter your own email.</p>
                   <Button type="button" variant="outline" disabled={loading} onClick={() => { setForDemo(true); setName(`${['Mateo Dizon', 'Liza Cruz', 'Carlo Reyes', 'Ana Ramos', 'Paolo Soriano'][Math.floor(Math.random() * 5)]}`); }}>Autofill account name</Button>
-                  <label className="ra-demo-option"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Enable autofill shortcuts. Submission and approval use the normal application process.</label>
+                  <label className="ra-demo-option"><input type="checkbox" checked={forDemo} disabled={loading} onChange={e => setForDemo(e.target.checked)}/>Show autofill on later steps</label>
                 </details>}
                 <TabsList className="grid grid-cols-2 w-full mb-4">
                   <TabsTrigger value="login">Sign in</TabsTrigger>

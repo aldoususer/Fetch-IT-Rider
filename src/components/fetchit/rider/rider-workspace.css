@@ -155,3 +155,24 @@
   .rd-filter-sheet { top: auto; bottom: 0; left: 0; translate: none; width: 100%; max-width: none; max-height: calc(100dvh - 16px - env(safe-area-inset-top)); border-radius: 20px 20px 0 0; }
   .rd-filter-actions { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 }
+
+.rd-current-job { gap: 16px; }
+.rd-offer-body { display: flex; flex-direction: column; gap: 16px; }
+.rd-offer-body > * { flex-shrink: 0; }
+.rd-offer-lead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.rd-offer-lead strong { display: block; font-size: 32px; line-height: 1.2; }
+.rd-offer-lead .rd-offer-time,.rd-card-meta .rd-offer-time { margin: 0; white-space: nowrap; }
+.rd-payment-panel[hidden] { display: none; }
+.rd-confirmations { background: var(--rd-warning-bg); border-color: var(--rd-warning-border); gap: 8px; }
+.rd-confirmations h3 { font-size: 16px; font-weight: 650; }
+.rd-confirmations p { margin-top: 4px; }
+.rd-confirmation-links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.rd-confirmation-links a { display: inline-flex; align-items: center; min-height: 48px; }
+.rd-confirmation-record { display: grid; gap: 4px; margin-bottom: 8px; font-size: 14px; }
+.rd-confirmation-record div { display: flex; justify-content: space-between; gap: 12px; }
+.rd-action-row:empty { display: none; }
+.rd-next-action:not(:has(button, a:not(.rd-navigation-shortcut), .rd-action-feedback:not(:empty))) { display: none; }
+.rd-history-fare small { color: var(--rd-muted); font-size: 12px; font-weight: 500; }
+@media (max-width: 600px) {
+  .rd-next-action:has(.rd-navigation-shortcut) { display: flex; }
+}

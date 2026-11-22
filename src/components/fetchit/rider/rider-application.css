@@ -23,3 +23,18 @@
 .ra-step-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:18px 0 24px}.ra-step-toolbar .ra-step-heading{margin:0}.ra .ra-autofill{flex-shrink:0;display:inline-flex;align-items:center;gap:8px;border-color:#d8e1d4;background:#f1f6ed;color:#28553e;min-height:44px}.ra-autofill::before{content:"↗";font-size:18px}.ra-application-tools{margin:0 0 20px;font-size:13px;color:#617364}.ra-application-tools>summary{cursor:pointer;width:fit-content}.ra-application-tools[open]{padding:16px;border:1px solid #dce5d9;border-radius:12px}.ra-application-tools p{line-height:1.6}.ra-application-tools a{margin-left:12px;text-decoration:underline}@media(max-width:600px){.ra-step-toolbar{align-items:flex-start;gap:12px}.ra .ra-autofill{font-size:12px;padding:10px 12px;max-width:140px}}
 
 .ra-pending-card h1:focus{outline:none}
+.ra:not(.ra-auth), .ra-pending-card { background: white; }
+.ra .ra-current-title { margin: 0; font-size: clamp(24px, 5vw, 32px); font-weight: 700; line-height: 1.2; letter-spacing: -.025em; }
+.ra .ra-progress { margin: 16px 0; display: grid; gap: 6px; }
+.ra .ra-progress p { font-size: 13px; color: #4d6358; }
+.ra .ra-progress progress { width: 100%; height: 8px; accent-color: #ba491e; }
+.ra .ra-progress summary,.ra .ra-step-help summary,.ra .ra-pending-help summary { min-height: 48px; width: fit-content; font-size: 14px; }
+.ra .ra-progress ol { display: flex; flex-wrap: wrap; gap: 4px; }
+.ra .ra-progress button { justify-content: center; min-height: 48px; padding: 8px; font-size: 13px; }
+.ra .ra-step-toolbar { margin: 12px 0 16px; }
+.ra .ra-save-state { font-size: 13px; }
+.ra .ra-step-options { margin-top: 12px; }
+.ra .ra-step-options button,.ra .ra-autofill,.ra .ra-actions button { min-height: 48px; }
+.ra fieldset { min-width: 0; border: 0; padding: 0; }
+.ra fieldset + fieldset { margin-top: 16px; }
+.ra legend { font-weight: 650; }

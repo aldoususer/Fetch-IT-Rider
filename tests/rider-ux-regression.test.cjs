@@ -59,11 +59,15 @@ test('unaccepted offer decline is single-tap, locked while pending and recoverab
 
 test('accept and decline cannot run together even before React rerenders', async () => {
   let accepted = 0, resolve;
-  const props = { job: { id: 'offer', status: 'MATCHED', type: 'DELIVERY', totalFare: 100, createdAt: new Date().toISOString(), scheduledAt: null, paymentMethod: 'CASH', assignmentExpiresAt: new Date(Date.now() + 45000).toISOString() }, onAccept: () => { accepted++; return new Promise(done => resolve = done); }, onReleased() {} };
+  const props = { job: { id: 'offer', status: 'MATCHED', type: 'DELIVERY', pickupLabel: 'Market', dropoffLabel: 'Town hall', totalFare: 100, createdAt: new Date().toISOString(), scheduledAt: null, paymentMethod: 'CASH', assignmentExpiresAt: new Date(Date.now() + 45000).toISOString() }, onAccept: () => { accepted++; return new Promise(done => resolve = done); }, onReleased() {} };
   const h = ui('src/components/fetchit/rider/job-preview.tsx', 'JobPreview', props, {
     '@/lib/rider-workspace': { formatJobTime: () => '', isUpcomingJob: () => false, jobTiming: () => ({ kind: 'now', label: 'Pickup now' }) },
     '@/lib/payment-policy': { demoSplit: () => ({}), isDemoPayment: () => false }, './job-route-map': { JobRouteMap: 'map' }, './offer-countdown': { OfferCountdown: 'countdown' }, './decline-offer': { DeclineOffer: 'decline' },
   }, { setInterval() {}, clearInterval() {} });
+  assert.match(text(h.render()), /You earn · collect in cash.*₱.*100\.00.*Pickup.*Market.*Drop-off.*Town hall/);
+  assert.equal(h.find('map'), undefined);
+  h.find('details', 'View map').props.onToggle({ currentTarget: { open: true } });
+  assert.equal(h.find('map').props.navigation, 'none');
   const accept = h.find('button', 'Accept delivery'), decline = h.find('decline');
   decline.props.onBusyChange(true); await accept.props.onClick(); assert.equal(accepted, 0);
   decline.props.onBusyChange(false); const pending = h.find('button', 'Accept delivery').props.onClick();

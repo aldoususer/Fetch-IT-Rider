@@ -52,6 +52,19 @@ test('payment is the next action and completion only appears after saved payment
  h.payment().props.onPaymentReady(true);assert.equal(h.complete().props.disabled,false);const button=h.complete(),first=button.props.onClick(),second=button.props.onClick();assert.equal(h.requests,1);h.finish();await Promise.all([first,second]);
  h.payment().props.onPaymentReady(false);assert.equal(h.complete(),undefined);assert(h.find('Button','Review payment'));
 });
+test('the waiting passenger instruction precedes the map and cash actions are blocked',()=>{
+ const h=flow({...base,customerPickupConfirmedAt:null,customerDropoffConfirmedAt:null});
+ const rendered=nodes(h.render());
+ const confirmation=rendered.findIndex(node=>node.type==='CustomerConfirmationChecklist');
+ const map=rendered.findIndex(node=>node.type==='JobRouteMap');
+ assert(confirmation>=0&&confirmation<map);
+ assert.match(rendered[confirmation].props.hint,/I’m on board/);
+ assert(rendered.find(node=>node.props?.className==='rd-payment-panel').props.hidden);
+ assert(h.payment().props.actionsDisabled);
+ h.payment().props.onPaymentReady(true);
+ assert.equal(h.complete(),undefined);
+ assert(!h.find('Button','Review customer confirmations'));
+});
 test('shared payment policy preserves delivery cash walls and validates online readiness',()=>{
  assert.match(policy.deliveryCashCompletionError({...base,type:'DELIVERY'}),/drop-off/);assert.equal(policy.deliveryCashCompletionError({...paid,type:'DELIVERY'}),null);assert(policy.completionPaymentError({...base,paymentMethod:'DEMO_GCASH'}));assert.equal(policy.completionPaymentError({...base,paymentMethod:'DEMO_GCASH',paymentStatus:'PAID'}),null);
 });

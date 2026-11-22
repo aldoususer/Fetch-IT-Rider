@@ -43,7 +43,7 @@ export function HistoryFilters({ query, filters, onQuery, onApply }: {
       }}>
         <DialogHeader>
           <DialogTitle ref={title} tabIndex={-1}>Filter booking history</DialogTitle>
-          <DialogDescription>Choose a booking status or date.</DialogDescription>
+          <DialogDescription className="sr-only">Filter by booking status or date.</DialogDescription>
         </DialogHeader>
         <form onSubmit={event => {
           event.preventDefault();

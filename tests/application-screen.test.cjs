@@ -42,7 +42,8 @@ test('the compact screen distinguishes rejection, current orientation and missin
   assert(html.includes('Orientation room')); assert(html.includes('Bring your originals.')); assert(html.includes('?letter=1'));
   assert(render('REJECTED', orientation).includes('Application not approved'));
   assert(!render('REJECTED', orientation).includes('?letter=1'));
-  assert(render('ACTIVE').includes('no current service access'));
+  assert(render('ACTIVE').includes('Service access needs attention'));
+  assert(render('ACTIVE').includes('Contact the review team to restore access.'));
 });
 
 test('a review transition resumes the flagged document step and hides the form again on resubmission', () => {

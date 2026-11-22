@@ -62,18 +62,17 @@ export function BrowserLocation({ userId, needed, availabilityKnown = true }: { 
       document.removeEventListener("visibilitychange", resume); window.removeEventListener("online", resume); };
   }, [enabled, needed, retry, userId]);
   const fresh = needed && enabled && fix && Math.max(now, Date.now()) - fix.at <= 30_000;
-  const issueLabel = /permission denied/i.test(error) ? 'Location permission blocked'
+  const issueLabel = /permission denied/i.test(error) ? 'Location is blocked'
     : /timed out/i.test(error) ? 'Location timed out'
     : /approximate/i.test(error) ? 'Location too approximate'
     : /determine/i.test(error) ? 'GPS unavailable' : 'Location could not be shared';
   return <details className="rd-location" aria-label="Browser location sharing">
-    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location…' : error ? issueLabel : !needed ? 'Location inactive' : !enabled ? 'Location sharing off' : fresh && sentAt ? 'Location shared' : 'Finding your location…'}</strong><span className="rd-location-expand">Details</span></summary>
+    <summary><span className={fresh && sentAt ? 'rd-gps-dot is-sharing' : 'rd-gps-dot'} aria-hidden="true"/><strong>{!availabilityKnown ? 'Checking location…' : error ? issueLabel : !needed ? 'Location inactive' : !enabled ? 'Location sharing off' : fresh && sentAt ? 'Location shared' : 'Finding your location…'}</strong><span className="rd-location-expand">{error ? 'Fix location' : 'Details'}</span></summary>
     <div className="rd-location-body space-y-3">
-    <div><h2 className="font-semibold">Your location</h2><p className="text-xs text-muted-foreground">Used for nearby job offers while online, and shared with your assigned customer during a job. Go offline to stop receiving offers.</p></div>
-    <p className="text-sm" role="status">{!availabilityKnown ? 'Checking your availability.' : !needed ? 'Share your location when you go online.' : error || (!fix ? 'Finding your location…' : !fresh ? 'Location needs a refresh. New offers pause when your saved location is over two minutes old.' : sentAt ? 'Location shared' : 'Sharing location…')}</p>
+    <p className="text-sm" role="status">{!availabilityKnown ? 'Checking your availability.' : !needed ? 'Location is required to receive offers.' : error || (!fix ? 'Finding your location…' : !fresh ? 'Open Rider to refresh your location and resume offers.' : sentAt ? 'Shared for nearby offers and active jobs.' : 'Sharing location…')}</p>
     {fresh && <div className="text-sm space-y-1"><a className="underline underline-offset-4" target="_blank" rel="noopener noreferrer" href={`https://www.openstreetmap.org/?mlat=${fix.lat}&mlon=${fix.lng}#map=17/${fix.lat}/${fix.lng}`}>{fix.lat.toFixed(6)}, {fix.lng.toFixed(6)} · View on map</a><p className="text-xs text-muted-foreground">Device accuracy: ±{Math.round(fix.accuracy)} m{fix.accuracy > 100 ? " · Approximate location; move outdoors for better accuracy." : ""}</p>{sentAt && <p className="text-xs text-muted-foreground">Last shared {new Date(sentAt).toLocaleTimeString()}</p>}</div>}
     {enabled && error && <Button size="sm" variant="outline" onClick={() => { setError(""); setFix(null); setSentAt(null); setRetry(value => value + 1); }}>Retry location</Button>}
-    <p className="text-xs text-muted-foreground">Keep this page open and your device awake while sharing. Your browser may pause GPS when it is in the background.</p>
+    {needed && !error && <p className="text-xs text-muted-foreground">Keep Rider open to keep sharing location.</p>}
     </div>
   </details>;
 }
