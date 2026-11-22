@@ -45,19 +45,19 @@ export async function notificationFeed(db: PrismaClient, actor: NoticeActor, vie
     AND (n."createdAt">CURRENT_TIMESTAMP-INTERVAL '30 days' OR n.channel='TEAM' OR n.urgent AND c.status<>'RESOLVED' OR i.active)
     AND (n."recipientId" IS NULL OR n."recipientId"=${actor.id})
     AND (n."recipientRole" IS NULL OR n."recipientRole"=${actor.role}
-      OR n.channel='TEAM' AND ${actor.role}='ADMIN' AND n."recipientRole" IN ('SUPPORT','SUPPORT_SUPERVISOR','SAFETY')
+      OR n.channel='TEAM' AND ${actor.role}='ADMIN' AND n."recipientRole" IN ('SUPPORT','SAFETY')
       OR n.channel='GENERAL' AND ${actor.role}='SUPERADMIN')
     AND (n.channel<>'PLATFORM' OR ${actor.role}='SUPERADMIN')
     AND (n.channel<>'TEAM' OR ${actor.role}<>'SUPERADMIN')
     AND (n."entityType"<>'SECURITY' OR n."recipientId"=${actor.id})
-    AND (n."entityType"<>'SUPPORT' OR t.id IS NOT NULL AND NOT t."isEmergency" AND ${actor.role} IN ('SUPPORT','SUPPORT_SUPERVISOR','ADMIN','SUPERADMIN') AND (
+    AND (n."entityType"<>'SUPPORT' OR t.id IS NOT NULL AND NOT t."isEmergency" AND ${actor.role} IN ('SUPPORT','ADMIN','SUPERADMIN') AND (
       n.channel='TEAM' AND t."assignedAdminId" IS NULL AND t.status<>'RESOLVED'
-      OR n.channel='PERSONAL' AND (t."assignedAdminId"=${actor.id} OR ${actor.role} IN ('ADMIN','SUPPORT_SUPERVISOR','SUPERADMIN'))))
-    AND (n."entityType"<>'CASE' OR c.id IS NOT NULL AND (
+      OR n.channel='PERSONAL' AND (t."assignedAdminId"=${actor.id} OR ${actor.role} IN ('ADMIN','SUPERADMIN'))))
+    AND (n."entityType"<>'CASE' OR c.id IS NOT NULL AND c.kind IN ('SAFETY','FINANCE') AND (
       n.channel='TEAM' AND (c."assignedToId" IS NULL AND c.status IN ('OPEN','IN_REVIEW')
         OR c.status='AWAITING_ADMIN' AND ${actor.role}='ADMIN' AND c."createdById"<>${actor.id} AND coalesce(c."assignedToId",'')<>${actor.id}
         OR n.id LIKE 'emergency-backup:%' AND c."acknowledgedAt" IS NULL AND c.status<>'RESOLVED')
-      OR n.channel='PERSONAL' AND (c."createdById"=${actor.id} OR ${actor.role} IN ('ADMIN','SUPERADMIN') OR c."assignedToId"=${actor.id} AND (c.kind='SAFETY' AND ${actor.role}='SAFETY' OR c.kind='ESCALATION' AND ${actor.role}='SUPPORT_SUPERVISOR'))))
+      OR n.channel='PERSONAL' AND (c."createdById"=${actor.id} OR ${actor.role} IN ('ADMIN','SUPERADMIN') OR c."assignedToId"=${actor.id} AND (c.kind='SAFETY' AND ${actor.role}='SAFETY'))))
     AND (n."entityType"<>'APPLICATION' OR a.id IS NOT NULL AND ${actor.role} IN ('SAFETY','ADMIN','SUPERADMIN') AND (
       n.channel='PERSONAL' AND a."assignedToId"=${actor.id}
       OR n.channel='TEAM' AND a."assignedToId" IS NULL AND a.status IN ('SUBMITTED','IN_REVIEW')
