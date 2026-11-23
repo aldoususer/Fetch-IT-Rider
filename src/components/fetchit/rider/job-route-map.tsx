@@ -10,9 +10,11 @@ type Fix = RoutePoint & { accuracy: number; at: number };
 export function JobRouteMap({ pickup, dropoff, navigation = 'pickup', bookingId, stage = 'PENDING', vehicleClass = 'SEDAN' }: { pickup: RoutePoint; dropoff: RoutePoint; navigation?: 'pickup' | 'dropoff' | 'none'; bookingId?: string; stage?: string; vehicleClass?: string }) {
   const container = useRef<HTMLDivElement>(null);
   const routingAvailable = useAppStore(state => !!state.user?.roadRouting);
-  const [road, setRoad] = useState<{ stage: string; route: RoadRoute | null } | null>(null);
+  const [road, setRoad] = useState<{ stage: string; route: RoadRoute | null; alternative?: RoadRoute | null; onCompare?: () => void } | null>(null);
   const [fix, setFix] = useState<Fix | null>(null), [now, setNow] = useState(0), [expanded, setExpanded] = useState(false);
-  const onRoute = useCallback((route: RoadRoute | null) => setRoad({ stage, route }), [stage]);
+  const onRoute = useCallback((route: RoadRoute | null, alternative?: RoadRoute | null, onCompare?: () => void) => {
+    setRoad({ stage, route, alternative, onCompare });
+  }, [stage]);
   useEffect(() => {
     const location = (event: Event) => setFix((event as CustomEvent<Fix>).detail);
     const timer = setInterval(() => setNow(Date.now()), 5000);
@@ -24,7 +26,8 @@ export function JobRouteMap({ pickup, dropoff, navigation = 'pickup', bookingId,
   const valid = validRoutePoint(pickup) && validRoutePoint(dropoff);
   const activeRoute = road?.stage === stage ? road.route : null;
   const canLoadRoute = !!bookingId && routingAvailable && navigation !== 'none' && ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT'].includes(stage);
-  const map = useRiderJobMap(container, pickup, dropoff, canLoadRoute ? activeRoute : null, fresh, valid);
+  const activeAlternative = canLoadRoute && road?.stage === stage ? road.alternative : null;
+  const map = useRiderJobMap(container, pickup, dropoff, canLoadRoute ? activeRoute : null, fresh, valid, activeAlternative, activeAlternative ? road?.onCompare : undefined);
   return <section className="min-w-0 space-y-2" aria-label="Job route map">
     {valid ? <>
       <div className={`relative z-0 ${expanded ? 'h-[420px]' : 'h-[220px] sm:h-[240px]'} w-full overflow-hidden rounded-xl border bg-white`} aria-busy={map.state === 'loading'}>
@@ -34,7 +37,11 @@ export function JobRouteMap({ pickup, dropoff, navigation = 'pickup', bookingId,
       </div>
       {map.state === 'error' && <p className="text-sm text-muted-foreground" role="status">Map unavailable. Use the booking addresses for directions.</p>}
       {(map.state === 'google' || map.state === 'standard') && <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{map.state === 'google' ? 'Google Maps' : 'Standard map'}</span><div className="flex flex-wrap gap-1">{canLoadRoute && activeRoute && map.state === 'google' && <Button className="min-h-12 min-w-12" variant={map.traffic === 'on' ? 'secondary' : 'ghost'} aria-pressed={map.traffic === 'on'} onClick={map.toggleTraffic}>{map.traffic === 'on' ? 'Hide traffic' : 'Show traffic'}</Button>}{fresh && <Button className="min-h-12" variant="ghost" onClick={map.center}>Centre on me</Button>}<Button className="min-h-12" variant="ghost" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? 'Collapse map' : 'Expand map'}</Button></div></div>}
-      {canLoadRoute && activeRoute && map.state === 'google' && map.traffic === 'on' && <details className="rd-details"><summary>Traffic information</summary><div className="space-y-2 text-sm text-muted-foreground"><p>Google traffic: green · flowing, orange · slower, red · congested. Blue line · your route.</p><p>Coverage varies and updates periodically. No colour does not mean a clear road. Traffic colours do not adjust Fetch-It’s route or ETA.</p></div></details>}
+      {activeAlternative && <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <span className="inline-flex items-center gap-2"><span className="h-1 w-5 rounded-full bg-blue-600" aria-hidden="true"/>Current route</span>
+        <span className="inline-flex items-center gap-2"><span className="h-1 w-5 rounded-full bg-yellow-500" aria-hidden="true"/>Alternate route</span>
+      </div>}
+      {canLoadRoute && activeRoute && map.state === 'google' && map.traffic === 'on' && <details className="rd-details"><summary>Traffic information</summary><div className="space-y-2 text-sm text-muted-foreground"><p>Google traffic: green · no delays reported, orange · slower, red · delays.</p><p>An uncoloured road has no traffic status shown here. Its conditions may be unknown. Fetch-It estimates travel time separately.</p></div></details>}
       {canLoadRoute && activeRoute && map.state === 'google' && map.traffic === 'unavailable' && <p className="text-xs text-muted-foreground" role="status">Traffic display could not load. Try Show traffic again. Your map and directions remain available.</p>}
       {canLoadRoute && <RoadDirections key={bookingId + stage} bookingId={bookingId!} stage={stage} vehicleClass={vehicleClass} onRoute={onRoute} />}
       {road?.stage === stage && road.route && <p className="text-xs text-muted-foreground">Route data © <a className="underline" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> via openrouteservice.</p>}

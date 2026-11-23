@@ -2,7 +2,7 @@ import type { RoadRoute, RoutePoint } from './road-routing';
 type Point = RoutePoint;
 type GoogleMap = { fitBounds(bounds: unknown, padding?: number): void; getZoom(): number | undefined; setZoom(zoom: number): void; panTo(point: Point): void };
 type GoogleMarker = { setPosition(point: Point): void; setMap(map: GoogleMap | null): void };
-type GoogleLine = { setPath(points: Point[]): void; setMap(map: GoogleMap | null): void; setOptions(options: object): void };
+type GoogleLine = { setPath(points: Point[]): void; setMap(map: GoogleMap | null): void; setOptions(options: object): void; addListener(event: 'click', callback: () => void): void };
 type GoogleTraffic = { setMap(map: GoogleMap | null): void };
 export type GoogleSDK = {
   Map: new (host: HTMLElement, options: object) => GoogleMap;
@@ -13,18 +13,33 @@ export type GoogleSDK = {
   SymbolPath: { CIRCLE: unknown };
   event: { clearInstanceListeners(target: unknown): void };
 };
-export type RiderMap = { route(value: RoadRoute | null): void; rider(value: Point | null): void; resize(): void; zoom(change: number): void; center(point: Point): void; traffic(enabled: boolean): boolean; destroy(): void };
+export type RiderMap = { route(value: RoadRoute | null, alternative?: RoadRoute | null, onCompare?: () => void): void; rider(value: Point | null): void; resize(): void; zoom(change: number): void; center(point: Point): void; traffic(enabled: boolean): boolean; destroy(): void };
 export function googleRiderMap(host: HTMLElement, sdk: GoogleSDK, pickup: Point, dropoff: Point): RiderMap {
   // Only constructor: route, GPS and resize updates reuse this map.
-  const map = new sdk.Map(host, { center: pickup, zoom: 13, disableDefaultUI: true, gestureHandling: 'cooperative', clickableIcons: false, streetViewControl: false, fullscreenControl: false, mapTypeControl: false, colorScheme: 'LIGHT' });
+  const map = new sdk.Map(host, { center: pickup, zoom: 13, disableDefaultUI: true, gestureHandling: 'greedy', scrollwheel: false, clickableIcons: false, streetViewControl: false, fullscreenControl: false, mapTypeControl: false, colorScheme: 'LIGHT' });
   const markers = [pickup, dropoff].map((position, i) => new sdk.Marker({ position, map, title: i ? 'Drop-off' : 'Pickup', label: { text: i ? 'D' : 'P', color: '#fff', fontWeight: '700' } }));
-  const line = new sdk.Polyline({ map, path: [], strokeColor: '#b94717', strokeOpacity: .95, strokeWeight: 5 });
+  const line = new sdk.Polyline({ map, path: [], strokeColor: '#b94717', strokeOpacity: .95, strokeWeight: 5, zIndex: 2 });
   let rider: GoogleMarker | undefined, path = [pickup, dropoff];
+  let alternateLine: GoogleLine | undefined, alternatePath: Point[] = [];
+  let compare: (() => void) | undefined;
   let traffic: GoogleTraffic | undefined, disposed = false;
-  const fit = () => { const bounds = new sdk.LatLngBounds(); path.forEach(point => bounds.extend(point)); map.fitBounds(bounds, 42); };
+  const fit = () => { const bounds = new sdk.LatLngBounds(); for (const point of [...path, ...alternatePath]) bounds.extend(point); map.fitBounds(bounds, 42); };
   fit();
   return {
-    route(value) { path = value ? value.coordinates.map(([lng, lat]) => ({ lat, lng })) : [pickup, dropoff]; line.setPath(value ? path : []); fit(); },
+    route(value, alternative, onCompare) {
+      path = value ? value.coordinates.map(([lng, lat]) => ({ lat, lng })) : [pickup, dropoff];
+      alternatePath = alternative?.coordinates.map(([lng, lat]) => ({ lat, lng })) ?? [];
+      compare = onCompare;
+      line.setPath(value ? path : []);
+      if (alternatePath.length && !alternateLine) {
+        alternateLine = new sdk.Polyline({ path: [], strokeColor: '#eab308', strokeOpacity: 1, strokeWeight: 8, clickable: true, zIndex: 1 });
+        alternateLine.addListener('click', () => compare?.());
+      }
+      alternateLine?.setPath(alternatePath);
+      alternateLine?.setMap(alternatePath.length ? map : null);
+      if (alternatePath.length) line.setOptions({ strokeColor: '#2563eb' });
+      fit();
+    },
     rider(point) { if (!point) { rider?.setMap(null); rider = undefined; return; } if (rider) rider.setPosition(point); else rider = new sdk.Marker({ position: point, map, title: 'Your shared location', zIndex: 10, icon: { path: sdk.SymbolPath.CIRCLE, fillColor: '#2563eb', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 8 } }); },
     resize: fit,
     zoom(change) { map.setZoom(Math.max(3, Math.min(20, (map.getZoom() ?? 13) + change))); },
@@ -38,7 +53,7 @@ export function googleRiderMap(host: HTMLElement, sdk: GoogleSDK, pickup: Point,
         }
         traffic?.setMap(enabled ? map : null);
         // Blue identifies our ORS route; orange/red roads belong to Google traffic.
-        line.setOptions({ strokeColor: enabled ? '#2563eb' : '#b94717', strokeOpacity: enabled ? .8 : .95 });
+        line.setOptions({ strokeColor: enabled || alternatePath.length ? '#2563eb' : '#b94717', strokeOpacity: enabled ? .8 : .95 });
         return true;
       } catch {
         try { traffic?.setMap(null); } catch { /* Keep the base map usable. */ }
@@ -46,7 +61,11 @@ export function googleRiderMap(host: HTMLElement, sdk: GoogleSDK, pickup: Point,
         return false;
       }
     },
-    destroy() { disposed = true; traffic?.setMap(null); markers.forEach(marker => marker.setMap(null)); rider?.setMap(null); line.setMap(null); sdk.event.clearInstanceListeners(map); host.replaceChildren(); },
+    destroy() {
+      disposed = true; traffic?.setMap(null); markers.forEach(marker => marker.setMap(null)); rider?.setMap(null); line.setMap(null);
+      if (alternateLine) { alternateLine.setMap(null); sdk.event.clearInstanceListeners(alternateLine); }
+      sdk.event.clearInstanceListeners(map); host.replaceChildren();
+    },
   };
 }
 export function standardRiderMap(host: HTMLElement, L: typeof import('leaflet'), pickup: Point, dropoff: Point, onError: () => void): RiderMap {
@@ -58,11 +77,22 @@ export function standardRiderMap(host: HTMLElement, L: typeof import('leaflet'),
   });
   let points: [number, number][] = [[pickup.lat, pickup.lng], [dropoff.lat, dropoff.lng]];
   const line = L.polyline([], { color: '#b94717', weight: 5, opacity: .95 }).addTo(map);
+  let alternateLine: import('leaflet').Polyline | undefined, alternatePoints: [number, number][] = [];
+  let compare: (() => void) | undefined;
   let rider: import('leaflet').CircleMarker | undefined;
-  const fit = () => { map.invalidateSize(); map.fitBounds(L.latLngBounds(points), { padding: [38, 38], maxZoom: 16 }); };
+  const fit = () => { map.invalidateSize(); map.fitBounds(L.latLngBounds([...points, ...alternatePoints]), { padding: [38, 38], maxZoom: 16 }); };
   fit();
   return {
-    route(value) { points = value ? value.coordinates.map(([lng, lat]) => [lat, lng]) : [[pickup.lat, pickup.lng], [dropoff.lat, dropoff.lng]]; line.setLatLngs(value ? points : []); fit(); },
+    route(value, alternative, onCompare) {
+      points = value ? value.coordinates.map(([lng, lat]) => [lat, lng]) : [[pickup.lat, pickup.lng], [dropoff.lat, dropoff.lng]];
+      alternatePoints = alternative?.coordinates.map(([lng, lat]) => [lat, lng]) ?? [];
+      compare = onCompare;
+      if (alternatePoints.length && !alternateLine)
+        alternateLine = L.polyline([], { color: '#eab308', weight: 8, bubblingMouseEvents: false }).on('click', () => compare?.()).addTo(map);
+      alternateLine?.setLatLngs(alternatePoints);
+      line.setLatLngs(value ? points : []).setStyle({ color: alternatePoints.length ? '#2563eb' : '#b94717' }).bringToFront();
+      fit();
+    },
     rider(point) { if (!point) { rider?.remove(); rider = undefined; } else if (rider) rider.setLatLng([point.lat, point.lng]); else rider = L.circleMarker([point.lat, point.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#2563eb', fillOpacity: 1 }).addTo(map); },
     resize: fit, zoom(change) { map.setZoom(Math.max(3, Math.min(19, map.getZoom() + change))); }, center(point) { map.panTo([point.lat, point.lng]); }, traffic() { return false; }, destroy() { map.remove(); host.replaceChildren(); },
   };

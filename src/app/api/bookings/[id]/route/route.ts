@@ -9,7 +9,7 @@ import { riderCanTakeBooking, approvalCoversRoute, liveApprovalWhere } from '@/l
 import { requestHasExpired } from '@/lib/job-expiry';
 import { limitRequests, withRequestLog } from '@/lib/request-guard';
 import { roadRoute } from '@/lib/road-routing-service';
-import { RoutingError } from '@/lib/road-routing';
+import { RoutingError, type RoadRoute } from '@/lib/road-routing';
 
 export const runtime = 'nodejs';
 async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,17 +45,28 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
       start = { lat: presence.lat, lng: presence.lng };
       if (booking.status === 'ACCEPTED') finish = { lat: booking.pickupLat, lng: booking.pickupLng };
     }
-    const route = await timeBooking("routing.total", () => roadRoute(start, finish, booking.vehicleClass, undefined, recordBookingTiming));
+    const { alternative: candidate, ...route } = await timeBooking("routing.total", async () => {
+      try {
+        return await roadRoute(start, finish, booking.vehicleClass, undefined, recordBookingTiming, !preview);
+      } catch (error) {
+        if (preview || !(error instanceof RoutingError) || !['ROUTE_ALTERNATIVE_UNAVAILABLE', 'ROUTE_COOLDOWN'].includes(error.code)) throw error;
+        return roadRoute(start, finish, booking.vehicleClass, undefined, recordBookingTiming);
+      }
+    });
+    let alternative = candidate;
     if (booking.vehicleClass === 'TRICYCLE' && booking.type === 'RIDE') {
       const approval = await db.riderServiceApproval.findFirst({ where: { userId: session.uid, vehicleClass: 'TRICYCLE', service: 'RIDE', ...liveApprovalWhere() } });
-      if (!approval || route.coordinates.some(([lng, lat]) => !approvalCoversRoute(approval, { vehicleClass: 'TRICYCLE', type: 'RIDE', pickupLat: lat, pickupLng: lng, dropoffLat: lat, dropoffLng: lng })))
+      const allowed = (path: RoadRoute) => !!approval && path.coordinates.every(([lng, lat]) =>
+        approvalCoversRoute(approval, { vehicleClass: 'TRICYCLE', type: 'RIDE', pickupLat: lat, pickupLng: lng, dropoffLat: lat, dropoffLng: lng }));
+      if (!allowed(route))
         throw new RoutingError('ROUTE_ZONE', 'This route leaves your approved tricycle operating area. Contact support for an approved route.', 422);
+      if (alternative && !allowed(alternative)) alternative = undefined;
     }
     // Check assignment/status again after the external call. A cancellation,
     // reassignment or stage change must not return obsolete navigation.
     const current = await db.booking.findUnique({ where: { id }, select: { status: true, riderId: true } });
     if (!current || current.status !== booking.status || current.riderId !== booking.riderId || (preview && requestHasExpired(booking, new Date()))) throw new RiderError('Booking changed. Refresh the job before loading directions.', 409);
-    return NextResponse.json({ route, destination: preview ? 'preview' : booking.status === 'ACCEPTED' ? 'pickup' : 'dropoff', approximate: true });
+    return NextResponse.json({ route, alternative: preview ? null : alternative ?? null, destination: preview ? 'preview' : booking.status === 'ACCEPTED' ? 'pickup' : 'dropoff', approximate: true });
   } catch (error) {
     if (error instanceof RoutingError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     if (error && typeof error === 'object' && 'retryAfter' in error) throw error;

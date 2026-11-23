@@ -20,6 +20,23 @@ function hookFixture({provider='google',loading}={}){let cursor=0,google=0,stand
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
+test('Rider map permits one-finger drag and a tap on the yellow line only opens comparison',()=>{
+ const h=sdkFixture(),host={replaceChildren(){}},mapOptions=[];
+ h.sdk.Map=class extends h.sdk.Map{constructor(element,options){super(element,options);mapOptions.push(options);}};
+ h.sdk.Polyline.prototype.addListener=function(event,callback){assert.equal(event,'click');this.tap=callback;};
+ h.sdk.Polyline.prototype.setOptions=function(options){this.style=options;};
+ const Polyline=h.sdk.Polyline;
+ h.sdk.Polyline=class extends Polyline{constructor(options){super(options);this.options=options;}};
+ const map=load('src/lib/rider-map-renderer.ts').googleRiderMap(host,h.sdk,{lat:16,lng:120},{lat:16.1,lng:120.1});
+ const current={coordinates:[[120,16],[120.1,16.1]]},alternate={coordinates:[[120,16],[120.05,16.08],[120.1,16.1]]};
+ let comparisons=0;
+ map.route(current,alternate,()=>{comparisons++;});
+ assert.equal(mapOptions[0].gestureHandling,'greedy');assert.equal(mapOptions[0].scrollwheel,false);
+ assert.equal(h.lines[1].options.strokeColor,'#eab308');
+ h.lines[1].tap();assert.equal(comparisons,1);assert.equal(h.lines[0].path.length,2);
+ map.route(alternate,current,()=>{});assert.equal(h.lines[0].path.length,3);assert.equal(h.maps,1);
+ map.destroy();assert.equal(h.lines[1].map,null);
+});
 test('traffic toggles reuse one overlay and one map; route and GPS updates retain it; closing detaches it',()=>{
  const h=sdkFixture(),layers=[];h.sdk.Polyline.prototype.setOptions=function(options){this.style=options;};
  h.sdk.TrafficLayer=class{constructor(options){this.options=options;this.maps=[];layers.push(this);}setMap(map){this.maps.push(map);}};

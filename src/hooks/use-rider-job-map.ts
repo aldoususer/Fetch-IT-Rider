@@ -4,8 +4,8 @@ import { GOOGLE_MAP_FAILURE, loadRiderGoogleMaps } from '@/lib/rider-google-maps
 import { googleRiderMap, standardRiderMap, type RiderMap } from '@/lib/rider-map-renderer';
 import type { RoadRoute, RoutePoint } from '@/lib/road-routing';
 
-export function useRiderJobMap(host: RefObject<HTMLDivElement | null>, pickup: RoutePoint, dropoff: RoutePoint, road: RoadRoute | null, rider: RoutePoint | null, valid: boolean) {
-  const adapter = useRef<RiderMap | null>(null), latest = useRef({ road, rider });
+export function useRiderJobMap(host: RefObject<HTMLDivElement | null>, pickup: RoutePoint, dropoff: RoutePoint, road: RoadRoute | null, rider: RoutePoint | null, valid: boolean, alternative?: RoadRoute | null, onCompare?: () => void) {
+  const adapter = useRef<RiderMap | null>(null), latest = useRef({ road, rider, alternative, onCompare });
   const [state, setState] = useState<'loading' | 'google' | 'standard' | 'error'>('loading');
   const [traffic, setTraffic] = useState<'off' | 'on' | 'unavailable'>('off');
   const trafficEnabled = useRef(false);
@@ -15,14 +15,19 @@ export function useRiderJobMap(host: RefObject<HTMLDivElement | null>, pickup: R
     trafficEnabled.current = success && enabled;
     setTraffic(success ? enabled ? 'on' : 'off' : enabled ? 'unavailable' : 'off');
   }, []);
-  useEffect(() => { latest.current.road = road; adapter.current?.route(road); setMapTraffic(!!road); }, [road, setMapTraffic]);
+  useEffect(() => {
+    const wasLoaded = !!latest.current.road;
+    Object.assign(latest.current, { road, alternative, onCompare });
+    adapter.current?.route(road, alternative, onCompare);
+    setMapTraffic(!!road && (!wasLoaded || trafficEnabled.current));
+  }, [road, alternative, onCompare, setMapTraffic]);
   useEffect(() => { latest.current.rider = rider; adapter.current?.rider(rider); }, [rider?.lat, rider?.lng]);
   useEffect(() => {
     const element = host.current;
     if (!valid || !element) return;
     let disposed = false, started = false, fallingBack = false;
     const controller = new AbortController();
-    const sync = () => { adapter.current?.route(latest.current.road); adapter.current?.rider(latest.current.rider); };
+    const sync = () => { adapter.current?.route(latest.current.road, latest.current.alternative, latest.current.onCompare); adapter.current?.rider(latest.current.rider); };
     const fallback = async () => {
       if (disposed || fallingBack) return;
       fallingBack = true; trafficEnabled.current = false; setTraffic('off'); adapter.current?.destroy(); adapter.current = null;

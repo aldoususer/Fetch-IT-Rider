@@ -4,6 +4,7 @@ export type RoadRoute = {
   source: 'openrouteservice'; profile: 'driving-car'; distanceMeters: number; durationSeconds: number;
   coordinates: [number, number][]; steps: RoadStep[]; computedAt: string;
 };
+export type RoadRouteWithAlternative = RoadRoute & { alternative?: RoadRoute };
 export class RoutingError extends Error {
   constructor(public code: string, message: string, public status = 503) { super(message); }
 }
@@ -43,6 +44,23 @@ export function parseRoadRoute(body: unknown, start: RoutePoint, finish: RoutePo
     return { instruction: step.instruction, distance: step.distance!, duration: step.duration!, start: from, end: to, type: step.type ?? 0 };
   });
   return { source: 'openrouteservice', profile: 'driving-car', distanceMeters: summary.distance!, durationSeconds: summary.duration!, coordinates: points, steps, computedAt: new Date(now).toISOString() };
+}
+
+export function parseRoadRouteWithAlternative(body: unknown, start: RoutePoint, finish: RoutePoint, now = Date.now()): RoadRouteWithAlternative {
+  const route = parseRoadRoute(body, start, finish, now);
+  const features = (body as OrsResponse).features ?? [];
+  for (const feature of features.slice(1, 3)) {
+    try {
+      const alternative = parseRoadRoute({ features: [feature] }, start, finish, now);
+      const samePath = alternative.coordinates.length === route.coordinates.length &&
+        alternative.coordinates.every(([lng, lat], index) => lng === route.coordinates[index][0] && lat === route.coordinates[index][1]);
+      if (!samePath) return { ...route, alternative };
+    } catch (error) {
+      if (!(error instanceof RoutingError)) throw error;
+      // A malformed or inaccessible alternate should not discard the main route.
+    }
+  }
+  return route;
 }
 export function routeProgress(route: RoadRoute, fix: RoutePoint & { accuracy: number; at: number }, now = Date.now()) {
   if (!validRoutePoint(fix) || !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > 75 || !Number.isFinite(fix.at) || now - fix.at > 30000 || fix.at - now > 5000) return null;
