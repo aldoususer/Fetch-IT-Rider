@@ -133,12 +133,15 @@ export async function buildBookingReceipt(booking: ReceiptBooking, issuedAt = ne
   // Use historical stored amounts; never recalculate an old receipt at today's rates.
   const savedFare = readFareSnapshot(booking.fareBreakdown, total);
   if (savedFare) {
-    row("Base fare", money(savedFare.baseFare));
-    if (savedFare.distanceFare) row("Distance charge", money(savedFare.distanceFare));
-    if (savedFare.weightFare) row("Weight charge", money(savedFare.weightFare));
-    if (savedFare.surgeFare) row("Busy-period charge", money(savedFare.surgeFare));
-    if (savedFare.minimumAdjustment) row("Minimum adjustment", money(savedFare.minimumAdjustment));
-    if (savedFare.roundingAdjustment) row("Fare rounding", money(savedFare.roundingAdjustment));
+    if (savedFare.roundingAdjustment) {
+      row("Transport fare", money(savedFare.transportFare));
+    } else {
+      row("Base fare", money(savedFare.baseFare));
+      if (savedFare.distanceFare) row("Distance charge", money(savedFare.distanceFare));
+      if (savedFare.weightFare) row("Weight charge", money(savedFare.weightFare));
+      if (savedFare.surgeFare) row("Busy-period charge", money(savedFare.surgeFare));
+      if (savedFare.minimumAdjustment) row("Minimum adjustment", money(savedFare.minimumAdjustment));
+    }
     row("Booking fee", money(savedFare.bookingFee));
   } else if (base >= 0 && base <= total) {
     row("Base fare", money(base));
