@@ -18,6 +18,8 @@ test('unexpected failures retain useful code and stage without exception text or
 test('cash transactions replay safely and expose arrival without another endpoint query',async()=>{
  const {confirmCashPayment}=load('src/lib/payments.ts',{'./booking-transaction':transactions,'./receipt-email':{scheduleReceiptDelivery(){}},'./payment-policy':load('src/lib/payment-policy.ts')});let record={id:'b',type:'RIDE',status:'IN_TRANSIT',riderId:'r',customerId:'c',refCode:'LOCAL',paymentMethod:'CASH',paymentStatus:'PENDING',customerPaidAmount:100,customerPaidAt:new Date(),riderReceivedAmount:null,totalFare:100},events=0,arrivals=0;
  const tx={$queryRaw:async()=>[],booking:{findUnique:async()=>record,update:async({data})=>(record={...record,...data})},paymentEvent:{create:async()=>{events++;},findFirst:async()=>{arrivals++;return{createdAt:new Date()};}}};const db={$transaction:async fn=>fn(tx)};const actor={uid:'r',role:'RIDER',name:'Test'};
+ await assert.rejects(confirmCashPayment(db,'b',actor,90),{status:409,message:/must match the booking fare/});
+ assert.equal(record.riderReceivedAmount,null);assert.equal(events,0);
  assert.equal((await confirmCashPayment(db,'b',actor,100)).paymentStatus,'PAID');assert.equal((await confirmCashPayment(db,'b',actor,100)).dropoffReachedAt,null);assert.equal(events,1);assert.equal(arrivals,0);await assert.rejects(confirmCashPayment(db,'b',actor,90),/final/);
 });
 test('proof replay is bound to actor, booking, key and payload; another submission cannot replay it',async()=>{

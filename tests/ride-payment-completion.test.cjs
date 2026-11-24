@@ -72,7 +72,7 @@ function card(record,role='RIDER',embedded=false,docked=false){
  const slots=[],effects=new Map(),queued=[],reports=[],actions=[],handlers={};let index=0,reply=()=>Response.json({booking:record}),readOnly=false;
  const hooks={useState(initial){const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],value=>slots[i]=value];},useRef(initial){const i=index++;return slots[i]??={current:initial};},useEffect(fn,deps){const i=index++,prior=effects.get(i);if(!prior||deps.some((value,n)=>!Object.is(value,prior[n]))){effects.set(i,deps);queued.push(fn);}}};
  const runtime={jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},report=value=>reports.push(value),actionReport=value=>actions.push(value);
- const module=load('src/components/fetchit/shared/payment-card.tsx',{'react':hooks,'react/jsx-runtime':runtime,'@/components/ui/button':{Button:'button'},'@/lib/payment-policy':policy},{document:{hidden:false},navigator:{onLine:true},setInterval:()=>1,clearInterval(){},window:{addEventListener:(name,fn)=>handlers[name]=fn,removeEventListener(){}},fetch:async()=>reply()});
+ const module=load('src/components/fetchit/shared/payment-card.tsx',{'react':hooks,'react/jsx-runtime':runtime,'@/components/ui/button':{Button:'button'},'@/lib/payment-policy':policy},{document:{hidden:false},navigator:{onLine:true},setInterval:()=>1,clearInterval(){},window:{addEventListener:(name,fn)=>handlers[name]=fn,removeEventListener(){}},fetch:async(...args)=>reply(...args)});
  const render=()=>{index=0;const tree=module.PaymentCard({bookingId:'job',role,readOnly,embedded,onPaymentReady:report,onPaymentAction:docked?actionReport:undefined});while(queued.length)queued.shift()();return tree;};
  return{render,reports,actions,handlers,setReply:fn=>reply=fn,setReadOnly:value=>readOnly=value,async ready(){render();await new Promise(resolve=>setImmediate(resolve));return render();}};
 }
@@ -103,7 +103,7 @@ test('embedded Rider cash controls stay hidden before the drop-off stage',async(
   const rider=card({...base,status},'RIDER',true);assert(!nodes(await rider.ready()).some(n=>n.type==='form'));
  }
  const transit=card(base,'RIDER',true);assert(nodes(await transit.ready()).some(n=>n.type==='form'));
- const customer=card({...base,status:'ACCEPTED'},'CUSTOMER');assert(nodes(await customer.ready()).some(n=>n.type==='form'));
+ const customer=card({...base,status:'ACCEPTED'},'CUSTOMER');assert(nodes(await customer.ready()).some(n=>n.type==='input'&&typeof n.props.onChange==='function'));
 });
 test('embedded payment groups participant confirmations without repeating the fare',async()=>{
  const h=card(base,'RIDER',true),tree=await h.ready(),copy=text(tree);
@@ -112,15 +112,20 @@ test('embedded payment groups participant confirmations without repeating the fa
 });
 
 
-test('docked cash confirmation exposes one native form action and no duplicate inline submit',async()=>{
- const h=card(base,'RIDER',true,true),tree=await h.ready(),action=h.actions.at(-1);
+test('docked cash confirmation submits the displayed booking fare without an editable field',async()=>{
+ const h=card(base,'RIDER',true,true);await h.ready();
+ const updatedFare={...base,totalFare:112.50};
+ h.setReply(()=>Response.json({booking:updatedFare}));await h.handlers.focus();
+ const tree=h.render(),action=h.actions.at(-1);
  assert.equal(action.formId,'payment-action-job');assert.equal(action.label,'Confirm cash received');assert.equal(action.disabled,false);
+ assert.match(text(tree),/Cash to collect\s+₱\s*112\.50/);
  const form=nodes(tree).find(n=>n.type==='form');assert.equal(form.props.id,action.formId);
+ assert(!nodes(tree).some(n=>n.type==='input'));
  assert(!nodes(form).some(n=>n.type==='button'&&n.props.type==='submit'));
- let calls=0,reply;h.setReply(()=>{calls++;return new Promise(resolve=>reply=resolve);});
+ let calls=0,reply;h.setReply((_,options)=>{calls++;assert.equal(options.method,'POST');assert.deepEqual(JSON.parse(options.body),{amount:'112.50'});return new Promise(resolve=>reply=resolve);});
  form.props.onSubmit({preventDefault(){}});form.props.onSubmit({preventDefault(){}});assert.equal(calls,1);
  h.render();assert.equal(h.actions.at(-1).disabled,true);assert.equal(h.actions.at(-1).busy,true);
- reply(Response.json({booking:{...base,riderReceivedAt:new Date(),riderReceivedAmount:100}}));await new Promise(resolve=>setImmediate(resolve));h.render();assert.equal(h.actions.at(-1),null);
+ reply(Response.json({booking:{...updatedFare,riderReceivedAt:new Date(),riderReceivedAmount:112.50}}));await new Promise(resolve=>setImmediate(resolve));h.render();assert.equal(h.actions.at(-1),null);
 });
 test('delivery arrival is the docked action before cash becomes available',async()=>{
  const h=card({...base,type:'DELIVERY',dropoffReachedAt:null},'RIDER',true,true),tree=await h.ready();

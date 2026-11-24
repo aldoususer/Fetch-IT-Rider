@@ -58,6 +58,9 @@ export async function confirmCashPayment(db: PrismaClient, id: string, actor: Ac
       if (amountInCents(previous.toString()) === cents) return withArrival(booking);
       throw new PaymentError("Your confirmation is already recorded. Contact support to correct it.", 409);
     }
+    if (!customer && cents !== amountInCents(booking.totalFare.toString())) {
+      throw new PaymentError("The cash amount must match the booking fare. Refresh payment details before confirming.", 409);
+    }
     const customerAmount = customer ? String(amount) : booking.customerPaidAmount?.toString();
     const riderAmount = customer ? booking.riderReceivedAmount?.toString() : String(amount);
     const matched = confirmationsMatch(customerAmount, riderAmount, booking.totalFare.toString());
