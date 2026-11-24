@@ -6,6 +6,7 @@ import { activeRiderStatuses, freshPresenceWhere, shortlistRiders, rankRiders, u
 import { liveApprovalWhere, approvalCoversRoute } from './rider-eligibility';
 import { defaultPlatformSettings, validatePlatformSettings } from './platform-policy';
 import { requestHasExpired } from './job-expiry';
+import { cancellationDay as philippineDay } from './rider-cancellation-policy';
 import { roadRoute, routingEnabled } from './road-routing-service';
 import { reserveAvailableRider } from './dispatch';
 import { recordBookingEvent } from './booking-events';
@@ -30,6 +31,12 @@ async function openRequest(tx: Prisma.TransactionClient, booking: Booking, reaso
 }
 async function chooseRiders(db: PrismaClient, booking: Booking, radiusKm: number) {
   const now = new Date();
+  const completedHistory: Prisma.BookingWhereInput = { status: 'DELIVERED' };
+  if (booking.type === 'DELIVERY') {
+    const { start, end } = philippineDay(now);
+    completedHistory.type = 'DELIVERY';
+    completedHistory.deliveredAt = { gte: start, lt: end };
+  }
   const latitudeRange = radiusKm / 110, longitudeRange = latitudeRange / Math.max(.01, Math.cos(booking.pickupLat * Math.PI / 180));
   const riders = await db.user.findMany({ where: { role: 'RIDER', isBanned: false, id: { notIn: booking.excludedRiderIds },
     riderProfile: { vehicleClass: booking.vehicleClass }, riderPresence: { ...freshPresenceWhere(now), lat: { gte: booking.pickupLat - latitudeRange, lte: booking.pickupLat + latitudeRange }, lng: { gte: booking.pickupLng - longitudeRange, lte: booking.pickupLng + longitudeRange } },
@@ -42,7 +49,7 @@ async function chooseRiders(db: PrismaClient, booking: Booking, radiusKm: number
     pushSubscriptions: { select: { updatedAt: true } },
     riderPresence: true,
     riderApprovals: { where: { vehicleClass: booking.vehicleClass, service: booking.type, ...liveApprovalWhere(now) } },
-    _count: { select: { bookingsAsRider: { where: { status: 'DELIVERED' } } } },
+    _count: { select: { bookingsAsRider: { where: completedHistory } } },
   } });
   const eligible = riders.filter(rider => (!rider.authInvalidBefore || rider.pushSubscriptions.some(subscription => subscription.updatedAt > rider.authInvalidBefore!)) && rider.riderApprovals.some(approval => approvalCoversRoute(approval, booking)));
   const pickup = { lat: booking.pickupLat, lng: booking.pickupLng };
@@ -114,12 +121,13 @@ export async function advanceAutomaticMatching(db: PrismaClient, bookingId: stri
       await tx.booking.update({ where: { id: bookingId }, data: { status: 'MATCHED', riderId: candidate.id, matchedAt: now, assignmentExpiresAt: until } });
       await tx.riderPresence.update({ where: { userId: candidate.id }, data: { lastOfferAt: now } });
       const ranking = candidates.every(rider => rider.pickupEtaSeconds !== null) ? 'ROAD_ETA' : 'DISTANCE';
+      const priority = booking.type === 'DELIVERY' ? 'fewer completed deliveries today (PH time)' : 'fewer completed bookings';
       await tx.autoDispatch.update({ where: { bookingId }, data: {
         phase: 'OFFERED', attempts: { increment: 1 }, nextAt: until,
         pickupEtaSeconds: ranking === 'ROAD_ETA' ? candidate.pickupEtaSeconds : null, ranking,
         lastReason: ranking === 'ROAD_ETA'
-          ? 'Prioritized fewer completed bookings, then location freshness, pickup road ETA and waiting time.'
-          : 'Prioritized fewer completed bookings, then location freshness, pickup distance and waiting time.',
+          ? `Prioritized ${priority}, then location freshness, pickup road ETA and waiting time.`
+          : `Prioritized ${priority}, then location freshness, pickup distance and waiting time.`,
       } });
       await recordBookingEvent(tx, bookingId, actor, { action: dispatch.attempts ? 'REASSIGNED' : 'ASSIGNED', fromStatus: 'PENDING', toStatus: 'MATCHED', riderId: candidate.id, reason: 'Exclusive nearby-rider offer. Rider acceptance is still required.' });
       return;

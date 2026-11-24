@@ -16,7 +16,7 @@ Default controls are enabled automatic matching, a 5 km pickup search radius, 45
 
 Candidates must be online, unbanned, have valid vehicle/service approval, recent accurate GPS, push registration and no reserved/active booking. The configured radius is measured from the customer's pickup point. Tricycle passenger operating-zone checks still apply.
 
-The rider with the fewest completed bookings gets first priority within the radius. The count includes completed passenger rides and deliveries across the rider's account. Among riders with the same count, the shortlist favours proximity and then time since the last offer. Up to three shortlisted riders are checked through the existing ORS road-routing service outside database locks.
+For a delivery offer, the rider with the fewest deliveries completed that day gets first priority within the radius. The count uses completion time and resets at midnight Philippine time. Passenger ride offers continue to use the rider's all-time count of completed bookings. Among riders with the same count, the shortlist favours proximity and then time since the last offer. Up to three shortlisted riders are checked through the existing ORS road-routing service outside database locks.
 
 Final ranking also starts with completed booking count. For riders with the same count, a GPS fix within one minute gets priority, followed by estimated pickup road time when all remaining riders have routes. Similar pickup estimates favour the longest-waiting rider. If ORS is unavailable or its quota is exhausted, the comparison uses pickup distance. Inaccessible or out-of-area routes are excluded. ORS uses the existing conservative car profile for motorcycles and tricycles.
 
