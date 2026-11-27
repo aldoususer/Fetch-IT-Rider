@@ -58,7 +58,7 @@ export async function roadRoute(start: RoutePoint, finish: RoutePoint, vehicle: 
   try {
     // Fixed provider URL, no client-supplied URL and no credentials in logs/URLs.
     const route = await measure('routing.response', async () => {
-      const response = await measure('routing.provider', () => fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+      const response = await measure('routing.provider', () => fetch('https://api.heigit.org/openrouteservice/v2/directions/driving-car/geojson', {
         method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(remaining()),
         headers: { Authorization: apiKey, 'Content-Type': 'application/json', Accept: 'application/geo+json' },
         body: JSON.stringify({
